@@ -1,0 +1,7 @@
+("f",["zero","even 2","odd 7","big","even 51"])
+("area",24)
+("same name in two alternatives",2,10)
+("guards see where, then fall through",["big square","medium square","small square"])
+("inline",6)
+("where shadows outer",500)
+("where function","abcabc")

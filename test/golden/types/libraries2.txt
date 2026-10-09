@@ -1,0 +1,2 @@
+fibs :: Int -> Array Int Integer
+main :: IO ()

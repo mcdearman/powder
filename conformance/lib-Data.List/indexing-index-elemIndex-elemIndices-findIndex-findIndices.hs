@@ -1,0 +1,40 @@
+-- Haskell 2010 Report 20.7 (Data.List): indexing lists with (!!), elemIndex, elemIndices, findIndex,
+-- findIndices
+module Main (main) where
+
+import Data.List
+
+main :: IO ()
+main = do
+  print ("index", "abcde" !! 0, "abcde" !! 2, "abcde" !! 4)
+  print ("index infinite", [0 :: Int ..] !! 1000)
+  print ("index skips undefined elements", [undefined, undefined, 7 :: Int] !! 2)
+  print ("index is infixl 9", [[1, 2], [3, 4 :: Int]] !! 1 !! 0)
+  print ("index binds tighter than arithmetic", [10, 20, 30 :: Int] !! 1 + 1)
+  print ("index binds tighter than append", ([1 :: Int] ++ [2, 3]) !! 2, "ab" ++ ["cd", "ef"] !! 1)
+  print ("index all", map ("xyz" !!) [0, 1, 2])
+  print ("elemIndex", elemIndex 'c' "abcde")
+  print ("elemIndex missing", elemIndex 'z' "abcde")
+  print ("elemIndex first of several", elemIndex 1 [3, 1, 4, 1, 5 :: Int])
+  print ("elemIndex at zero", elemIndex 3 [3, 1, 4 :: Int])
+  print ("elemIndex empty", elemIndex 'a' "")
+  print ("elemIndex infinite", elemIndex 100 [1 :: Int ..])
+  print ("elemIndices", elemIndices 1 [3, 1, 4, 1, 5, 1 :: Int])
+  print ("elemIndices missing", elemIndices 9 [3, 1, 4 :: Int])
+  print ("elemIndices empty", elemIndices 'a' "")
+  print ("elemIndices string", elemIndices 's' "mississippi")
+  print ("elemIndices infinite", take 3 (elemIndices 1 (cycle [1, 2 :: Int])))
+  print ("findIndex", findIndex (> 3) [1, 5, 2, 7 :: Int])
+  print ("findIndex none", findIndex (> 9) [1, 5, 2, 7 :: Int])
+  print ("findIndex empty", findIndex even ([] :: [Int]))
+  print ("findIndex at zero", findIndex odd [1, 2, 3 :: Int])
+  print ("findIndex infinite", findIndex (\x -> x * x > 200) [1 :: Int ..])
+  print ("findIndices", findIndices even [1, 2, 4, 5, 6 :: Int])
+  print ("findIndices none", findIndices (> 9) [1, 2 :: Int])
+  print ("findIndices all", findIndices (const True) "abc")
+  print ("findIndices empty", findIndices even ([] :: [Int]))
+  print ("findIndices infinite", take 4 (findIndices ((== 0) . (`mod` 5)) [0 :: Int ..]))
+  print ("elemIndex is findIndex", elemIndex 4 [1, 4, 4 :: Int] == findIndex (== 4) [1, 4, 4])
+  print ("elemIndices is findIndices", elemIndices 4 [1, 4, 4 :: Int] == findIndices (== 4) [1, 4, 4])
+  print ("found index points at element", fmap ("hello" !!) (elemIndex 'l' "hello"))
+  print ("indices select matches", map ("mississippi" !!) (elemIndices 'p' "mississippi"))

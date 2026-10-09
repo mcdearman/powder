@@ -1,0 +1,11 @@
+("nested",[(1,'a'),(1,'b'),(2,'a'),(2,'b')])
+("shadow",Just 23)
+("let statements",[2,3,4,4,5,6])
+("poly let",Just ("abab",[1,1]))
+("io shadow",2)
+("io nested",24)
+("inline nested",Just (1,20))
+("let in do is recursive",[1,2,4,8,16])
+("pattern let",3,2,'h')
+inner block
+("do as argument",11)

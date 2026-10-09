@@ -1,0 +1,13 @@
+("isEOF at start",False)
+("getChar",'f')
+("getLine reads the rest of the line","irst line")
+("getLine","second")
+("getLine on an empty line","")
+("getChar reads the newline too",'x','\n')
+("getLine keeps inner and trailing spaces","  spaced  out")
+("isEOF before the last line",False)
+("getLine at end of input without newline","tail without newline")
+("isEOF at end",True)
+EOF error from getLine
+EOF error from getChar
+("isEOF still true",True)

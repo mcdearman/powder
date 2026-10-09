@@ -1,0 +1,25 @@
+-- Haskell 2010 Report 3.10: infinite arithmetic sequences are produced lazily
+module Main (main) where
+
+main :: IO ()
+main = do
+  print ("take", take 5 [1 ..])
+  print ("take then", take 5 [10, 20 ..])
+  print ("take down", take 5 [0, -3 ..])
+  print ("takeWhile", takeWhile (< 30) [1, 8 ..])
+  print ("head", head [100 ..])
+  print ("index", [1 ..] !! 1000, [0, 5 ..] !! 20)
+  print ("zip", zip [0 ..] "abc")
+  print ("zip3", zip3 [1 ..] [10, 20 ..] "xy")
+  print ("map", take 4 (map (* 2) [1 ..]))
+  print ("filter", take 4 (filter even [1 ..]))
+  print ("comprehension", take 4 [n * n | n <- [1 ..], odd n])
+  print ("nested", take 3 [take 2 [n ..] | n <- [1 ..]])
+  print ("chars", take 4 ['a' ..])
+  print ("doubles", take 3 [0.5 ..])
+  print ("past Int range", take 2 [9223372036854775807 ..] :: [Integer])
+  print ("zipWith", takeWhile (< 40) (zipWith (*) [1 ..] [1 ..]))
+  print ("dropWhile", head (dropWhile (< 1000) [1, 3 ..]))
+  print ("lookup", lookup 7 (zip [1 ..] ['a' ..]))
+  print ("and", and (zipWith (<) [1 .. 5] [2 ..]))
+  print ("span", fst (span (< 4) [1 ..]))

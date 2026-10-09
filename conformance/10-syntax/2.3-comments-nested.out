@@ -1,0 +1,8 @@
+("f",2)
+("g",42)
+("h",3)
+("inline",4)
+("comment chars in string","{-","-}")
+("after block",[1,2,3])
+("dash brace",7)
+("done",True)

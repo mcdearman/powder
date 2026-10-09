@@ -1,0 +1,26 @@
+one
+two
+produce a
+produce b
+("a + b",3)
+produce c
+3
+produce d
+produce e
+("result of the last action",5)
+("pure chain",10,20)
+produce ignored result
+after ignoring
+left nested
+then
+finally
+right nested
+then
+finally
+produce f
+produce g
+("threaded",7)
+produce h
+produce i
+("both in scope",7,8)
+done

@@ -1,0 +1,6 @@
+("subclass method","default1","B2")
+("superclass method via qualified import",1,2)
+("superclass default method",10,100)
+("function needing only the subclass","default1/100","B3/6")
+("local instance of both classes",(7,"local7"),"local7/14")
+("instance on list from Sub","B1B2",7)

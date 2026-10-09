@@ -1,0 +1,7 @@
+eval :: [(Char, Int)] -> Expr -> Maybe Int
+lift2 :: (a -> b -> c) -> Maybe a -> Maybe b -> Maybe c
+simplify :: Expr -> Expr
+render :: Expr -> [Char]
+parity :: Int -> [Char]
+report :: Expr -> IO ()
+main :: IO ()

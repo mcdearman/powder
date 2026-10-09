@@ -1,0 +1,35 @@
+-- Haskell 2010 Report 22, 6.3.4 (Data.Ratio): Enum instance of Ratio: succ, pred, toEnum, fromEnum
+-- (truncation), enumFrom, enumFromThen, enumFromTo and enumFromThenTo (limit extended by half a step)
+module Main (main) where
+
+import Data.Ratio
+
+main :: IO ()
+main = do
+  print ("succ", succ (1 % 2 :: Rational), succ ((-1) % 2 :: Rational), succ (3 :: Rational))
+  print ("pred", pred (1 % 2 :: Rational), pred ((-1) % 2 :: Rational), pred (3 :: Rational))
+  print ("toEnum", (toEnum 3 :: Rational), (toEnum (-2) :: Rational), (toEnum 0 :: Rational))
+  print ("fromEnum truncates", fromEnum (7 % 2 :: Rational), fromEnum ((-7) % 2 :: Rational), fromEnum (1 % 3 :: Rational), fromEnum (5 :: Rational))
+  print ("enumFrom", take 4 [1 % 2 :: Rational ..])
+  print ("enumFrom negative", take 4 [(-3) % 2 :: Rational ..])
+  print ("enumFromThen", take 4 [1, 3 % 2 :: Rational ..])
+  print ("enumFromThen decreasing", take 4 [1, 2 % 3 :: Rational ..])
+  print ("enumFromThen constant", take 3 [1 % 2, 1 % 2 :: Rational ..])
+  print ("enumFromTo integers", [1 .. 3 :: Rational])
+  print ("enumFromTo from a half", [1 % 2 .. 3 :: Rational])
+  print ("enumFromTo limit plus one half is included", [1 .. 5 % 2 :: Rational])
+  print ("enumFromTo just below the extended limit", [1 .. 12 % 5 :: Rational])
+  print ("enumFromTo empty", [3 .. 1 :: Rational])
+  print ("enumFromTo singleton", [2 .. 2 :: Rational])
+  print ("enumFromThenTo", [1 % 2, 1 .. 5 % 2 :: Rational])
+  print ("enumFromThenTo thirds", [0, 1 % 3 .. 1 :: Rational])
+  print ("enumFromThenTo tenths are exact", [0, 1 % 10 .. 1 :: Rational])
+  print ("enumFromThenTo tenths count", length [0, 1 % 10 .. 1 :: Rational])
+  print ("enumFromThenTo decreasing", [3, 5 % 2 .. 1 :: Rational])
+  print ("enumFromThenTo limit extended by half a step", [0, 1 % 2 .. 9 % 4 :: Rational])
+  print ("enumFromThenTo decreasing limit extended", [2, 1 .. 1 % 2 :: Rational])
+  print ("enumFromThenTo empty", [1, 2 .. 0 :: Rational])
+  print ("enumFromThenTo decreasing empty", [1, 0 .. 2 :: Rational])
+  print ("Ratio Int", [1 % 2, 3 % 4 .. 2 :: Ratio Int])
+  print ("map over range", map numerator [1 % 3, 2 % 3 .. 2 :: Rational])
+  print ("sum of range", sum [1 % 4, 1 % 2 .. 1 :: Rational])

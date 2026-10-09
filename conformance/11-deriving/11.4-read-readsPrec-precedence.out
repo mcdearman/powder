@@ -1,0 +1,27 @@
+012345678901  (precedence 0..11)
+YYYYYYYYYYYY  N
+YYYYYYYYYYYY  (N)
+YYYYYYYYYYYn  U 1
+YYYYYYYYYYYY  (U 1)
+YYYYYYYYYYYY  ((U 1))
+YYYYYYYYYYYn  U (-1)
+YYYYYYnnnnnn  N :+: N
+YYYYYYYYYYYY  (N :+: N)
+YYYYYYYnnnnn  N :-: N
+YYYYYYYYYYYY  (N :-: N)
+YYYYYYnnnnnn  U 1 :+: U 2
+YYYYYYYnnnnn  U 1 :-: U 2
+YYYYYYnnnnnn  N :-: N :+: N
+YYYYYYnnnnnn  N :+: N :-: N
+YYYYYYYnnnnn  (N :+: N) :-: N
+YYYYYYnnnnnn  N :+: (N :+: N)
+nnnnnnnnnnnn  N :+: N :+: N
+nnnnnnnnnnnn  N :-: N :-: N
+("values at precedence 0",[N :-: N :+: N])
+("values at precedence 5",[U 1 :+: U 2])
+("values at precedence 6",[U 1 :-: U 2])
+("values at precedence 10",[U 1])
+("values at precedence 11",[U 1 :+: N])
+("show then read at every precedence",True)
+("Prelude types follow the same rule",True,[(Just 1,"")],[(Just 1,"")])
+("Either",True,[(Right 2,"")],[(Nothing,"")])

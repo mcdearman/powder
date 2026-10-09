@@ -1,0 +1,7 @@
+("tagged int",1)
+("tagged list",[True,False])
+("tagged pair",(1,[True]))
+("checkedPair",('c',2))
+("key int","found 1","missing 2")
+("key char","found 'x'")
+("key string","found \"k\"")

@@ -1,0 +1,7 @@
+("not hidden",[Cat,Dog],4,"Zoo")
+("hidden constructor replaced",Emu,Keeper)
+("hidden function replaced",8)
+("hidden method replaced; other method still works",0,"woof!")
+("hidden field replaced; constructor and other field remain",5,Cat)
+("hidden operator replaced (local default fixity)",5)
+("positional construction still possible",Cage {occupant = Dog, number = 7})

@@ -1,0 +1,5 @@
+("from Inner via Facade",1,102)
+("type via Facade",[InA,InB])
+("class via Facade",'a','b')
+("Facade's own",21)
+("from Other via Facade",20)

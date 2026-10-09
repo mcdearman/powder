@@ -1,0 +1,58 @@
+-- Haskell 2010 Report 20.5.1 (Data.List): extracting sublists with take, drop, splitAt, takeWhile,
+-- dropWhile, span, break
+module Main (main) where
+
+import Data.List
+
+xs :: [Int]
+xs = [1, 2, 3, 4, 5]
+
+main :: IO ()
+main = do
+  print ("take", take 3 xs)
+  print ("take zero", take 0 xs)
+  print ("take negative", take (-1) xs)
+  print ("take too many", take 10 xs)
+  print ("take from empty", take 3 ([] :: [Int]))
+  print ("take infinite", take 3 [10 :: Int ..])
+  print ("take zero of undefined", take 0 (undefined :: [Int]))
+  print ("drop", drop 3 xs)
+  print ("drop zero", drop 0 xs)
+  print ("drop negative", drop (-1) xs)
+  print ("drop too many", drop 10 xs)
+  print ("drop from empty", drop 3 ([] :: [Int]))
+  print ("drop infinite", take 3 (drop 5 [1 :: Int ..]))
+  print ("splitAt", splitAt 2 xs)
+  print ("splitAt zero", splitAt 0 xs)
+  print ("splitAt negative", splitAt (-3) xs)
+  print ("splitAt length", splitAt 5 xs)
+  print ("splitAt too many", splitAt 9 xs)
+  print ("splitAt empty", splitAt 2 "")
+  print ("splitAt infinite", fst (splitAt 3 [1 :: Int ..]), take 2 (snd (splitAt 3 [1 :: Int ..])))
+  print ("splitAt is (take, drop)", all (\n -> splitAt n xs == (take n xs, drop n xs)) [-2 .. 7])
+  print ("take ++ drop", all (\n -> take n xs ++ drop n xs == xs) [-2 .. 7])
+  print ("takeWhile", takeWhile (< 3) xs)
+  print ("takeWhile none", takeWhile (> 3) xs)
+  print ("takeWhile all", takeWhile (< 9) xs)
+  print ("takeWhile stops at first failure", takeWhile odd [1, 3, 4, 5, 7 :: Int])
+  print ("takeWhile empty", takeWhile even ([] :: [Int]))
+  print ("takeWhile infinite", takeWhile (< 40) (map (^ (2 :: Int)) [1 :: Int ..]))
+  print ("dropWhile", dropWhile (< 3) xs)
+  print ("dropWhile none", dropWhile (> 3) xs)
+  print ("dropWhile all", dropWhile (< 9) xs)
+  print ("dropWhile only leading", dropWhile odd [1, 3, 4, 5, 7 :: Int])
+  print ("dropWhile spaces", dropWhile (== ' ') "   indented  text ")
+  print ("dropWhile infinite", take 3 (dropWhile (< 10) [1 :: Int ..]))
+  print ("span", span (< 3) xs)
+  print ("span none", span (> 3) xs)
+  print ("span all", span (< 9) xs)
+  print ("span empty", span even ([] :: [Int]))
+  print ("span string", span (/= ' ') "hello world again")
+  print ("span infinite", fst (span (< 4) [1 :: Int ..]))
+  print ("span is (takeWhile, dropWhile)", span odd [1, 3, 4, 5 :: Int] == (takeWhile odd [1, 3, 4, 5], dropWhile odd [1, 3, 4, 5]))
+  print ("break", break (> 3) xs)
+  print ("break none match", break (> 9) xs)
+  print ("break first matches", break (> 0) xs)
+  print ("break string", break (== ':') "key:value:more")
+  print ("break empty", break even ([] :: [Int]))
+  print ("break is span not", break even [1, 3, 4, 5 :: Int] == span (not . even) [1, 3, 4, 5])

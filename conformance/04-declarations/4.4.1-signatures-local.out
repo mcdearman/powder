@@ -1,0 +1,7 @@
+("where signatures",14)
+("local polymorphic",("abab",[True,True]))
+("local overloaded",(3,3.5))
+("several and operator",321)
+("local restricted",[1,2,3])
+("local pattern binding",92)
+("do-let signature","'c''c'","1212")

@@ -1,0 +1,7 @@
+("value of hidden type",0,2)
+("hidden type in a local structure",[0,2,3])
+("hidden type in a tuple",0,2)
+("function with hidden-class constraint","counter at 2")
+("hidden class instance for an exported type","int 3")
+("Show instance of hidden type is visible",MkCounter 2)
+("local type with the same name",MkCounter)

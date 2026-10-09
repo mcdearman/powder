@@ -1,0 +1,8 @@
+("local guarded function",192)
+("local multi-clause with signature",2432902008176640000)
+("local pattern bindings",1,'x','c','d')
+("let-in spanning lines in do",4)
+("do inside let inside do",Just 3)
+("case with aligned guards inside let","big")
+("collatz",[6,3,10,5,16,8,4,2,1])
+("where under a let binding",5)

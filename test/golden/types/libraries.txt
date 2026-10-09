@@ -1,0 +1,2 @@
+pythagorean :: Int -> [(Int, Int, Int)]
+main :: IO ()

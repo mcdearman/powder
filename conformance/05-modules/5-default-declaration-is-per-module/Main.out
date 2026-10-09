@@ -1,0 +1,5 @@
+("Main defaults to Integer",18446744073709551616)
+("Main defaults fractional to Double",3.5)
+("module with default (Int)",("0","-9223372036854775808"))
+("module with default (Double)",("1024.0","3.0"))
+("exported polymorphic function is not affected by its module's default","4","3.5")

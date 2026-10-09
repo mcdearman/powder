@@ -1,0 +1,29 @@
+1.0 :+ 2.0
+1.0 :+ (-2.0)
+(-1.0) :+ 2.0
+(-1.5) :+ (-2.5)
+0.0 :+ 0.0
+1.0e-2 :+ 1.0e7
+Just (1.0 :+ 2.0)
+[1.0 :+ 2.0,3.0 :+ 4.0]
+(1.0 :+ 2.0,'x')
+1.5 :+ 2.5
+1.0 :+ 2.0
+(1.0 :+ 2.0)
+1.0 :+ 2.0<rest
+("eq",True)
+("eq real differs",False)
+("eq imag differs",False)
+("neq",True)
+("eq with literal",True)
+("read",1.0 :+ 2.0)
+("read negative imaginary",1.0 :+ (-2.0))
+("read negative real",(-1.0) :+ 2.0)
+("read parenthesised",3.5 :+ 4.5)
+("read integer syntax parts",3.0 :+ 4.0)
+("read in Just",Just (1.0 :+ 2.0))
+("read list",[1.0 :+ 2.0,3.0 :+ 4.0])
+("read . show",True)
+("reads rest",[(1.0 :+ 2.0," tail")])
+("readsPrec 7 needs parentheses",True)
+("readsPrec 7 parenthesised",[(1.0 :+ 2.0,"")])

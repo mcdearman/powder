@@ -1,0 +1,8 @@
+("set",[1,3,2])
+("set chars","mspi")
+("set empty",[])
+("member",True,False)
+("constructor",[True,False])
+("entry","True<=False")
+("entry gt","\"x\">\"y\"")
+("sorted",[1,2,3])

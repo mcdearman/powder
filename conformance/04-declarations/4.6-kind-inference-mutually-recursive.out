@@ -1,0 +1,6 @@
+("Rose [] size",4)
+("Rose [] leaf",1)
+("Rose Maybe depth",2)
+("Report example",True,False)
+("Collapse Holder",Just 'h')
+("Collapse Twice","first")

@@ -1,0 +1,219 @@
+Int -5 0: -5
+Int -5 1: -5
+Int -5 2: -5
+Int -5 3: -5
+Int -5 4: -5
+Int -5 5: -5
+Int -5 6: -5
+Int -5 7: (-5)
+Int -5 8: (-5)
+Int -5 9: (-5)
+Int -5 10: (-5)
+Int -5 11: (-5)
+Int 5 0: 5
+Int 5 1: 5
+Int 5 2: 5
+Int 5 3: 5
+Int 5 4: 5
+Int 5 5: 5
+Int 5 6: 5
+Int 5 7: 5
+Int 5 8: 5
+Int 5 9: 5
+Int 5 10: 5
+Int 5 11: 5
+Int 0 0: 0
+Int 0 1: 0
+Int 0 2: 0
+Int 0 3: 0
+Int 0 4: 0
+Int 0 5: 0
+Int 0 6: 0
+Int 0 7: 0
+Int 0 8: 0
+Int 0 9: 0
+Int 0 10: 0
+Int 0 11: 0
+Integer -5 0: -5
+Integer -5 1: -5
+Integer -5 2: -5
+Integer -5 3: -5
+Integer -5 4: -5
+Integer -5 5: -5
+Integer -5 6: -5
+Integer -5 7: (-5)
+Integer -5 8: (-5)
+Integer -5 9: (-5)
+Integer -5 10: (-5)
+Integer -5 11: (-5)
+Integer big 0: -1180591620717411303424
+Integer big 1: -1180591620717411303424
+Integer big 2: -1180591620717411303424
+Integer big 3: -1180591620717411303424
+Integer big 4: -1180591620717411303424
+Integer big 5: -1180591620717411303424
+Integer big 6: -1180591620717411303424
+Integer big 7: (-1180591620717411303424)
+Integer big 8: (-1180591620717411303424)
+Integer big 9: (-1180591620717411303424)
+Integer big 10: (-1180591620717411303424)
+Integer big 11: (-1180591620717411303424)
+Double -1.5 0: -1.5
+Double -1.5 1: -1.5
+Double -1.5 2: -1.5
+Double -1.5 3: -1.5
+Double -1.5 4: -1.5
+Double -1.5 5: -1.5
+Double -1.5 6: -1.5
+Double -1.5 7: (-1.5)
+Double -1.5 8: (-1.5)
+Double -1.5 9: (-1.5)
+Double -1.5 10: (-1.5)
+Double -1.5 11: (-1.5)
+Double 1.5 0: 1.5
+Double 1.5 1: 1.5
+Double 1.5 2: 1.5
+Double 1.5 3: 1.5
+Double 1.5 4: 1.5
+Double 1.5 5: 1.5
+Double 1.5 6: 1.5
+Double 1.5 7: 1.5
+Double 1.5 8: 1.5
+Double 1.5 9: 1.5
+Double 1.5 10: 1.5
+Double 1.5 11: 1.5
+Float -0.25 0: -0.25
+Float -0.25 1: -0.25
+Float -0.25 2: -0.25
+Float -0.25 3: -0.25
+Float -0.25 4: -0.25
+Float -0.25 5: -0.25
+Float -0.25 6: -0.25
+Float -0.25 7: (-0.25)
+Float -0.25 8: (-0.25)
+Float -0.25 9: (-0.25)
+Float -0.25 10: (-0.25)
+Float -0.25 11: (-0.25)
+Rational 3 % 4 0: 3 % 4
+Rational 3 % 4 1: 3 % 4
+Rational 3 % 4 2: 3 % 4
+Rational 3 % 4 3: 3 % 4
+Rational 3 % 4 4: 3 % 4
+Rational 3 % 4 5: 3 % 4
+Rational 3 % 4 6: 3 % 4
+Rational 3 % 4 7: 3 % 4
+Rational 3 % 4 8: (3 % 4)
+Rational 3 % 4 9: (3 % 4)
+Rational 3 % 4 10: (3 % 4)
+Rational 3 % 4 11: (3 % 4)
+Rational -3 % 4 0: (-3) % 4
+Rational -3 % 4 1: (-3) % 4
+Rational -3 % 4 2: (-3) % 4
+Rational -3 % 4 3: (-3) % 4
+Rational -3 % 4 4: (-3) % 4
+Rational -3 % 4 5: (-3) % 4
+Rational -3 % 4 6: (-3) % 4
+Rational -3 % 4 7: (-3) % 4
+Rational -3 % 4 8: ((-3) % 4)
+Rational -3 % 4 9: ((-3) % 4)
+Rational -3 % 4 10: ((-3) % 4)
+Rational -3 % 4 11: ((-3) % 4)
+Just -5 0: Just (-5)
+Just -5 1: Just (-5)
+Just -5 2: Just (-5)
+Just -5 3: Just (-5)
+Just -5 4: Just (-5)
+Just -5 5: Just (-5)
+Just -5 6: Just (-5)
+Just -5 7: Just (-5)
+Just -5 8: Just (-5)
+Just -5 9: Just (-5)
+Just -5 10: Just (-5)
+Just -5 11: (Just (-5))
+Just 5 0: Just 5
+Just 5 1: Just 5
+Just 5 2: Just 5
+Just 5 3: Just 5
+Just 5 4: Just 5
+Just 5 5: Just 5
+Just 5 6: Just 5
+Just 5 7: Just 5
+Just 5 8: Just 5
+Just 5 9: Just 5
+Just 5 10: Just 5
+Just 5 11: (Just 5)
+Left -1.5 0: Left (-1.5)
+Left -1.5 1: Left (-1.5)
+Left -1.5 2: Left (-1.5)
+Left -1.5 3: Left (-1.5)
+Left -1.5 4: Left (-1.5)
+Left -1.5 5: Left (-1.5)
+Left -1.5 6: Left (-1.5)
+Left -1.5 7: Left (-1.5)
+Left -1.5 8: Left (-1.5)
+Left -1.5 9: Left (-1.5)
+Left -1.5 10: Left (-1.5)
+Left -1.5 11: (Left (-1.5))
+Just (3 % 4) 0: Just (3 % 4)
+Just (3 % 4) 1: Just (3 % 4)
+Just (3 % 4) 2: Just (3 % 4)
+Just (3 % 4) 3: Just (3 % 4)
+Just (3 % 4) 4: Just (3 % 4)
+Just (3 % 4) 5: Just (3 % 4)
+Just (3 % 4) 6: Just (3 % 4)
+Just (3 % 4) 7: Just (3 % 4)
+Just (3 % 4) 8: Just (3 % 4)
+Just (3 % 4) 9: Just (3 % 4)
+Just (3 % 4) 10: Just (3 % 4)
+Just (3 % 4) 11: (Just (3 % 4))
+list 0: [-1,2]
+list 1: [-1,2]
+list 2: [-1,2]
+list 3: [-1,2]
+list 4: [-1,2]
+list 5: [-1,2]
+list 6: [-1,2]
+list 7: [-1,2]
+list 8: [-1,2]
+list 9: [-1,2]
+list 10: [-1,2]
+list 11: [-1,2]
+tuple 0: (-1,-2.5)
+tuple 1: (-1,-2.5)
+tuple 2: (-1,-2.5)
+tuple 3: (-1,-2.5)
+tuple 4: (-1,-2.5)
+tuple 5: (-1,-2.5)
+tuple 6: (-1,-2.5)
+tuple 7: (-1,-2.5)
+tuple 8: (-1,-2.5)
+tuple 9: (-1,-2.5)
+tuple 10: (-1,-2.5)
+tuple 11: (-1,-2.5)
+Nothing 0: Nothing
+Nothing 1: Nothing
+Nothing 2: Nothing
+Nothing 3: Nothing
+Nothing 4: Nothing
+Nothing 5: Nothing
+Nothing 6: Nothing
+Nothing 7: Nothing
+Nothing 8: Nothing
+Nothing 9: Nothing
+Nothing 10: Nothing
+Nothing 11: Nothing
+minBound 0: -9223372036854775808
+minBound 1: -9223372036854775808
+minBound 2: -9223372036854775808
+minBound 3: -9223372036854775808
+minBound 4: -9223372036854775808
+minBound 5: -9223372036854775808
+minBound 6: -9223372036854775808
+minBound 7: (-9223372036854775808)
+minBound 8: (-9223372036854775808)
+minBound 9: (-9223372036854775808)
+minBound 10: (-9223372036854775808)
+minBound 11: (-9223372036854775808)
+("continuation","12tail","(-12)tail","(Just 'x')tail")
+("show = showsPrec 0",True,True)
+("negative precedence","-7","(-7)","(Just 'x')")

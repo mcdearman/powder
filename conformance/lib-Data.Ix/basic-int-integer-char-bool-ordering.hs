@@ -1,0 +1,35 @@
+-- Haskell 2010 Report 19.1 (Data.Ix): range, index, inRange, rangeSize at Int, Integer, Char, Bool, Ordering
+module Main (main) where
+
+import Data.Ix
+
+main :: IO ()
+main = do
+  print ("range Int", range (1, 5 :: Int))
+  print ("range Int negative", range (-2, 2 :: Int))
+  print ("range Int singleton", range (7, 7 :: Int))
+  print ("index Int", index (1, 5 :: Int) 1, index (1, 5 :: Int) 3, index (1, 5 :: Int) 5)
+  print ("index Int negative lower bound", index (-10, 10 :: Int) (-10), index (-10, 10 :: Int) 0, index (-10, 10 :: Int) 10)
+  print ("inRange Int", inRange (1, 5 :: Int) 0, inRange (1, 5 :: Int) 1, inRange (1, 5 :: Int) 5, inRange (1, 5 :: Int) 6)
+  print ("rangeSize Int", rangeSize (1, 5 :: Int), rangeSize (-10, 10 :: Int), rangeSize (7, 7 :: Int))
+  print ("range Integer", range (10 ^ 20, 10 ^ 20 + 2 :: Integer))
+  print ("index Integer", index (10 ^ 20, 10 ^ 20 + 5 :: Integer) (10 ^ 20 + 4))
+  print ("inRange Integer", inRange (-(10 ^ 30), 10 ^ 30 :: Integer) 0, inRange (0, 10 ^ 30 :: Integer) (10 ^ 30 + 1))
+  print ("rangeSize Integer", rangeSize (-5, 5 :: Integer), rangeSize (2 ^ 70, 2 ^ 70 + 99 :: Integer))
+  print ("range Char", range ('a', 'f'))
+  print ("range Char digits", range ('0', '9'))
+  print ("index Char", index ('a', 'z') 'a', index ('a', 'z') 'm', index ('a', 'z') 'z')
+  print ("inRange Char", inRange ('a', 'z') 'q', inRange ('a', 'z') 'Q', inRange ('a', 'z') '{')
+  print ("rangeSize Char", rangeSize ('a', 'z'), rangeSize ('\0', '\255'), rangeSize (minBound, maxBound :: Char))
+  print ("range Bool", range (False, True))
+  print ("range Bool singletons", range (False, False), range (True, True))
+  print ("index Bool", index (False, True) False, index (False, True) True, index (True, True) True)
+  print ("inRange Bool", inRange (False, True) True, inRange (False, False) True, inRange (True, True) False)
+  print ("rangeSize Bool", rangeSize (False, True), rangeSize (True, True))
+  print ("range Ordering", range (LT, GT))
+  print ("range Ordering part", range (EQ, GT), range (LT, EQ))
+  print ("index Ordering", index (LT, GT) LT, index (LT, GT) EQ, index (LT, GT) GT, index (EQ, GT) GT)
+  print ("inRange Ordering", inRange (LT, EQ) GT, inRange (LT, EQ) EQ, inRange (EQ, GT) LT)
+  print ("rangeSize Ordering", rangeSize (LT, GT), rangeSize (EQ, EQ))
+  print ("range is enumFromTo", range (3, 9 :: Int) == [3 .. 9], range ('p', 't') == ['p' .. 't'])
+  print ("index is offset from lower bound", [index (100, 110 :: Int) i | i <- [100, 105, 110]])

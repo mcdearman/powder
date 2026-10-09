@@ -1,0 +1,20 @@
+("constructors",Left 1,Right 'a')
+("either","3","bcd")
+("either 2",4,-5)
+("either with constructors",Right 'x')
+("eq",True,True,False,True)
+("ord Left < Right",True,GT)
+("ord within",LT,GT,Left 5)
+show Left: Left 1
+show Left negative: Left (-1)
+show Right: Right 'a'
+show nested: Right (Left 2)
+show with Maybe: Left (Just 'x')
+show list: [Left 1,Right 'b']
+showsPrec 11: (Left 1)
+("read",Left 1,Right 'x',Right 'x',Left (-5))
+("read nested",Right (Left 2))
+("reads failure",[],[])
+("parse",Right 7,Left "not a digit: x")
+("lefts and rights",[1,2],"a")
+("case",8)

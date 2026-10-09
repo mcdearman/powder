@@ -1,0 +1,6 @@
+("first line","first")
+("remaining lines until EOF",["second","","fourth after a blank"])
+("getLine at EOF",True,False,False)
+("still at EOF",Nothing)
+("getChar at EOF",Nothing)
+done

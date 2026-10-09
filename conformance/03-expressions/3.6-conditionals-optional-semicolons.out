@@ -1,0 +1,8 @@
+odd 1
+after if
+even 2
+after if
+explicit then
+explicit after
+("result",'b')
+("list monad",[1,3])

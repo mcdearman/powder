@@ -1,0 +1,8 @@
+("Maybe",1,0)
+("[]",3)
+("(,) Int",1,(7,True))
+("(->) Int",42)
+("Either String",0,Left "no")
+("Either String right",1)
+("nested App",2)
+("function to pair",('z','z'))

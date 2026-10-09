@@ -1,0 +1,6 @@
+("maybe",Nothing)
+("list",[])
+io: stop
+body runs once
+handler: stop2
+done

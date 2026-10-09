@@ -1,0 +1,6 @@
+("x re-exported","B.x")
+("y not re-exported","Main.y")
+("z not re-exported","Main.z")
+("c not re-exported","Main.c")
+("d re-exported via alias","D.d")
+("A's own",["B.x","B.y","C.c","D.d","D.d"])

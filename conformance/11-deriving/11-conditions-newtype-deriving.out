@@ -1,0 +1,22 @@
+Age 30
+Age (-1)
+Just (Age 5)
+("Age Eq/Ord",True,True,True,GT,Age 2)
+("Age Read",Age 7,Age (-7),[])
+("Age Bounded",Age (-9223372036854775808),Age 9223372036854775807)
+Wrapper {unwrap = 'x'}
+Wrapper {unwrap = -5}
+Just (Wrapper {unwrap = [1,2]})
+Wrapper {unwrap = Wrapper {unwrap = True}}
+("Wrapper Eq/Ord",True,True,Wrapper {unwrap = LT})
+("Wrapper Read",Wrapper {unwrap = 3},Wrapper {unwrap = "s"})
+("Wrapper Read nested",Wrapper {unwrap = Wrapper {unwrap = ()}})
+("Wrapper Bounded",Wrapper {unwrap = False},Wrapper {unwrap = (True,GT)})
+("Wrapper field",'q',2.5)
+(Name "alice",[Name "",Name "b\"c"])
+("Name",True,True,Name "x y")
+Fix (Just (Fix (Just (Fix Nothing))))
+("Fix",True,True)
+(Both (Left 1),Both (Right 'r'))
+("Both",True,True)
+("showsPrec 11","(Age 1)","(Wrapper {unwrap = 'c'})","Age 1")

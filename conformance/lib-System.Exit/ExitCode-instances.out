@@ -1,0 +1,24 @@
+ExitSuccess
+ExitFailure 3
+ExitFailure (-1)
+[ExitFailure 2,ExitSuccess,ExitFailure (-1),ExitFailure 1,ExitSuccess,ExitFailure 255]
+Just (ExitFailure 3)
+Just ExitSuccess
+ExitFailure 3
+(ExitFailure 3)
+ExitSuccess
+("pattern matching",["failure 2","success","failure -1","failure 1","success","failure 255"])
+("ExitFailure is a function",[ExitFailure 1,ExitFailure 2,ExitFailure 3])
+("eq",True,True,False,False)
+("neq",True,False)
+("ord constructors",True,True,GT)
+("ord arguments",LT,EQ,True)
+("max min",ExitFailure 1,ExitSuccess,ExitFailure 255,ExitSuccess)
+("read",ExitSuccess,ExitFailure 3)
+("read with spaces and parens",ExitFailure 42,ExitSuccess)
+("read negative",ExitFailure (-1))
+("read list",[ExitSuccess,ExitFailure 1])
+("read . show",True)
+("reads rest",[(ExitFailure 7," rest")])
+("reads failure",[])
+("readsPrec 11 needs parentheses",True)

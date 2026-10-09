@@ -1,0 +1,8 @@
+("area",3,4)
+("f",3)
+("g",2)
+("class","thing","square")
+("let with trailing semicolon",3)
+("bind","ABC")
+("case","matched")
+("done",())

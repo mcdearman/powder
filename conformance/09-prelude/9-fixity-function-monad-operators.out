@@ -1,0 +1,28 @@
+(". above $",11,"11")
+(". is infixr 9 (types force grouping)",3,True)
+(". above ++ only via parens","22")
+("application above .",4,[3,5])
+("$ is infixr 0",-7,5)
+("$ below +",-5,1)
+("$ below &&",True,False)
+("$ below ==",True,"True")
+("$ below ++",4,[3,2,1])
+("$ below >>=","Just 2")
+("$! is infixr 0",7,-11,9)
+("$ and $! mix",5,5)
+("seq is infixr 0",5,'c')
+("seq below ==",True,False)
+("seq and $ mix",3,5)
+(">>= is infixl 1",Just 3,Nothing)
+(">>= with composed functions",Just 8,[2,2,3,3])
+(">> and >>= same level",Just 4,Just 'y')
+(">> is infixl",[True,True,True,True])
+(">>= below ||",Just False,Just True)
+("=<< is infixr 1",Just 3,Just 8)
+("=<< below .",[2,3,4])
+("lambda extends right over >>=",Just 6)
+ab'c'
+41
+41
+6
+8

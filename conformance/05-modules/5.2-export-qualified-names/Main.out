@@ -1,0 +1,4 @@
+("re-exported by qualified name",3)
+("own entity by qualified name",4)
+("type by qualified name",Box {unBox = 1},2)
+("class by qualified name","box#3")

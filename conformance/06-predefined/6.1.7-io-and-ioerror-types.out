@@ -1,0 +1,13 @@
+("return then bind",41)
+("fmap on IO",42)
+("bind",82)
+("IO values in a list are not run by length",2)
+hello a
+hello b
+("no error",41)
+("user error caught",3)
+("userError builds a value without raising","user error: one")
+("IOError is in Eq",True,False,True)
+user error: one
+hello c
+("IO () yields unit",())

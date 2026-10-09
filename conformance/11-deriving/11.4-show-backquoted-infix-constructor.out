@@ -1,0 +1,26 @@
+1 `Foo` 2
+1 `Foo` 2
+-1 `Foo` -2
+(Just (1 `Foo` 2),[1 `Foo` 2,3 `Foo` 4])
+1 `Foo` 2 | (1 `Foo` 2) | (1 `Foo` 2)
+1 `Baz` 2
+1 `Baz` 2
+(-1) `Baz` (-2)
+Just (1 `Baz` 2)
+1 `Baz` 2 | (1 `Baz` 2) | (1 `Baz` 2)
+Then 1 2
+Then 1 2
+Then (-1) (-2)
+Just (Then 1 2)
+Then 1 2 | Then 1 2 | (Then 1 2)
+End
+1 `Link` End
+1 `Link` (2 `Link` (3 `Link` End))
+1 `Link` (-2 `Link` End)
+Just (1 `Link` End)
+'a' `With` True
+(1 `With` 'b') `With` "c"
+Just 'x' `With` [1,2]
+('a' `With` 'b') `With` ('c' `With` 'd')
+'a' `With` ('b' `With` 'c')
+(-1) `With` (-2.5)

@@ -1,0 +1,56 @@
+-- Haskell 2010 Report 16 (Data.Char): showLitChar (escapes, numeric escapes, \& protection), and its
+-- use by show at Char and String
+module Main (main) where
+
+import Data.Char
+
+lit :: Char -> String
+lit c = showLitChar c ""
+
+main :: IO ()
+main = do
+  putStrLn (lit 'a')
+  putStrLn (lit ' ')
+  putStrLn (lit '~')
+  putStrLn (lit '\\')
+  putStrLn (lit '"')
+  putStrLn (lit '\'')
+  putStrLn (lit '\n')
+  putStrLn (lit '\t')
+  putStrLn (lit '\a')
+  putStrLn (lit '\b')
+  putStrLn (lit '\f')
+  putStrLn (lit '\r')
+  putStrLn (lit '\v')
+  putStrLn (lit '\0')
+  putStrLn (lit '\1')
+  putStrLn (lit '\27')
+  putStrLn (lit '\31')
+  putStrLn (lit '\DEL')
+  putStrLn (lit '\128')
+  putStrLn (lit '\255')
+  putStrLn (lit '\1234')
+  putStrLn (lit maxBound)
+  putStrLn (unwords (map lit ['\0' .. '\32']))
+  putStrLn (showLitChar 'x' "yz")
+  putStrLn (showLitChar '\n' "rest")
+  putStrLn (showLitChar '\SO' "H")
+  putStrLn (showLitChar '\SO' "h")
+  putStrLn (showLitChar '\SOH' "H")
+  putStrLn (showLitChar '\200' "1")
+  putStrLn (showLitChar '\200' "a")
+  putStrLn (showLitChar '\DEL' "1")
+  putStrLn (foldr showLitChar "" "tab\there \1234\&5 \SO\&H end")
+  putStrLn (show 'a')
+  putStrLn (show '\'')
+  putStrLn (show '"')
+  putStrLn (show '\n')
+  putStrLn (show '\200')
+  putStrLn (show "it's")
+  putStrLn (show "say \"hi\"")
+  putStrLn (show "\SOH")
+  putStrLn (show "\SO\&H")
+  putStrLn (show "\1234\&5")
+  putStrLn (show "\1234x")
+  putStrLn (show "a\\b")
+  print ("length of shown newline", length (lit '\n'))

@@ -1,0 +1,16 @@
+("Int",42,43)
+("list",[1,2,3],6)
+("tuple",(True,'x'))
+("Double with surrounding spaces",3.5)
+("String","a quoted string")
+("Maybe Integer",Just (-12345678901234567890))
+user error for an unparsable line
+("the unparsable line was consumed",7)
+("readIO",7)
+("readIO structure",[(1,"one"),(2,"two")])
+("readIO parenthesised negative",-5)
+user error for incomplete input
+user error for trailing garbage
+user error for empty input
+("tryIOError around readIO",Just True)
+EOF error from readLn at end of input

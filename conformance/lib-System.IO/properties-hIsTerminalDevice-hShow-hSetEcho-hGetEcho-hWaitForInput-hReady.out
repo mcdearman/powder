@@ -1,0 +1,12 @@
+("hIsTerminalDevice on a file opened for reading",False)
+("hShow of an open handle is non-empty",True)
+("hReady with data available",True)
+("hWaitForInput 0 with data available",True)
+("after hLookAhead",'s',True,True)
+("after hGetLine","some data",True)
+("hWaitForInput with a negative timeout waits indefinitely",True)
+("input is not consumed by hReady or hWaitForInput",'m')
+hSetEcho and hGetEcho accepted on a file handle
+("handle still usable","ore data")
+("hIsTerminalDevice on a file opened for writing",False)
+("hShow of a write handle is non-empty",True)

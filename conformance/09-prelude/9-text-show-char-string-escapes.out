@@ -1,0 +1,20 @@
+'a' 'Z' '0' ' ' '~'
+'\'' '"' '\\'
+'\n' '\t' '\r' '\a' '\b' '\f' '\v'
+'\NUL' '\SOH' '\ESC' '\US' '\DEL'
+'\128' '\200' '\255' '\1234' '\1114111'
+"" "abc" "with space"
+"quote\"inside" "apostrophe's" "back\\slash"
+"line1\nline2" "tab\there" "\a\b\f\r\v"
+"\NUL\SOH\STX" "\DEL\128" "caf\233"
+"\1234" "\1234x" "x\1234"
+"\200\&1" "\1234\&5" "\NUL0"
+"\SO\&H" "\SOH" "\SO" "\SOx"
+"ab" "" "\"" "'"
+["ab","","c\"d"] ["x"] []
+('a',"b") Just "x\ny" Just '\n' [Just 'q']
+"\"nested\"" "'c'" "\"\\\"x\\\"\""
+[34,92,110,34] 6
+"abc" "a\"b"tail "s"t "s" 'c'
+True
+True

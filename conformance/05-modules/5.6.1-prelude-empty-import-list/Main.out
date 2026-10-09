@@ -1,0 +1,8 @@
+("local show","Yes","No")
+("list and tuple syntax",[1,2,3],(1,'c',()))
+("literals",42,1.5,"str")
+("enumFromTo sugar",[1,2,3])
+("if uses Prelude Bool",'y')
+("local map",["No","Yes"])
+("negation sugar",-5)
+("comprehension","ac")

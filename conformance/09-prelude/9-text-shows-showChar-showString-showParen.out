@@ -1,0 +1,25 @@
+("shows","12","12!","True that","'c'","\"s\"")
+("shows negative","-5","-1.5x","Just (-5)")
+("shows = showsPrec 0",True)
+("showChar","a","abc","\n","\"")
+("showChar = (:)",True)
+("showString","abc","abcdef","x","q\"q")
+("showString = (++)",True)
+("showString does not quote",True,True)
+("showParen False","x","1!")
+("showParen True","(x)","(1)!")
+("showParen nested","((x))","()")
+("showParen by condition",["f x","f x","(f x)"])
+("composition","ab3c")
+("composition with tail","<1> rest")
+("commaSep","","1","1,'x',raw")
+("foldr of ShowS","1 2 3 end")
+("ShowS is String -> String",["1","c","s"])
+1 + 2 * 3
+(1 + 2) * 3
+1 + (2 + 3)
+1 + 2 + 3
+(-1) * neg (-2)
+neg (neg (1 + (-2)))
+(1 + 2) <- parenthesised
+("lazy in continuation","123","ab",'h')

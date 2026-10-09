@@ -1,0 +1,31 @@
+Nil
+Cons 1 Nil
+Cons 1 (Cons 2 Nil)
+Cons (-1) (Cons 2 (Cons (-3) Nil))
+Cons 'a' (Cons 'b' Nil)
+Cons "ab" (Cons "" Nil)
+Cons (Just 1) (Cons Nothing Nil)
+Cons (Cons 1 Nil) (Cons Nil Nil)
+Leaf
+Node Leaf 'x' Leaf
+Node (Node Leaf 1 Leaf) 2 (Node Leaf 3 Leaf)
+Node (Node (Node Leaf (-1) Leaf) 0 Leaf) 1 (Node Leaf 2 Leaf)
+Node Leaf (Node Leaf True Leaf) Leaf
+RLeaf 1
+RLeaf 1 :^: RLeaf 2
+RLeaf 1 :^: (RLeaf 2 :^: RLeaf 3)
+(RLeaf 1 :^: RLeaf 2) :^: RLeaf 3
+RLeaf (-1) :^: RLeaf (-2)
+RLeaf "s" :^: ((RLeaf "t" :^: RLeaf "u") :^: RLeaf "v")
+RLeaf 'a' :^: RLeaf 'b' | (RLeaf 'a' :^: RLeaf 'b') | (RLeaf 'a')
+(None,Some 1,Some (-1))
+(Some (Some 'a'),Some None,Some (Some (Some ())))
+(Some [1,2],Some "str",Some (1,'c'),[Some True,None])
+(L 1,R 'c',L (R (-1)))
+Rose 1 []
+Rose 'a' [Rose 'b' [],Rose 'c' [Rose 'd' []]]
+Rose (-1) [Rose (-2) []]
+(S (S (S Z)),[Z,S Z],Just (S Z))
+Some (Node Leaf (Cons (L 1) Nil) Leaf)
+(Just (Cons 1 Nil),Left Leaf)
+10894

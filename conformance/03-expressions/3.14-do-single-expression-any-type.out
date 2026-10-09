@@ -1,0 +1,6 @@
+("int",5)
+("string","hello")
+("function",3)
+("nested",True)
+("tuple",(1,'c'))
+("arithmetic",5)

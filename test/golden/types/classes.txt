@@ -1,0 +1,5 @@
+insert :: Ord a => a -> Tree a -> Tree a
+toList :: Tree a -> [a]
+total :: Num a => [a] -> a
+safeDiv :: Int -> Int -> Maybe Int
+main :: IO ()

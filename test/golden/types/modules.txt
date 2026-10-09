@@ -1,0 +1,3 @@
+lookup :: Int -> [Char]
+length' :: [a] -> Int
+main :: IO ()

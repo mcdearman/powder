@@ -1,0 +1,6 @@
+getChar: EOF error
+getLine: EOF error
+readLn: EOF error
+getChar twice: EOF error
+("getContents on empty input","",True)
+done

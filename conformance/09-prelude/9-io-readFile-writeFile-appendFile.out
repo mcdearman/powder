@@ -1,0 +1,11 @@
+("after writeFile","line one\n")
+("after appendFile","line one\nline two\n")
+("after second appendFile",["line one","line two","no newline at end"],35)
+("writeFile truncates","replaced")
+("empty file","",True)
+("append nothing","")
+("numbers",15)
+("show/read through a file",[(1,"one"),(2,"two")])
+tab	here "quoted" back\slash
+("large",20000,"xx","yy")
+done

@@ -1,0 +1,15 @@
+("after writeFile","first\n")
+("writeFile replaces contents","second version\nwith two lines\n")
+("lines",["second version","with two lines"])
+("empty file","",True)
+("appendFile accumulates","abc\nd")
+("no newline is added","no trailing newline",'e')
+("numbers",[1,2,3,4,5])
+("sum",15)
+("show/read round trip",[(1,"one"),(2,"two")])
+("special characters survive","tab\there, quote\" and backslash\\ and \SOH control\n")
+("large file",23893,5000,"5000")
+("only newlines","\n\n\n",3)
+rewritten after everything
+lazy read: only the first line is demanded here
+("then the rest",60)

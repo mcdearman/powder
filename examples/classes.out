@@ -1,0 +1,11 @@
+[Circle 1,Rect 1 5,Rect 2 3]
+Node Leaf "circle" (Node Leaf "rectangle" (Node Leaf "rectangle" Leaf))
+<Rect 2 3> <Circle 1> <Rect 1 5> <Circle 1>
+yes no, a list of 2
+(True,True,Rect 2 3)
+(9,())
+(Just 33,Nothing)
+[(1,'a'),(1,'b'),(2,'a'),(2,'b'),(3,'a'),(3,'b')]
+(Just (-3),[Left 1,Right "two"],LT)
+(-9223372036854775808,[False,True],"'x'\"q\\\"\\n\"")
+([Tue,Wed,Thu,Fri],[Mon,Wed,Fri],[Fri,Thu,Wed,Tue],Tue,3,[Mon,Tue,Wed,Thu,Fri])

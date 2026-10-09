@@ -1,0 +1,8 @@
+("after first append","one\n")
+("after second append","one\ntwo\n")
+("appending the empty string changes nothing",True)
+("appends join exactly",["one","two","no newline, continued"])
+("appended in a loop",8,"5")
+("writeFile discards earlier appends","fresh\nstart\n")
+("appendFile returns unit",())
+("final size",13)

@@ -1,0 +1,38 @@
+abc
+1
+2
+3
+item 10
+item 20
+effect inside sequence
+("sequence collects",[1,2,3])
+visit x
+visit yy
+visit zzz
+("mapM collects",[1,2,3])
+("mapM_ result",())
+3
+2
+1
+liftoff
+("deep recursion in IO",5000050000)
+("collatz steps for 27",111)
+*
+**
+***
+****
+1a
+1b
+2a
+2b
+when: condition true
+unless: condition false
+1. alpha
+2. beta
+3. gamma
+ababab
+'x'
+'y'
+'z'
+end of foldr
+("fold of binds",123)

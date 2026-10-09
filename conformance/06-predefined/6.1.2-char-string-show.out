@@ -1,0 +1,32 @@
+plain char: 'a'
+newline char: '\n'
+tab char: '\t'
+single quote char: '\''
+double quote char: '"'
+backslash char: '\\'
+NUL char: '\NUL'
+ESC char: '\ESC'
+DEL char: '\DEL'
+char 128: '\128'
+char 200: '\200'
+max char: '\1114111'
+plain string: "hello"
+empty string: ""
+string with double quote: "say \"hi\""
+string with single quote: "it's"
+string with backslash: "a\\b"
+simple escapes: "\a\b\f\n\r\t\v"
+control names: "\NUL\SOH\STX\ESC\US\DEL"
+SO then H: "\SO\&H"
+SOH: "\SOH"
+SO then other letter: "\SOA"
+numeric then digit: "\200\&1"
+numeric then letter: "\200a"
+numeric then space digit: "\200 1"
+large code point: "\1234\&5\1114111"
+list of chars is a string: "ab"
+list of strings: ["a","b\n"]
+char in tuple: ('x',"y")
+Maybe String: Just "z"
+shows: 'q'"r"
+(["'a'","'\\''","'\"'"],"\"\\\"x\\\"\"")

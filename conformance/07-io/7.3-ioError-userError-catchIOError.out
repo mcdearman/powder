@@ -1,0 +1,22 @@
+caught: isUserError=True message="boom"
+no error: handler not used
+("result without error",5)
+("result from handler",-1)
+("message from handler","division by zero")
+before the error
+caught: isUserError=True message="mid"
+caught: isUserError=True message="skips binds"
+in do
+caught: isUserError=True message="division by zero"
+4
+6
+caught: isUserError=True message="division by zero"
+("userError alone raises nothing",True,"a value")
+("other predicates on a user error",False,False)
+caught: isUserError=True message="a value"
+caught: isUserError=True message="a value"
+caught: isUserError=True message=""
+caught: isUserError=True message="multi word message with \"quotes\""
+("as Either",Left "division by zero")
+("as Either",Right 1)
+execution continues after handled errors

@@ -1,0 +1,41 @@
+Word8  div  [3,28,15,0,0,1,0,254]
+Word8  mod  [1,4,15,0,1,0,100,0]
+Word8  div is quot True
+Word8  mod is rem  True
+Word8  divMod law  True
+Word8  divMod is quotRem True
+Word16 div  [3,28,15,0,0,1,0,254]
+Word16 mod  [1,4,15,0,1,0,100,0]
+Word16 div is quot True
+Word16 mod is rem  True
+Word16 divMod law  True
+Word16 divMod is quotRem True
+Word32 div  [3,28,15,0,0,1,0,254]
+Word32 mod  [1,4,15,0,1,0,100,0]
+Word32 div is quot True
+Word32 mod is rem  True
+Word32 divMod law  True
+Word32 divMod is quotRem True
+Word64 div  [3,28,15,0,0,1,0,254]
+Word64 mod  [1,4,15,0,1,0,100,0]
+Word64 div is quot True
+Word64 mod is rem  True
+Word64 divMod law  True
+Word64 divMod is quotRem True
+Word   div  [3,28,15,0,0,1,0,254]
+Word   mod  [1,4,15,0,1,0,100,0]
+Word   div is quot True
+Word   mod is rem  True
+Word   divMod law  True
+Word   divMod is quotRem True
+("Word8 high values are not negative",100,1,1)
+("Word8 divMod",(25,5),(25,5))
+("Word16 maxBound",(255,255),(65,535))
+("Word32 maxBound",(65535,65535),(429496729,5))
+("Word64 maxBound",(1844674407370955161,5),(4294967295,4294967295))
+("Word maxBound",(6148914691236517205,0))
+("wrapped then divided",127,2147483647)
+("gcd",6,17,9,65535)
+("lcm",12,0,42)
+("even odd",True,True,False,True)
+("digits",[5,3,5,5,6])

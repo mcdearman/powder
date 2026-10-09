@@ -1,0 +1,14 @@
+header via getLine: HEADER LINE
+1: the quick brown fox
+2: jumps over
+3: 
+4: the lazy dog
+5: 	tab-indented line
+6: 1 2 3 4 5 60
+("line count",6)
+("char count including newlines",77)
+("word count",17)
+("longest line",19)
+("sum of numbers on the last line",75)
+("blank lines",1)
+("ends with newline",True)

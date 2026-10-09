@@ -1,0 +1,6 @@
+("double",42)
+("triple",9)
+("square",16,2.25,9)
+("scale",20)
+("pragma-like text in a string","{-# INLINE x #-}")
+("local",11)

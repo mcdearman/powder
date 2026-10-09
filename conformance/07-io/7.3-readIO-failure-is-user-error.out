@@ -1,0 +1,15 @@
+"12" -> ok 12
+" 12 " -> ok 12
+"(12)" -> ok 12
+"-12" -> ok -12
+"twelve" -> failed, isUserError=True
+"" -> failed, isUserError=True
+"12 13" -> failed, isUserError=True
+"12x" -> failed, isUserError=True
+"1.5" -> failed, isUserError=True
+"[12]" -> failed, isUserError=True
+("handler supplies a default",False)
+("mapM readIO aborted",[])
+readLn good line: 41
+readLn bad line: isUserError=True isEOFError=False
+readLn continues with the next line: 43

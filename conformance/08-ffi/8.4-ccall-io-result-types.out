@@ -1,0 +1,12 @@
+("sqrt in IO",4.0)
+("pow in IO",1024.0)
+("fma in IO",10.0)
+("abs in IO",5)
+("toupper in IO",'A')
+("sequenced calls",5.0)
+("mapM",[1.0,2.0,3.0,4.0])
+("bind chain",3.0)
+("fmap",27.0)
+("an action can be run twice",7.0,7.0)
+("same C function imported pure and in IO",True)
+SHOUT

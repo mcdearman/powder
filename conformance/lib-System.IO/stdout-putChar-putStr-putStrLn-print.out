@@ -1,0 +1,36 @@
+ab
+no newline ... continued
+with newline
+
+two
+lines
+from
+unlines
+char by char
+x
+y
+z
+42
+-7
+3.5
+'c'
+"string with \"quotes\" and \\ backslash"
+"tab\tnewline\n"
+True
+()
+[1,2,3]
+(1,'x',"s")
+Just [LT,EQ,GT]
+Circle 1.5
+[Rect 2 3,Circle 0.0]
+Left 3
+12 is what print would write
+tab	here
+trailing spaces   
+   leading spaces
+	T
+1 2 3 4 5 
+print x is putStrLn (show x):
+"same"
+"same"
+last line has no newline

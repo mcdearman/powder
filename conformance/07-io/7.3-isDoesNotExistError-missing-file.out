@@ -1,0 +1,9 @@
+readFile: does not exist
+("isDoesNotExistError",True)
+("other predicates",False,False,False)
+("length or error code",-1)
+writeFile into a missing directory: does not exist
+appendFile into a missing directory: does not exist
+handler selected by predicate
+user error for contrast: user error
+program continues

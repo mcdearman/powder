@@ -1,0 +1,4 @@
+("value exported twice",11)
+("type exported as T, T(..) and T(C)",[C1,C2])
+("re-export overlapping with explicit export",10)
+("class exported twice",1,2)

@@ -1,0 +1,30 @@
+("foldM maybe ok",Just 10)
+("foldM maybe fail",Nothing)
+("foldM empty",Just 100)
+("foldM list",[6,9,5,6])
+("foldM is left to right",Just "abc")
+acc=0 x=1
+acc=1 x=2
+acc=3 x=3
+("foldM io",6)
+2
+6
+24
+("foldM_ maybe ok",Just ())
+("foldM_ maybe fail",Nothing)
+("replicateM list",["aa","ab","ba","bb"])
+("replicateM list 3",8)
+("replicateM zero",[""])
+("replicateM negative",[""])
+("replicateM just",Just "xxx")
+("replicateM nothing",Nothing)
+("replicateM zero nothing",Just "")
+effect
+effect
+("replicateM io","qq")
+tick
+tick
+tick
+("replicateM_ just",Just ())
+("replicateM_ nothing",Nothing)
+("replicateM_ list",[(),(),(),()])

@@ -1,0 +1,15 @@
+("string codes",[7,8,12,10,13,9,11])
+("backslash and quotes",[92,34,39])
+("char codes 1",[7,8,12,10,13,9,11])
+("char codes 2",[92,39,34,34])
+("apostrophe in string",[39])
+("lengths",1,2,2,2)
+("names 1",True,True,True)
+("names 2",True,True,True,True)
+("numeric",True,True,True,True)
+("space is a char",32,True,True)
+("escaped vs unescaped quote",True,True)
+tab:[	]
+backslash:[\] dquote:["] squote:[']
+line one
+line two

@@ -1,0 +1,30 @@
+-- Haskell 2010 Report 9 (and 4.4.2): Prelude fixities infixr 8 ^ ^^ **; infixl 7 * / quot rem div mod; infixl 6 + -
+-- Every value below changes if the precedence or associativity is wrong.
+module Main (main) where
+
+main :: IO ()
+main = do
+  print ("^ is infixr", 2 ^ 3 ^ 2 :: Integer, (2 ^ 3) ^ 2 :: Integer)
+  print ("** is infixr", 2 ** 3 ** 2 :: Double, (2 ** 3) ** 2 :: Double)
+  print ("^^ is infixr 8 with ^", 2 ^^ 3 ^ 2 :: Double, (2 ^^ 3) ^ 2 :: Double)
+  print ("^ above *", 2 * 3 ^ 2 :: Int, (2 * 3) ^ 2 :: Int, 2 ^ 2 * 3 :: Int)
+  print ("^ above unary minus", - 2 ^ 2 :: Int, (-2) ^ 2 :: Int)
+  print ("** above /", 16 / 2 ** 2 :: Double, (16 / 2) ** 2 :: Double)
+  print ("^^ above *", 3 * 2 ^^ 2 :: Double)
+  print ("* above +", 2 + 3 * 4 :: Int, (2 + 3) * 4 :: Int, 2 * 3 + 4 :: Int)
+  print ("- is infixl", 10 - 3 - 2 :: Int, 10 - (3 - 2) :: Int)
+  print ("+ and - same level, left to right", 10 - 3 + 2 :: Int, 10 - (3 + 2) :: Int)
+  print ("/ is infixl", 8 / 4 / 2 :: Double, 8 / (4 / 2) :: Double)
+  print ("* and / same level, left to right", 8 / 4 * 2 :: Double, 8 / (4 * 2) :: Double)
+  print ("div is infixl 7", 100 `div` 10 `div` 5 :: Int, 100 `div` (10 `div` 5) :: Int)
+  print ("div above +", 1 + 10 `div` 2 :: Int, (1 + 10) `div` 2 :: Int)
+  print ("mod same level as *", 7 `mod` 4 * 2 :: Int, 7 `mod` (4 * 2) :: Int, 2 * 7 `mod` 4 :: Int)
+  print ("quot and rem are infixl 7", 20 `quot` 3 `rem` 4 :: Int, 20 `quot` (3 `rem` 4) :: Int)
+  print ("rem above -", 10 - 7 `rem` 4 :: Int, (10 - 7) `rem` 4 :: Int)
+  print ("div below ^", 2 ^ 5 `div` 2 ^ 2 :: Int)
+  print ("unary minus at level 6: mod", - 7 `mod` 3 :: Int, (-7) `mod` 3 :: Int)
+  print ("unary minus at level 6: div", - 7 `div` 2 :: Int, (-7) `div` 2 :: Int)
+  print ("unary minus at level 6: *", - 2 * 3 + 10 :: Int)
+  print ("unary minus then -", - 5 - 3 :: Int, - (5 - 3) :: Int)
+  print ("mixed", 1 + 2 * 3 ^ 2 - 20 `div` 3 `mod` 4 :: Int)
+  print ("sections follow fixity", (subtract 1 . (* 2)) 5 :: Int, (2 ^) 3 + 1 :: Int)

@@ -1,0 +1,20 @@
+caught: first
+no error
+effects before the error happen
+handler: second
+("safeDivide",5,-1)
+inner handler: inner
+outer handler: rethrown
+outer handler: replaced in handler
+left to right
+Left: tried
+Right: 42
+("tryIOError safeDivide",Nothing)
+("error aborts mapM","division by zero")
+inner Left: nested try
+fail in IO is a user error / True
+("userError builds a value",True,"a value, not an action")
+("userError with empty string","",True)
+("thrown later","a value, not an action")
+("recover per element",[4,0,3])
+done

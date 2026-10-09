@@ -1,0 +1,30 @@
+("liftM just",Just 2)
+("liftM nothing",Nothing)
+("liftM list",["1","2"])
+("liftM2 maybe",Just 3)
+("liftM2 nothing",Nothing)
+("liftM2 list order",[11,21,12,22])
+("liftM2 pairs",[('a',True),('a',False),('b',True),('b',False)])
+("liftM3 maybe",Just 6)
+("liftM3 nothing",Nothing)
+("liftM3 list",[('a','c','d'),('a','c','e'),('b','c','d'),('b','c','e')])
+("liftM4 maybe",Just 10)
+("liftM4 list",[1111,2111,1112,2112])
+("liftM5 maybe",Just 15)
+("liftM5 nothing",Nothing)
+("liftM5 list",[('a','b','c','e','f'),('a','b','d','e','f')])
+first
+second
+("liftM2 io left to right",7)
+a
+b
+c
+("liftM3 io",6)
+("ap maybe",Just 3)
+("ap nothing function",Nothing)
+("ap nothing argument",Nothing)
+("ap list order",[11,21,20,40])
+("ap chain",Just 6)
+ap io
+("ap io",42)
+("liftM2 is ap",True)

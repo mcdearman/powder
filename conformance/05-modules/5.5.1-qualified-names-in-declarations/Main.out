@@ -1,0 +1,6 @@
+("instance for local type of a qualified class",6,"tri")
+("instance for qualified type; default method",16,"shape")
+("qualified class in context",7)
+("show",Tri3-4-5)
+("qualified function using the instances","tri:6")
+("Main-qualified local names",2)

@@ -1,0 +1,19 @@
+alreadyExists: [True,False,False,False,False,False,False,False]
+doesNotExist: [False,True,False,False,False,False,False,False]
+alreadyInUse: [False,False,True,False,False,False,False,False]
+full: [False,False,False,True,False,False,False,False]
+eof: [False,False,False,False,True,False,False,False]
+illegalOperation: [False,False,False,False,False,True,False,False]
+permission: [False,False,False,False,False,False,True,False]
+user: [False,False,False,False,False,False,False,True]
+("ioeGetErrorType of mkIOError",True)
+("ioeGetErrorType of userError",True)
+("ioeSetErrorType",True,False)
+("ioeSetErrorType keeps the file name",Just "/tmp/a")
+("ioeSetFileName",Just "/tmp/b")
+("ioeSetHandle",False,True)
+("ioeSetErrorString on a user error","new")
+("modifyIOError rewrites the error",Just "/tmp/modified")
+("modifyIOError can replace the error","replaced")
+no error, so the function is not applied
+("modifyIOError changing the type",True)

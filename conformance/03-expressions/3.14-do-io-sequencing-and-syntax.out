@@ -1,0 +1,32 @@
+first
+second
+("bind",1,2)
+action runs twice
+action runs twice
+("twice",('r','r'))
+braces 1
+braces 2
+empty statements
+are allowed
+loop 0
+loop 1
+loop 2
+("loop result",3)
+when true
+unless false
+case in do
+("case result","three")
+mapM_ 1
+mapM_ 2
+mapM_ 3
+mapM 1
+mapM 2
+mapM 3
+("mapM results",[1,4,9])
+defined once, run twice
+defined once, run twice
+bound bottom is never forced
+a
+b
+("unit from >>=",())
+return does not exit the block

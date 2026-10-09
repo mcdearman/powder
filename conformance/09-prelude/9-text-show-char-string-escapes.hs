@@ -1,0 +1,27 @@
+-- Haskell 2010 Report 9 (PreludeText) and 6.1.2: show at Char and String (showLitChar escapes, showList for Char)
+module Main (main) where
+
+main :: IO ()
+main = do
+  putStrLn (show 'a' ++ " " ++ show 'Z' ++ " " ++ show '0' ++ " " ++ show ' ' ++ " " ++ show '~')
+  putStrLn (show '\'' ++ " " ++ show '"' ++ " " ++ show '\\')
+  putStrLn (show '\n' ++ " " ++ show '\t' ++ " " ++ show '\r' ++ " " ++ show '\a' ++ " " ++ show '\b' ++ " " ++ show '\f' ++ " " ++ show '\v')
+  putStrLn (show '\0' ++ " " ++ show '\1' ++ " " ++ show '\27' ++ " " ++ show '\31' ++ " " ++ show '\127')
+  putStrLn (show '\128' ++ " " ++ show '\200' ++ " " ++ show '\255' ++ " " ++ show '\1234' ++ " " ++ show '\1114111')
+  putStrLn (show "" ++ " " ++ show "abc" ++ " " ++ show "with space")
+  putStrLn (show "quote\"inside" ++ " " ++ show "apostrophe's" ++ " " ++ show "back\\slash")
+  putStrLn (show "line1\nline2" ++ " " ++ show "tab\there" ++ " " ++ show "\a\b\f\r\v")
+  putStrLn (show "\0\1\2" ++ " " ++ show "\127\128" ++ " " ++ show "caf\233")
+  putStrLn (show "\1234" ++ " " ++ show "\1234x" ++ " " ++ show "x\1234")
+  -- a numeric escape followed by a digit needs \& so that it reads back unchanged
+  putStrLn (show "\200\&1" ++ " " ++ show "\1234\&5" ++ " " ++ show "\0\&0")
+  -- \SO followed by H needs \& (otherwise it would read as \SOH)
+  putStrLn (show "\SO\&H" ++ " " ++ show "\SOH" ++ " " ++ show "\SO" ++ " " ++ show "\SOx")
+  putStrLn (show ['a', 'b'] ++ " " ++ show ([] :: [Char]) ++ " " ++ show ['"'] ++ " " ++ show ['\''])
+  putStrLn (show ["ab", "", "c\"d"] ++ " " ++ show [['x']] ++ " " ++ show ([] :: [String]))
+  putStrLn (show ('a', "b") ++ " " ++ show (Just "x\ny") ++ " " ++ show (Just '\n') ++ " " ++ show [Just 'q'])
+  putStrLn (show (show "nested") ++ " " ++ show (show 'c') ++ " " ++ show (show (show "x")))
+  putStrLn (show (map fromEnum (show "\n")) ++ " " ++ show (length (show "\t\"")))
+  putStrLn (showList "abc" "" ++ " " ++ showList "a\"b" "tail" ++ " " ++ shows "s" "t" ++ " " ++ showsPrec 11 "s" "" ++ " " ++ showsPrec 11 'c' "")
+  print (read (show "round\ttrip \"quoted\" \\ \1234\&5 \SO\&H") == "round\ttrip \"quoted\" \\ \1234\&5 \SO\&H")
+  print (all (\c -> read (show c) == c) (map toEnum [0 .. 300] :: String))

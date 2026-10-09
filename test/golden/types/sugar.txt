@@ -1,0 +1,6 @@
+pythagorean :: Int -> [(Int, Int, Int)]
+firsts :: [Maybe (a, b)] -> [a]
+classify :: [([Char], Int)] -> [Char] -> [Char]
+lazily :: (Int, Int) -> Int
+pairs :: [Int] -> Maybe Int
+main :: IO ()

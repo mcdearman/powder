@@ -1,0 +1,51 @@
+-- Haskell 2010 Report 38.1 (Numeric): showEFloat with Nothing and with Just n (n >= 1) digits after the
+-- decimal point (no inputs that sit exactly on a rounding tie; see the -ghc-differs file for those)
+module Main (main) where
+
+import Numeric
+
+e :: Maybe Int -> Double -> String
+e d x = showEFloat d x ""
+
+main :: IO ()
+main = do
+  putStrLn (e Nothing 1234.5)
+  putStrLn (e Nothing 1)
+  putStrLn (e Nothing 0)
+  putStrLn (e Nothing 10)
+  putStrLn (e Nothing 0.1)
+  putStrLn (e Nothing 0.001)
+  putStrLn (e Nothing 123456.789)
+  putStrLn (e Nothing 1.0e100)
+  putStrLn (e Nothing 1.0e-100)
+  putStrLn (e Nothing 6.02214076e23)
+  putStrLn (e Nothing (-1234.5))
+  putStrLn (e Nothing (-0.25))
+  putStrLn (e Nothing (0.1 + 0.2))
+  putStrLn (e Nothing (1 / 3))
+  putStrLn (e (Just 2) 1234.5)
+  putStrLn (e (Just 2) 1238.9)
+  putStrLn (e (Just 1) 9.96)
+  putStrLn (e (Just 3) 9.9996)
+  putStrLn (e (Just 3) 0.5)
+  putStrLn (e (Just 5) 1)
+  putStrLn (e (Just 1) 1)
+  putStrLn (e (Just 2) 0)
+  putStrLn (e (Just 5) 0)
+  putStrLn (e (Just 1) 0)
+  putStrLn (e (Just 2) 0.000123456)
+  putStrLn (e (Just 4) 123456789)
+  putStrLn (e (Just 2) (-1234.5))
+  putStrLn (e (Just 3) (-0.000987654))
+  putStrLn (e (Just 2) 1.0e100)
+  putStrLn (e (Just 10) 1.5)
+  putStrLn (e (Just 20) 0.1)
+  putStrLn (e (Just 6) (1 / 3))
+  putStrLn (e (Just 6) (2 / 3))
+  putStrLn (e (Just 2) 999.4)
+  putStrLn (e (Just 2) 999.6)
+  putStrLn (showEFloat (Just 2) (3.14159 :: Float) "")
+  putStrLn (showEFloat Nothing (0.1 :: Float) "")
+  putStrLn (showEFloat Nothing (16777216 :: Float) "")
+  putStrLn (showEFloat (Just 3) (1234.56 :: Double) " m/s")
+  putStrLn ((showEFloat (Just 1) (1.26 :: Double) . showString " and " . showEFloat (Just 1) (3.74 :: Double)) "")

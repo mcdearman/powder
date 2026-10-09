@@ -1,0 +1,2 @@
+fact :: Integer -> Integer
+main :: IO ()

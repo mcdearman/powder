@@ -1,0 +1,7 @@
+("unqualified and aliased",4,4,4)
+("alias operator",3,3,3)
+("same entity through different qualifiers",True,True)
+("shared alias for two modules","abc",'X',True)
+("dotted alias",1,False)
+("alias type names",Cage {occupant = Emu, number = 1})
+("alias class method","boom","boom!")

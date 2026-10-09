@@ -1,0 +1,30 @@
+-- Haskell 2010 Report 9: class Enum at Int and Integer (succ pred toEnum fromEnum enumFrom enumFromThen enumFromTo enumFromThenTo)
+module Main (main) where
+
+big :: Integer
+big = 2 ^ (70 :: Int)
+
+main :: IO ()
+main = do
+  print ("succ/pred Int", succ (1 :: Int), pred (1 :: Int), succ (-1 :: Int), pred (0 :: Int))
+  print ("succ/pred Integer", succ big, pred big, pred (0 :: Integer))
+  print ("toEnum", toEnum 7 :: Int, toEnum 7 :: Integer, toEnum (-7) :: Integer)
+  print ("fromEnum", fromEnum (7 :: Int), fromEnum (7 :: Integer), fromEnum (-7 :: Integer))
+  print ("enumFrom", take 3 (enumFrom (5 :: Int)), take 3 (enumFrom big))
+  print ("enumFromThen up", take 4 (enumFromThen (1 :: Int) 4), take 3 (enumFromThen big (big + 10)))
+  print ("enumFromThen down", take 4 (enumFromThen (1 :: Int) (-2)), take 3 (enumFromThen (0 :: Integer) (-5)))
+  print ("enumFromThen const", take 3 (enumFromThen (5 :: Int) 5))
+  print ("enumFromTo", enumFromTo (1 :: Int) 5, enumFromTo (3 :: Int) 3, enumFromTo (5 :: Int) 1)
+  print ("enumFromTo Integer", enumFromTo big (big + 2), enumFromTo (-2 :: Integer) 2)
+  print ("enumFromThenTo up", enumFromThenTo (1 :: Int) 3 10, enumFromThenTo (1 :: Int) 3 9)
+  print ("enumFromThenTo down", enumFromThenTo (10 :: Int) 8 1, enumFromThenTo (5 :: Int) 4 1)
+  print ("enumFromThenTo edge", enumFromThenTo (1 :: Int) 3 1, enumFromThenTo (1 :: Int) 3 0, enumFromThenTo (5 :: Int) 3 5)
+  print ("enumFromThenTo empty", enumFromThenTo (5 :: Int) 3 6, enumFromThenTo (1 :: Int) 2 0)
+  print ("enumFromThenTo Integer", enumFromThenTo big (big - 3) (big - 10), enumFromThenTo (-3 :: Integer) 0 7)
+  print ("syntax", [1 .. 4 :: Int], [1, 3 .. 8 :: Int], take 2 [7 :: Int ..], take 2 [7, 5 :: Int ..])
+  print ("syntax negative", [-3 .. -1 :: Int], [-1, -2 .. -4 :: Int])
+  print ("Int bounded enumFrom", [maxBound - 2 :: Int ..], length (enumFrom (maxBound - 4 :: Int)))
+  print ("Int bounded enumFromThen up", enumFromThen (maxBound - 5 :: Int) (maxBound - 3))
+  print ("Int bounded enumFromThen down", enumFromThen (minBound + 5 :: Int) (minBound + 3))
+  print ("Int to maxBound", [maxBound - 1 .. maxBound :: Int], [minBound .. minBound + 1 :: Int])
+  print ("sum of range", sum [1 .. 100 :: Int], length [1 .. 1000 :: Integer])

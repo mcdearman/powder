@@ -1,0 +1,9 @@
+"first line"
+""
+"  spaced   out  "
+"\"quoted\" and \\backslash"
+"last"
+("lengths",[10,0,16,23,4])
+enil tsrif
+("no newline kept",False)
+("words of the third line",["spaced","out"])

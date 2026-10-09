@@ -1,0 +1,84 @@
+infixr 5 @0: L 1 :+: L 2
+infixr 5 @1: L 1 :+: L 2
+infixr 5 @2: L 1 :+: L 2
+infixr 5 @3: L 1 :+: L 2
+infixr 5 @4: L 1 :+: L 2
+infixr 5 @5: L 1 :+: L 2
+infixr 5 @6: (L 1 :+: L 2)
+infixr 5 @7: (L 1 :+: L 2)
+infixr 5 @8: (L 1 :+: L 2)
+infixr 5 @9: (L 1 :+: L 2)
+infixr 5 @10: (L 1 :+: L 2)
+infixr 5 @11: (L 1 :+: L 2)
+infixl 6 @0: L 1 :-: L 2
+infixl 6 @1: L 1 :-: L 2
+infixl 6 @2: L 1 :-: L 2
+infixl 6 @3: L 1 :-: L 2
+infixl 6 @4: L 1 :-: L 2
+infixl 6 @5: L 1 :-: L 2
+infixl 6 @6: L 1 :-: L 2
+infixl 6 @7: (L 1 :-: L 2)
+infixl 6 @8: (L 1 :-: L 2)
+infixl 6 @9: (L 1 :-: L 2)
+infixl 6 @10: (L 1 :-: L 2)
+infixl 6 @11: (L 1 :-: L 2)
+infix 4 @0: L 1 :=: L 2
+infix 4 @1: L 1 :=: L 2
+infix 4 @2: L 1 :=: L 2
+infix 4 @3: L 1 :=: L 2
+infix 4 @4: L 1 :=: L 2
+infix 4 @5: (L 1 :=: L 2)
+infix 4 @6: (L 1 :=: L 2)
+infix 4 @7: (L 1 :=: L 2)
+infix 4 @8: (L 1 :=: L 2)
+infix 4 @9: (L 1 :=: L 2)
+infix 4 @10: (L 1 :=: L 2)
+infix 4 @11: (L 1 :=: L 2)
+default infixl 9 @0: L 1 :*: L 2
+default infixl 9 @1: L 1 :*: L 2
+default infixl 9 @2: L 1 :*: L 2
+default infixl 9 @3: L 1 :*: L 2
+default infixl 9 @4: L 1 :*: L 2
+default infixl 9 @5: L 1 :*: L 2
+default infixl 9 @6: L 1 :*: L 2
+default infixl 9 @7: L 1 :*: L 2
+default infixl 9 @8: L 1 :*: L 2
+default infixl 9 @9: L 1 :*: L 2
+default infixl 9 @10: (L 1 :*: L 2)
+default infixl 9 @11: (L 1 :*: L 2)
+L 1 :+: (L 2 :+: L 3)
+(L 1 :+: L 2) :+: L 3
+L 1 :+: (L 2 :+: L 3)
+L 1 :-: (L 2 :-: L 3)
+(L 1 :-: L 2) :-: L 3
+(L 1 :-: L 2) :-: L 3
+L 1 :*: (L 2 :*: L 3)
+(L 1 :*: L 2) :*: L 3
+(L 1 :=: L 2) :=: L 3
+L 1 :=: (L 2 :=: L 3)
+L 1 :-: L 2 :+: L 3
+L 1 :+: L 2 :-: L 3
+(L 1 :+: L 2) :-: L 3
+L 1 :+: L 2 :=: L 3 :-: L 4
+(L 1 :=: L 2) :+: L 3
+L 1 :*: L 2 :+: L 3 :*: L 4
+(L 1 :+: L 2) :*: (L 3 :-: L 4)
+L 1 :*: L 2 :-: L 3 :*: L 4 :+: L 5 :=: L 6
+L (-1) :+: L (-2)
+L (-1) :*: L (-2)
+Just (L 1 :+: L 2)
+[L 1 :+: L 2,L 3 :*: L 4]
+(L 1 :=: L 2,L 3 :-: L 4)
+Left (L 1 :*: L 2)
+nested @0: (L 1 :+: L 2) :-: (L 3 :=: L 4)
+nested @1: (L 1 :+: L 2) :-: (L 3 :=: L 4)
+nested @2: (L 1 :+: L 2) :-: (L 3 :=: L 4)
+nested @3: (L 1 :+: L 2) :-: (L 3 :=: L 4)
+nested @4: (L 1 :+: L 2) :-: (L 3 :=: L 4)
+nested @5: (L 1 :+: L 2) :-: (L 3 :=: L 4)
+nested @6: (L 1 :+: L 2) :-: (L 3 :=: L 4)
+nested @7: ((L 1 :+: L 2) :-: (L 3 :=: L 4))
+nested @8: ((L 1 :+: L 2) :-: (L 3 :=: L 4))
+nested @9: ((L 1 :+: L 2) :-: (L 3 :=: L 4))
+nested @10: ((L 1 :+: L 2) :-: (L 3 :=: L 4))
+nested @11: ((L 1 :+: L 2) :-: (L 3 :=: L 4))

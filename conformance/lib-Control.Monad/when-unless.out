@@ -1,0 +1,16 @@
+-1 is not positive
+0 is not positive
+0 is even
+1 is positive
+2 is positive
+2 is even
+("result of when False",())
+("when true nothing",Nothing)
+("when false nothing",Just ())
+("when true just",Just ())
+("unless true nothing",Just ())
+("unless false nothing",Nothing)
+("when true list",[(),()])
+("when false list",[()])
+("unless false list",[])
+("when False ignores its action",Just ())

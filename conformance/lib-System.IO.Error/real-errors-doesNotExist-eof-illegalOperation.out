@@ -1,0 +1,32 @@
+readFile of a missing file: doesNotExist
+openFile ReadMode of a missing file: doesNotExist
+writeFile into a missing directory: doesNotExist
+appendFile into a missing directory: doesNotExist
+withFile of a missing file: doesNotExist
+("file name of the failed open",True)
+("the only line","one")
+hGetLine at end of file: eof
+hGetChar at end of file: eof
+hLookAhead at end of file: eof
+hIsEOF at end of file: no error
+hPutStr on a read handle: illegalOperation
+hPutChar on a read handle: illegalOperation
+("the handle is still usable after errors","one")
+hGetChar on a closed handle: illegalOperation
+hGetLine on a closed handle: illegalOperation
+hGetContents on a closed handle: illegalOperation
+hIsEOF on a closed handle: illegalOperation
+hSeek on a closed handle: illegalOperation
+hFileSize on a closed handle: illegalOperation
+hClose on a closed handle: no error
+hGetLine on a write handle: illegalOperation
+hGetChar on a write handle: illegalOperation
+hPutStr on a closed handle: illegalOperation
+hFlush on a closed handle: illegalOperation
+hGetChar on a semi-closed handle: illegalOperation
+hGetContents on a semi-closed handle: illegalOperation
+("contents are still delivered","still writable\n")
+ioError (userError ...): user
+fail in IO: user
+readIO parse failure: user
+no error: no error

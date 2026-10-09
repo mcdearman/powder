@@ -1,0 +1,26 @@
+1 % 2
+("reduced to lowest terms",3 % 4,10 % 1,0 % 1,1 % 1)
+("sign lives in the numerator",(-3) % 4,(-3) % 4,3 % 4,0 % 1)
+("numerator/denominator",(3,4),(-3,4),(5,1),(0,1),(-2,1))
+("arithmetic",5 % 6,1 % 6,1 % 3,2 % 3)
+("arithmetic cancels",1 % 2,1 % 1,0 % 1)
+("negate/abs/signum",(-1) % 2,1 % 2,(-1) % 1,0 % 1)
+("recip",4 % 3,(-4) % 3,1 % 5)
+("literals",3 % 1,3 % 4,(-3) % 2,1 % 100)
+("comparison",True,True,LT,2 % 3)
+("fromIntegral/fromRational",7 % 1,0.875)
+("toRational",3 % 8,4 % 1)
+("rounding",-3,2,-4,4)
+("powers",8 % 27,27 % 8,(-1) % 8)
+show: 1 % 2 | (-1) % 2 | 3 % 1
+showsPrec 7: 1 % 2
+showsPrec 8: (1 % 2)
+Just (1 % 2)
+[1 % 2,(-3) % 4]
+(1 % 2,Left (5 % 3))
+("read",1 % 2,(-3) % 4,5 % 1)
+("read . show",True)
+("Ratio Int",3 % 4,3,4)
+("% is infixl 7",2 % 1,1 % 2,3 % 2)
+("big",25 % 1,1 % 1267650600228229401496703205376)
+("exact decimal arithmetic",True,True)

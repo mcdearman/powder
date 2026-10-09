@@ -1,0 +1,53 @@
+C {f1 = 1, f2 = "x"}
+C {f1 = 1, f2 = "second"}
+C {f1 = -1, f2 = ""}
+C {f1 = -9223372036854775808, f2 = "quote\"d"}
+C @0: C {f1 = 1, f2 = "x"}
+C @1: C {f1 = 1, f2 = "x"}
+C @2: C {f1 = 1, f2 = "x"}
+C @3: C {f1 = 1, f2 = "x"}
+C @4: C {f1 = 1, f2 = "x"}
+C @5: C {f1 = 1, f2 = "x"}
+C @6: C {f1 = 1, f2 = "x"}
+C @7: C {f1 = 1, f2 = "x"}
+C @8: C {f1 = 1, f2 = "x"}
+C @9: C {f1 = 1, f2 = "x"}
+C @10: C {f1 = 1, f2 = "x"}
+C @11: (C {f1 = 1, f2 = "x"})
+Single @0: Single {only = -5}
+Single @1: Single {only = -5}
+Single @2: Single {only = -5}
+Single @3: Single {only = -5}
+Single @4: Single {only = -5}
+Single @5: Single {only = -5}
+Single @6: Single {only = -5}
+Single @7: Single {only = -5}
+Single @8: Single {only = -5}
+Single @9: Single {only = -5}
+Single @10: Single {only = -5}
+Single @11: (Single {only = -5})
+Just (C {f1 = 1, f2 = "x"})
+[C {f1 = 1, f2 = "a"},C {f1 = 2, f2 = "b"}]
+(C {f1 = 1, f2 = "x"},C {f1 = 2, f2 = "y"})
+Left (C {f1 = 0, f2 = "l"})
+(Single {only = 1},Single {only = -1},Just (Single {only = -1}))
+Circle {radius = 1.5}
+Circle {radius = -1.5}
+Rect {width = 2.0, height = 3.0}
+Rect {width = -2.0, height = -1.0}
+Point
+Poly [1,-2]
+[Circle {radius = 1.0},Rect {width = 1.0, height = 2.0},Point,Poly []]
+(Just (Circle {radius = 1.0}),Just Point,Just (Poly [1]))
+Outer {inner = C {f1 = 1, f2 = "x"}, flag = True, opt = Nothing}
+Outer {inner = C {f1 = -1, f2 = "x"}, flag = False, opt = Just (C {f1 = -2, f2 = "y"})}
+Just (Outer {inner = C {f1 = 1, f2 = "x"}, flag = True, opt = Just (C {f1 = 2, f2 = "y"})})
+Poly2 {left = 1, right = 'c'}
+Poly2 {left = -1, right = -2.5}
+Poly2 {left = Just (-1), right = [Just (-2)]}
+Poly2 {left = Poly2 {left = 'a', right = 'b'}, right = C {f1 = 1, f2 = "x"}}
+Poly2 {left = (1,-2), right = Left (-3)}
+Odd {x' = 1, y_1 = 2, zLong_name2 = 'c'}
+Odd {x' = -1, y_1 = -2, zLong_name2 = 'z'}
+C {f1 = 2, f2 = "x"}
+(7,"s",2.5)

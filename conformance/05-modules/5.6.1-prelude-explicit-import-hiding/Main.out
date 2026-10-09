@@ -1,0 +1,8 @@
+("local Maybe",[Nothing,Just 1,Perhaps 2])
+("Prelude Maybe qualified",Just 'x',Nothing)
+("local append",[1,2,3],"abcdef")
+("local filter/lookup/id",2,"local lookup",7)
+("local length is Integer",1180591620717411303427)
+("Prelude versions qualified",[2,4],Just 'a')
+("Prelude length and id",3,'c')
+("unhidden names still unqualified",[-1,-2],"3")

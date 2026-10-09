@@ -1,0 +1,8 @@
+("first two",'x','y')
+("until dot","ab\ncd\ne")
+("newlines seen",2)
+("char after the dot",'r')
+("rest of that line via getLine","est of line")
+("chars before the bang",9)
+("newline after the bang",True)
+("final line","done")

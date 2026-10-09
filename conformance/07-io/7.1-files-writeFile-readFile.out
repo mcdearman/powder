@@ -1,0 +1,13 @@
+("read back","hello file\n")
+("replaced","replaced with longer contents than before\nsecond line\n")
+("writeFile truncates, no newline added","short",5)
+1
+2
+3
+4
+5
+("lines",["1","2","3","4","5"],15)
+("special characters","tab\there \"quoted\" back\\slash\n")
+("large",100001,True,True)
+("writeFile returns unit",())
+("readFile in a bind chain","sftvmu")

@@ -1,0 +1,8 @@
+("exact","three-ish","seven-ish","other")
+("via user ==","three-ish","seven-ish","seven-ish")
+("negative literal via negate","minus-three-ish","minus-three-ish","other")
+("float literal via fromRational","fromRational 1.5 is Mod10 6","fromRational 1.5 is Mod10 6","other")
+("always equal","first literal clause always matches")
+("in case","matched 3")
+("in tuple","matched")
+("standard types","all equal 2")

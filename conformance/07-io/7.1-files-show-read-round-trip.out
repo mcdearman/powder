@@ -1,0 +1,11 @@
+("Int",42)
+("[Double]",[1.5,-2.25,1.0e-3])
+("tuple with escapes",('x',"a\nb\tc",True,()))
+("Maybe Either",[Just (Left 3),Just (Right "r"),Nothing])
+("derived Show/Read",True)
+Item "apple" 3 (Just Red)
+Item "kiwi \"gold\"" (-1) Nothing
+Item "" 0 (Just Blue)
+("Integer",True)
+("one value per line",True,3)
+("after append",Item "extra" 9 (Just Green))

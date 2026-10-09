@@ -1,0 +1,10 @@
+eval :: Expr -> Int
+area :: Shape -> Int
+describe :: Shape -> [Char]
+main :: IO ()
+px :: Point -> Int
+py :: Point -> Int
+centre :: Shape -> Point
+radius :: Shape -> Int
+width :: Shape -> Int
+height :: Shape -> Int

@@ -1,0 +1,11 @@
+explicit fail: isUserError=True
+fail stops the sequence: isUserError=True
+("fail at IO Int",1)
+("pattern matched",(1,2))
+("pattern failed, user error caught",(-1,-1))
+Nothing against Just: isUserError=True
+("matched",5)
+literal pattern: isUserError=True
+ioError (userError s) keeps s: plain userError
+("mapM aborted by fail",[])
+done

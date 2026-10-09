@@ -1,0 +1,36 @@
+nothing has been said yet
+say hello
+say hello
+("number of stored actions",3)
+say third
+say first
+say third
+say second
+say first
+say first
+say second
+say third
+say first
+say second
+say third
+say table b
+counterAction runs
+counterAction runs
+("ran twice",(7,7))
+say chosen
+say other branch
+say repeated
+say repeated
+say repeated
+say hello
+say world
+say hello
+say world
+say to x
+say to y
+got the inner action, not yet run
+say inner action
+say from a tuple
+counterAction runs
+("fmap over an action",8)
+("never was never run",True)

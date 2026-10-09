@@ -1,0 +1,21 @@
+step a
+step unused
+step d
+step a
+step unused
+step d
+("same result",56,56,True)
+single expression do
+braces
+and semicolons
+step inner
+("nested with shadowing",12)
+("patterns",'p',"q",1,2)
+("let",-1,4)
+step discarded
+step kept
+("last expression",7)
+if: big
+case: twelve
+step result dropped
+return () in the middle does not end the block

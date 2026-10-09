@@ -1,0 +1,4 @@
+third :: Float
+countLines :: Int -> IO Int
+main :: IO ()
+radius :: Shape -> Int

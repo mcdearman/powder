@@ -1,0 +1,7 @@
+("classify",["zero","negative","even","big odd","small odd"])
+("fall","gt","eq","lt")
+("area",16,8,0,-1)
+("firstMatch",["first zero","second true","one false","other"])
+("lookupOr",5,0,8,0)
+("collatz",[0,1,8,111])
+("ack",9)

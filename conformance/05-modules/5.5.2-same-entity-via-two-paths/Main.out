@@ -1,0 +1,6 @@
+("unqualified use of an entity imported three ways","Base.shared",8)
+("type and constructor imported three ways",Token 1,True)
+("class method imported three ways",10)
+("all qualifiers name the same entity",True,True)
+("module-specific names",20,200)
+("values built in different modules are compatible",True,[Token 3,Token 3,Token 0])

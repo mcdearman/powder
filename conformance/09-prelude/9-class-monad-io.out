@@ -1,0 +1,18 @@
+("return",5)
+(">>=",10)
+(">>= chain",8)
+running first
+running second!
+(">> keeps second",7)
+7
+xyz
+running left
+running middle
+("nested binds",10)
+("actions are values",2)
+("fail in IO","caught")
+before fail
+("fail skips the rest",1)
+("pattern failure in IO do",-1)
+("pattern success",7)
+("done",())

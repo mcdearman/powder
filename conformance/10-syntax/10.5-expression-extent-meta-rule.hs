@@ -1,0 +1,28 @@
+-- Haskell 2010 Report 3 / 10.5: lambda, let, if and case extend as far to the right as possible
+module Main (main) where
+
+main :: IO ()
+main = do
+  print ("lambda body swallows operators", (\x -> x + 1 * 2) 3)
+  print ("lambda as right operand", 1 + (\x -> x * 2) 3, map (\x -> x + 1) [1, 2] ++ [9])
+  print ("lambda after dollar without parens", (\f -> f 3) $ \x -> x * 2)
+  print ("lambda args then dollar", foldr (\x acc -> x + acc) 0 $ map (\x -> x * x) [1, 2, 3])
+  print ("if else swallows", if True then 1 else 2 + 10, (if True then 1 else 2) + 10)
+  print ("if as right operand", 5 + if False then 1 else 2 * 3)
+  print ("let body swallows", let a = 1 in a + 10 * 2, (let a = 1 in a) + 10 * 2)
+  print ("let as right operand", 2 * let a = 3 in a + 1)
+  print ("case as right operand", 1 + case 2 of { 2 -> 10; _ -> 0 })
+  print ("case alt body swallows", case 1 of { 1 -> 2 + 3 * 4; _ -> 0 })
+  print ("nested lambdas", (\x -> \y -> x - y) 10 3, (\x y -> x - y) 10 3)
+  print ("lambda returning if", (\b -> if b then "t" else "f") True)
+  print ("if in if", if True then if False then 1 else 2 else 3)
+  print ("dangling else binds inner", if False then 0 else if False then 1 else 2 + 5)
+  print ("type sig extent", (1 + 2 :: Int), (\x -> x :: Int) 4)
+  print ("type sig covers whole infix expr", 2 * 3 + 4 :: Int)
+  print ("negation of application", - length [1, 2, 3] + 1)
+  print ("application chain", (if True then succ else pred) 5, (let f = (+ 1) in f) 5)
+  print ("do as operand", Just 1 >>= \x -> do { y <- Just 2; return (x + y) })
+  print ("operator then lambda then operator", 1 + (\x -> x) 2 + 3, (1 +) $ (\x -> x) 2 + 3)
+  print ("lambda in list", map ($ 3) [\x -> x + 1, \x -> x * 2, \_ -> 0])
+  print ("lambda in tuple", fst (\x -> x + 1, 'c') 1)
+  print ("if in list comprehension", [if even x then 'e' else 'o' | x <- [1, 2, 3 :: Int]])

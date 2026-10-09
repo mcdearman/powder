@@ -1,0 +1,7 @@
+("top-level",('a',True))
+("three levels",((1,1),('x','x')))
+("mutual recursion",True,False,False)
+("signature breaks group","1True","1TrueTrue")
+("let group",('a',True))
+("let three levels",((1,1),('x','x')))
+("where group",('k',"s"))

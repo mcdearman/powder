@@ -1,0 +1,14 @@
+S (S (S Z))
+("Nat",True,False,True,GT,True)
+("Nat read",True,True)
+Node (Node Leaf 1 Leaf) 2 (Node Leaf 3 Leaf)
+("Tree",True,False,True,GT,True)
+Rose 'a' [Rose 'b' [],Rose 'c' [Rose 'd' []]]
+("Rose",True,True,True)
+ESucc (OSucc (ESucc (OSucc EZero)))
+("EvenN/OddN",True,True,True,True,True)
+Forest [Bush 1 (Forest []),Bush 2 (Forest [Bush 3 (Forest [])])]
+("Forest/Bush",True,True,True,True)
+Block [Assign "x" (Lit 1),Assign "y" (Do (Assign "z" (Var "x")) (Lit (-2)))]
+("Stmt/Expr",True,True,True,True)
+("deep",True,True,399)

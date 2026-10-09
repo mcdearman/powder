@@ -1,0 +1,3 @@
+("first line","alpha")
+("last line, no newline in the input","beta without newline")
+("lengths",5,20)

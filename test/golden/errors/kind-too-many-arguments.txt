@@ -1,0 +1,16 @@
+[error]: kind error
+     ╭──▶ test/errors/kind-too-many-arguments.hs@1:6-1:19
+     │
+   1 │ x :: Maybe Int Int
+     •      ┬────────────
+     •      ╰╸ this type has kind *, so it cannot be applied to a type
+─────╯
+
+[error]: type error
+     ╭──▶ test/errors/kind-too-many-arguments.hs@2:5-2:12
+     │
+   2 │ x = Nothing
+     •     ┬──────
+     •     ╰╸ expected Maybe Int Int, but this has type Maybe Int
+─────╯
+

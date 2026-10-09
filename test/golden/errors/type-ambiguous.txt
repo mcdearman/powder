@@ -1,0 +1,16 @@
+[error]: type error
+     ╭──▶ test/errors/type-ambiguous.hs@2:18-2:22
+     │
+   2 │ main = putStrLn (show (read "1"))
+     •                  ┬─── 
+     •                  ╰╸ the type of this is ambiguous: nothing says which instance of Show is meant
+─────╯
+
+[error]: type error
+     ╭──▶ test/errors/type-ambiguous.hs@2:24-2:28
+     │
+   2 │ main = putStrLn (show (read "1"))
+     •                        ┬─── 
+     •                        ╰╸ the type of this is ambiguous: nothing says which instance of Read is meant
+─────╯
+

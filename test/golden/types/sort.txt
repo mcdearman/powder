@@ -1,0 +1,4 @@
+merge :: [Int] -> [Int] -> [Int]
+msort :: [Int] -> [Int]
+randoms :: Int -> [Int]
+main :: IO ()

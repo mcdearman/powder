@@ -1,0 +1,34 @@
+ab
+ 	|
+no newline, then newline
+multi
+line
+string
+putStrLn adds a newline
+
+two
+lines
+===
+1
+'c'
+"string is shown with quotes"
+[1.5,2.5]
+(Just (-1),"x",())
+()
+via mapM_
+a
+b
+LT
+EQ
+GT
+u1
+u2
+42
+result of putStr is unit: ()
+"result of print is unit"
+True
+lazy lazy lazy lazy 
+12345678910
+print x = putStrLn (show x):
+Just "x"
+Just "x"

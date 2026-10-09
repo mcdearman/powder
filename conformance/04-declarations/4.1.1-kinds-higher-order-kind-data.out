@@ -1,0 +1,8 @@
+("IntIn Maybe","Just 5")
+("IntIn Maybe nothing","Nothing")
+("IntIn []",6)
+("AtMaybe IntIn",Just 9)
+("cata sum",10)
+("cata len",5)
+("cata list",[True,False])
+("cata empty",0)

@@ -1,0 +1,8 @@
+("report same","Red same as Red")
+("report differ","0 vs 2")
+("report int","3 vs 4")
+("universe color",[Red,Green,Blue])
+("universe bool",[False,True])
+("rankOf",2,2,3)
+("voiced","Green!(Green)Green")
+("loud quiet","Red!","(Blue)")

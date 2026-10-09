@@ -1,0 +1,6 @@
+("old contents survive in memory","first\n")
+("new contents on disk","second\n")
+("rewritten from its own old contents","tfdpoe\v")
+("read-modify-write counter",1,2,3)
+("counter file","3")
+("sum computed lazily then stored","500500")

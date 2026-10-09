@@ -1,0 +1,30 @@
+-- Haskell 2010 Report 3.16: expression type signatures e :: t resolve overloading
+module Main (main) where
+
+main :: IO ()
+main = do
+  print ("read", read "5" :: Int, read "5" :: Double)
+  print ("literal", 3 :: Int, 3 :: Double, 3 :: Integer)
+  print ("fromIntegral", fromIntegral (7 :: Int) :: Double)
+  print ("bounds", maxBound :: Int, minBound :: Bool, maxBound :: Bool)
+  print ("toEnum", toEnum 65 :: Char, toEnum 1 :: Bool)
+  -- the signature covers the whole infix expression to its left
+  print ("whole infix expression", 1 + 2 :: Int, 2 * 3 + 1 :: Double)
+  print ("inner", (1 :: Int) + 2, 2 * (3 :: Integer))
+  print ("division", 7 / 2 :: Double, (7 :: Int) `div` 2)
+  print ("empty values", [] :: [Int], Nothing :: Maybe Char, "" :: String)
+  print ("wraparound", 2 ^ 63 :: Int, 2 ^ 63 :: Integer)
+  print ("rounding", truncate (3.7 :: Double) :: Int, round (2.5 :: Double) :: Integer)
+  print ("in list", [1 :: Int, 2, 3], [1, 2, 3 :: Double])
+  print ("in condition", if (1 :: Int) < 2 then 'y' else 'n')
+  print ("lambda body", (\x -> x + 1 :: Int) 4)
+  print ("show", show (2 :: Int), show (2 :: Double), show (2 :: Float))
+  print ("mixed", fromIntegral (length "abc") * 1.5 :: Double)
+  print ("function type", (fromIntegral :: Int -> Integer) 5, (toEnum :: Int -> Char) 97)
+  print ("tuple type", (1, 2) :: (Int, Double))
+  print ("nested signature", ((1 :: Int) :: Int), (((3 + 4) :: Integer) * 2 :: Integer))
+  print ("after negation", - 1 :: Int, negate 1 :: Double)
+  print ("in let body", let n = 5 in n * n :: Int)
+  print ("in case", case 2 :: Int of { 2 -> "two"; _ -> "other" })
+  print ("monadic", return 1 :: [Int], return 'x' :: Maybe Char)
+  print ("minBound via signature", (minBound, maxBound) :: (Int, Int))

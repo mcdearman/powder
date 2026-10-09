@@ -1,0 +1,9 @@
+("result of the action is returned","written inside withFile")
+("length of second line",11)
+("handle is closed afterwards",True,False)
+("after append",("written inside withFile","second line","appended",True))
+("size",44)
+("error propagates out of withFile","abort inside withFile")
+the file can be reopened for writing after the failed action
+("nested withFile for reading","tt")
+THE file can be reopened for writing after the failed action

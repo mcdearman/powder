@@ -1,0 +1,8 @@
+[error]: type error
+     ╭──▶ test/errors/type-no-instance.hs@2:20-2:21
+     │
+   2 │ main = putStrLn (1 + "one")
+     •                    ┬ 
+     •                    ╰╸ there is no instance of Num for [Char]
+─────╯
+

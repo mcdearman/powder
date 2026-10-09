@@ -1,0 +1,8 @@
+[error]: name error
+     ╭──▶ test/errors/fixity-no-grouping.hs@2:22-2:24
+     │
+   2 │ main = print (1 == 2 == True)
+     •                      ┬─ 
+     •                      ╰╸ the operators either side of this do not say how they group: infix 4 before and infix 4 here
+─────╯
+

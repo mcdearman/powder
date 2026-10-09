@@ -1,0 +1,8 @@
+[error]: name error
+     ╭──▶ test/errors/name-ambiguous.hs@8:15-8:19
+     │
+   8 │ main = print (sort [2, 1])
+     •               ┬─── 
+     •               ╰╸ sort is ambiguous: more than one of the modules imported here exports it
+─────╯
+

@@ -1,0 +1,13 @@
+("empty file","",True,[])
+("single newline","\n",[""])
+("multi-line round trip",True,5)
+[roses are red]
+[]
+[  violets are blue  ]
+[	tabbed]
+[last]
+("no final newline","a\nb\nc",["a","b","c"],'c')
+("only newlines",3,["","",""])
+("two independent files","this file\n","other file\n")
+("copied",True)
+("same file read twice at once",True,20)

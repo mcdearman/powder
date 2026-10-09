@@ -1,0 +1,26 @@
+alreadyExists: [True,False,False,False,False,False,False,False]
+doesNotExist: [False,True,False,False,False,False,False,False]
+alreadyInUse: [False,False,True,False,False,False,False,False]
+full: [False,False,False,True,False,False,False,False]
+eof: [False,False,False,False,True,False,False,False]
+illegalOperation: [False,False,False,False,False,True,False,False]
+permission: [False,False,False,False,False,False,True,False]
+user: [False,False,False,False,False,False,False,True]
+alreadyExists satisfies ["isAlreadyExistsError"]
+doesNotExist satisfies ["isDoesNotExistError"]
+alreadyInUse satisfies ["isAlreadyInUseError"]
+full satisfies ["isFullError"]
+eof satisfies ["isEOFError"]
+illegalOperation satisfies ["isIllegalOperation"]
+permission satisfies ["isPermissionError"]
+user satisfies ["isUserError"]
+("each type satisfies exactly one predicate",True)
+("type equality is reflexive",True)
+("types are pairwise distinct",True)
+("inequality",True,False)
+("userError is a user error",["isUserError"])
+("a made error can be thrown and caught",["isEOFError"])
+("handler dispatches on the predicate","permission")
+("selective handler","rethrown to the outer handler")
+("with file name",["isDoesNotExistError"])
+("location text does not affect classification",["isAlreadyInUseError"])

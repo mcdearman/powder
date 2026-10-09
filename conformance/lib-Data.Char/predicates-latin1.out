@@ -1,0 +1,30 @@
+isControl: [133,159]
+isSpace: [160]
+isLower: [181,223,224,246,248,255]
+isUpper: [192,214,216,222]
+isAlpha: [181,192,214,216,222,223,224,246,248,255]
+isLetter: [181,192,214,216,222,223,224,246,248,255]
+isDigit: []
+isOctDigit: []
+isHexDigit: []
+isAlphaNum: [178,181,188,192,214,216,222,223,224,246,248,255]
+isPrint: [160,161,162,168,169,171,172,176,177,178,181,183,187,188,191,192,214,215,216,222,223,224,246,247,248,255]
+isMark: []
+isNumber: [178,188]
+isPunctuation: [161,171,183,187,191]
+isSymbol: [162,168,169,172,176,177,215,247]
+isSeparator: [160]
+isAscii: []
+isLatin1: [133,159,160,161,162,168,169,171,172,173,176,177,178,181,183,187,188,191,192,214,215,216,222,223,224,246,247,248,255]
+isAsciiUpper: []
+isAsciiLower: []
+("C1 controls",[128,129,130,131,132,133,134,135,136,137,138,139,140,141,142,143,144,145,146,147,148,149,150,151,152,153,154,155,156,157,158,159])
+("latin1 spaces",[9,10,11,12,13,32,160])
+("latin1 upper",[192,193,194,195,196,197,198,199,200,201,202,203,204,205,206,207,208,209,210,211,212,213,214,216,217,218,219,220,221,222])
+("latin1 separators",[32,160])
+("beyond latin1: combining acute is a mark",True,False)
+("beyond latin1: greek alpha",True,True,True)
+("beyond latin1: arabic-indic digit",False,True,True)
+("beyond latin1: roman numeral one",True,False,False)
+("beyond latin1: line separator",True,False)
+("beyond latin1: em space",True,True)

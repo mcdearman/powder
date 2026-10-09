@@ -1,0 +1,2 @@
+main :: IO ()
+main = print (lenght [1, 2, 3])

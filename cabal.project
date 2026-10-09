@@ -1,0 +1,6 @@
+packages:
+  .
+  ../lambline
+
+-- diagnose 2.5.1 asks for text <=2.0, and GHC 9.12 ships 2.1.
+allow-newer: diagnose:*

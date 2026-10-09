@@ -1,0 +1,8 @@
+("isEmpty",True,False)
+("top",Just 1,Nothing)
+("pop then top",Just (Just 2))
+("toList",[1,2,3])
+("derived Eq visible",True,False)
+("derived Show visible",Push 1 (Push 2 (Push 3 Empty)))
+("Functor instance visible",[10,20,30])
+("local constructors",Push 1 Empty)

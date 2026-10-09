@@ -1,0 +1,53 @@
+Int8  div  [3,-4,-4,3,2,-2,0,0,0,-1]
+Int8  mod  [1,1,-1,-1,0,0,0,0,1,6]
+Int8  quot [3,-3,-3,3,2,-2,0,0,0,0]
+Int8  rem  [1,-1,1,-1,0,0,0,0,1,-1]
+Int8  divMod law  True
+Int8  quotRem law True
+Int8  divMod is (div, mod)   True
+Int8  quotRem is (quot, rem) True
+Int16 div  [3,-4,-4,3,2,-2,0,0,0,-1]
+Int16 mod  [1,1,-1,-1,0,0,0,0,1,6]
+Int16 quot [3,-3,-3,3,2,-2,0,0,0,0]
+Int16 rem  [1,-1,1,-1,0,0,0,0,1,-1]
+Int16 divMod law  True
+Int16 quotRem law True
+Int16 divMod is (div, mod)   True
+Int16 quotRem is (quot, rem) True
+Int32 div  [3,-4,-4,3,2,-2,0,0,0,-1]
+Int32 mod  [1,1,-1,-1,0,0,0,0,1,6]
+Int32 quot [3,-3,-3,3,2,-2,0,0,0,0]
+Int32 rem  [1,-1,1,-1,0,0,0,0,1,-1]
+Int32 divMod law  True
+Int32 quotRem law True
+Int32 divMod is (div, mod)   True
+Int32 quotRem is (quot, rem) True
+Int64 div  [3,-4,-4,3,2,-2,0,0,0,-1]
+Int64 mod  [1,1,-1,-1,0,0,0,0,1,6]
+Int64 quot [3,-3,-3,3,2,-2,0,0,0,0]
+Int64 rem  [1,-1,1,-1,0,0,0,0,1,-1]
+Int64 divMod law  True
+Int64 quotRem law True
+Int64 divMod is (div, mod)   True
+Int64 quotRem is (quot, rem) True
+Int   div  [3,-4,-4,3,2,-2,0,0,0,-1]
+Int   mod  [1,1,-1,-1,0,0,0,0,1,6]
+Int   quot [3,-3,-3,3,2,-2,0,0,0,0]
+Int   rem  [1,-1,1,-1,0,0,0,0,1,-1]
+Int   divMod law  True
+Int   quotRem law True
+Int   divMod is (div, mod)   True
+Int   quotRem is (quot, rem) True
+("Int8 divMod",(-4,1),(-4,-1))
+("Int8 quotRem",(-3,-1),(-3,1))
+("Int8 minBound",-64,-42,1,-2)
+("Int8 maxBound",-127,-1,(-1,-1))
+("Int16 minBound",(-4682,6),(-4681,-1))
+("Int32 minBound",(-214748365,2),(-214748364,-8))
+("Int64 minBound",(-922337203685477581,2),(-922337203685477580,-8))
+("Int64 maxBound",(-922337203685477581,-3),(-922337203685477580,7))
+("gcd",6,6,9,12)
+("lcm",12,12,0,42)
+("even odd",True,True,True,True)
+("mod has the sign of the divisor",True)
+("rem has the sign of the dividend",True)

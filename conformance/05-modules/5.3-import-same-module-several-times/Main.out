@@ -1,0 +1,6 @@
+("constructors from first import",[Cat,Dog,Emu])
+("imported twice, no ambiguity",4,"feeding Dog")
+("from the hiding import","boom",3)
+("hidden in one import but imported by another",2)
+("local vs qualified-only","Main's zoo","Zoo")
+("library imported twice",[1,2,3])

@@ -1,0 +1,119 @@
+cabal-version:   3.0
+name:            powder
+version:         0.1.0.0
+synopsis:        Toy compilers for a small Haskell
+build-type:      Simple
+data-files:
+  lib/*.hs
+  lib/Control/*.hs
+  lib/Data/*.hs
+  lib/Powder/*.hs
+  lib/System/*.hs
+  lib/Foreign/C/*.hs
+  lib/System/IO/*.hs
+extra-doc-files: README.md
+
+common shared
+  default-language:   GHC2021
+  default-extensions:
+    LambdaCase
+    StrictData
+  ghc-options:        -Wall
+  build-depends:      base >=4.18 && <5
+
+library
+  import:          shared
+  hs-source-dirs:  src
+  exposed-modules:
+    Powder.AxCut
+    Powder.AxCut.Lower
+    Powder.AxCut.Machine
+    Powder.Bytecode
+    Powder.Core
+    Powder.Diagnostics
+    Powder.Frontend
+    Powder.HIR
+    Powder.HIR.Id
+    Powder.HIR.Pat
+    Powder.HIR.Type
+    Powder.Kinds
+    Powder.Layout
+    Powder.Lexer
+    Powder.Lower
+    Powder.Parser
+    Powder.Resolve
+    Powder.Typecheck
+    Powder.Types
+    Powder.Unify
+    Powder.Sequent
+    Powder.Sequent.FromCore
+    Powder.SKI.Comb
+    Powder.SKI.Compile
+    Powder.SKI.Eval
+    Powder.SKI.Foreign
+    Powder.Syntax.AST
+    Powder.Syntax.AST.Decl
+    Powder.Syntax.AST.Expr
+    Powder.Syntax.AST.Internal
+    Powder.Syntax.AST.Pat
+    Powder.Syntax.AST.Stmt
+    Powder.Syntax.AST.Type
+    Powder.Syntax.Green
+    Powder.Syntax.Kind
+    Powder.Syntax.Red
+    Powder.Syntax.Token
+
+  other-modules:   Paths_powder
+  autogen-modules: Paths_powder
+  build-tool-depends: alex:alex
+  build-depends:
+    , array
+    , bytestring
+    , containers
+    , diagnose >=2.5
+    , directory
+    , filepath
+    , mtl
+    , prettyprinter
+    , text
+    , unix
+
+executable powder-ski
+  import:         shared
+  hs-source-dirs: app/ski
+  main-is:        Main.hs
+  other-modules:
+    Entry
+    Repl
+  ghc-options:    -O2
+  build-depends:
+    , bytestring
+    , lambline
+    , powder
+
+test-suite spec
+  import:         shared
+  type:           exitcode-stdio-1.0
+  hs-source-dirs: test app/ski
+  main-is:        Spec.hs
+  other-modules:
+    ConformanceSpec
+    DiagnosticsSpec
+    Entry
+    EntrySpec
+    ExamplesSpec
+    Harness
+    ResolveSpec
+    SyntaxSpec
+    TypecheckSpec
+  ghc-options:    -threaded -rtsopts "-with-rtsopts=-N4"
+  build-depends:
+    , bytestring
+    , containers
+    , directory
+    , filepath
+    , hspec
+    , hspec-golden
+    , powder
+    , process
+    , text

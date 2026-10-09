@@ -1,0 +1,9 @@
+(True,-9223372036854775808,18446744073709551616,-2)
+(0.33333334,0.3333333432674408,1.6777216e7,1.4142135,24)
+(Blue,[Red,Green],Cell Green (-3))
+(Circle {radius = 2} :+: Pair 1 2,[])
+([Red,Green,Blue],1,False)
+([Cell Red 1,Cell Red 2,Cell Green 1,Cell Green 2],13)
+(7,[(Red,1),(Green,0),(Blue,7)])
+(True,["one","two words"])
+3

@@ -1,0 +1,17 @@
+negative
+classified
+zero
+classified
+positive
+classified
+("pick",Just 2,Nothing)
+("explicit semis",1,2)
+("explicit semi before else",1,2)
+("explicit semi before then",1,2)
+nested do in then
+second line
+one-line else
+odd
+then-do on the if line
+still in then
+done

@@ -1,0 +1,9 @@
+shout :: [Char] -> [Char]
+main :: IO ()
+c_sin :: Double -> Double
+c_pow :: CDouble -> CDouble -> CDouble
+fma :: Double -> Double -> Double -> Double
+c_abs :: CInt -> CInt
+labs :: Int -> Int
+c_toupper :: CInt -> CInt
+getpid :: IO CInt

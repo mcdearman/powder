@@ -1,0 +1,4 @@
+("names","rock","paper","scissors")
+("beats","scissors","rock","paper")
+("chain",["rock","paper","scissors","rock"])
+("re-exported along the cycle",True,"rock")

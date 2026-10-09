@@ -1,0 +1,3 @@
+("gcd 0 0 Int",0)
+("gcd 0 0 Integer",0)
+("foldr gcd 0 []",0)

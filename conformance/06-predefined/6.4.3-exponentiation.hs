@@ -1,0 +1,32 @@
+-- Haskell 2010 Report 6.4.3: (^) non-negative integral exponent, (^^) any integral exponent, (**) floating exponent
+import Data.Ratio ((%))
+
+close :: Double -> Double -> Bool
+close a b = abs (a - b) <= 1.0e-9 * max 1 (abs b)
+
+main :: IO ()
+main = do
+  print ("^ at Int", 2 ^ (10 :: Int) :: Int, (-2) ^ (3 :: Int) :: Int, (-2) ^ (4 :: Int) :: Int, 1 ^ (1000 :: Int) :: Int)
+  print ("x^0 and 0^n", 7 ^ (0 :: Int) :: Int, 0 ^ (0 :: Int) :: Int, 0 ^ (5 :: Int) :: Int, (-7) ^ (0 :: Int) :: Int)
+  print ("x^1", 9 ^ (1 :: Int) :: Int, (-9) ^ (1 :: Int) :: Int)
+  print ("^ with Integer exponent", 2 ^ (100 :: Integer) :: Integer, 3 ^ (40 :: Integer) :: Integer, 5 ^ (3 :: Integer) :: Int)
+  print ("^ at Integer", 10 ^ (30 :: Int) :: Integer, (-3) ^ (41 :: Int) :: Integer, 0 ^ (0 :: Integer) :: Integer)
+  print ("^ at Double", (1.5 :: Double) ^ (2 :: Int), (2 :: Double) ^ (10 :: Int), (0.5 :: Double) ^ (3 :: Int), (-2 :: Double) ^ (3 :: Int))
+  print ("^ at Double x^0", (9.9 :: Double) ^ (0 :: Int), (0 :: Double) ^ (0 :: Int))
+  print ("^ at Float", (1.5 :: Float) ^ (3 :: Int), (2 :: Float) ^ (24 :: Int))
+  print ("^ at Rational", (2 % 3 :: Rational) ^ (3 :: Int), ((-1) % 2 :: Rational) ^ (2 :: Int), (5 % 7 :: Rational) ^ (0 :: Int))
+  print ("^ is infixr 8", 2 ^ 3 ^ 2 :: Int, 2 * 3 ^ 2 :: Int, -2 ^ 2 :: Int, (-2) ^ 2 :: Int, (2 ^ 3) ^ 2 :: Int)
+  print ("^ laws", and [(3 :: Integer) ^ (a + b) == 3 ^ a * 3 ^ b | a <- [0 .. 12 :: Int], b <- [0 .. 12]])
+  print ("^ power of power", and [((2 :: Integer) ^ a) ^ b == 2 ^ (a * b) | a <- [0 .. 8 :: Int], b <- [0 .. 8]])
+  print ("^^ at Double", 2 ^^ (-2 :: Int) :: Double, 2 ^^ (3 :: Int) :: Double, 0.5 ^^ (-3 :: Int) :: Double, (-2) ^^ (-1 :: Int) :: Double)
+  print ("^^ zero exponent", 10 ^^ (0 :: Int) :: Double, (3 % 4) ^^ (0 :: Int) :: Rational)
+  print ("^^ at Rational", (2 % 3) ^^ (-2 :: Int) :: Rational, 10 ^^ (-1 :: Int) :: Rational, (2 % 3) ^^ (2 :: Int) :: Rational)
+  print ("^^ negative base", ((-3) % 2) ^^ (-3 :: Int) :: Rational, ((-3) % 2) ^^ (-2 :: Int) :: Rational)
+  print ("^^ at Float", 2 ^^ (-3 :: Int) :: Float, 4 ^^ (-1 :: Integer) :: Float)
+  print ("^^ is infixr 8", 2 ^^ 2 ^ 2 :: Double, 2 * 2 ^^ (-1 :: Int) :: Double)
+  print ("^^ inverse", and [(2 :: Rational) ^^ n * 2 ^^ negate n == 1 | n <- [-10 .. 10 :: Int]])
+  print ("** close", close (2 ** 10) 1024, close (4 ** 0.5) 2, close (2 ** (-1)) 0.5, close (10 ** 2) 100, close (27 ** (1 / 3)) 3)
+  print ("** identities", close (5 ** 0) 1, close (5 ** 1) 5, close (1 ** 123.5) 1)
+  print ("** agrees with ^", and [close (1.5 ** fromIntegral n) (1.5 ^ n) | n <- [0 .. 20 :: Int]])
+  print ("** is infixr 8", close (2 ** 3 ** 2) 512, close (2 * 3 ** 2) 18)
+  print ("** at Float", abs ((2 :: Float) ** 3 - 8) < 1.0e-4)

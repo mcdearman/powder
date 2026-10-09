@@ -1,0 +1,42 @@
+-- Haskell 2010 Report 20.5.1 (Data.List): stripPrefix, group (maximal runs), inits, tails, including their
+-- laziness on infinite lists
+module Main (main) where
+
+import Data.List
+
+main :: IO ()
+main = do
+  print ("stripPrefix", stripPrefix "foo" "foobar")
+  print ("stripPrefix whole", stripPrefix "foo" "foo")
+  print ("stripPrefix no match", stripPrefix "foo" "barfoo")
+  print ("stripPrefix partial match", stripPrefix "foo" "fox")
+  print ("stripPrefix longer prefix", stripPrefix "foobar" "foo")
+  print ("stripPrefix empty prefix", stripPrefix "" "abc")
+  print ("stripPrefix both empty", stripPrefix "" "")
+  print ("stripPrefix numbers", stripPrefix [1, 2] [1, 2, 3, 4 :: Int])
+  print ("stripPrefix infinite", fmap (take 3) (stripPrefix [1, 2] [1 :: Int ..]))
+  print ("group", group "Mississippi")
+  print ("group numbers", group [1, 1, 2, 3, 3, 3, 1, 1 :: Int])
+  print ("group empty", group ([] :: [Int]))
+  print ("group singleton", group "a")
+  print ("group all equal", group "aaaa")
+  print ("group all distinct", group "abcd")
+  print ("group only adjacent", group [1, 2, 1, 2 :: Int])
+  print ("group run lengths", map (\g -> (head g, length g)) (group "aaabccdddd"))
+  print ("group concat", concat (group "Mississippi") == "Mississippi")
+  print ("group infinite", take 4 (group (cycle [1, 1, 2 :: Int])))
+  print ("inits", inits "abc")
+  print ("inits empty", inits "")
+  print ("inits singleton", inits [1 :: Int])
+  print ("inits lengths", map length (inits "abcde"))
+  print ("inits infinite", take 3 (inits [1 :: Int ..]))
+  print ("inits later elements of infinite", inits [1 :: Int ..] !! 5)
+  print ("tails", tails "abc")
+  print ("tails empty", tails "")
+  print ("tails singleton", tails [1 :: Int])
+  print ("tails lengths", map length (tails "abcde"))
+  print ("tails infinite", map (take 2) (take 3 (tails [1 :: Int ..])))
+  print ("inits are prefixes", all (`isPrefixOf` "abcde") (inits "abcde"))
+  print ("tails are suffixes", all (`isSuffixOf` "abcde") (tails "abcde"))
+  print ("inits and tails recombine", zipWith (++) (inits "abcd") (tails "abcd"))
+  print ("sublists", [t | i <- inits "abc", t <- tails i, not (null t)])

@@ -1,0 +1,18 @@
+inner handler got: e1
+inner recovered, continuing
+inner handler got: e2
+outer handler got: e2
+inner handler got: e3
+outer handler got: wrapped e3
+outer saw: from handler
+inner ok
+outer handler got: e5
+level 3 handler got: e6
+level 2 handler got: e6
+level 1 handler got: e6
+outer handler got: e7
+handler's own handler got: inside handler
+("results",1,2)
+selected x
+outermost handler got: z
+("user errors throughout",True)

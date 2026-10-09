@@ -1,0 +1,28 @@
+("constructors",Just 'a',Nothing)
+("maybe",6,0)
+("maybe to string","True","none")
+("maybe lazy default",True)
+("eq",True,True,True,False)
+("ord",True,True,GT,GT)
+("ord 2",Just 'x',Nothing,True)
+show Just: Just 3
+show Just negative: Just (-3)
+show nested: Just (Just 3)
+show Just Nothing: Just Nothing
+show Just string: Just "s"
+show Just list: Just [1,2]
+show Just tuple: Just (1,'c')
+show list of Maybe: [Just 1,Nothing]
+showsPrec 11: (Just 'a') Nothing
+showsPrec 10: Just 'a'
+("read",Just 3,Just 3,Just 3)
+("read 2",Just (-3),Nothing,Just 3)
+("read nested",Just (Just 4),Just Nothing)
+("reads failures",[],[])
+("reads rest",[(Nothing," more")])
+("fmap",Just 2,Nothing,Just "True")
+("bind",Just 12,Nothing,Nothing)
+("then",Just 'b',Nothing,Nothing)
+("return",Just 'r')
+("do",Just 30)
+("do failing",Nothing)

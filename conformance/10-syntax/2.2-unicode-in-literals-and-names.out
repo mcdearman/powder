@@ -1,0 +1,10 @@
+("ord of literals",[97,233],955,26085)
+("ord of astral literal",119070)
+("length counts code points",5,3,1)
+("literal equals escape",True,True,True)
+("literal equals hex escape",True,True)
+("show escapes non-ASCII","'\\233'","\"\\955x\"","\"\\26085\\26412\"")
+("unicode identifiers",1,2,2)
+("unicode operator",6,11)
+("unicode constructors (not shown: output stays ASCII)",False,True)
+ASCII only output from non-ASCII source

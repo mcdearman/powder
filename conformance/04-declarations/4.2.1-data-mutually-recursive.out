@@ -1,0 +1,8 @@
+("even zero",0)
+("even four",4)
+("odd three",3)
+("rose size",4)
+("rose flatten","abcd")
+("forest empty",0)
+("stmt",["x","z","y"])
+("stmt empty",[])

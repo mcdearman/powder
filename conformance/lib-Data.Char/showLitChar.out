@@ -1,0 +1,45 @@
+a
+ 
+~
+\\
+"
+'
+\n
+\t
+\a
+\b
+\f
+\r
+\v
+\NUL
+\SOH
+\ESC
+\US
+\DEL
+\128
+\255
+\1234
+\1114111
+\NUL \SOH \STX \ETX \EOT \ENQ \ACK \a \b \t \n \v \f \r \SO \SI \DLE \DC1 \DC2 \DC3 \DC4 \NAK \SYN \ETB \CAN \EM \SUB \ESC \FS \GS \RS \US  
+xyz
+\nrest
+\SO\&H
+\SOh
+\SOHH
+\200\&1
+\200a
+\DEL1
+tab\there \1234\&5 \SO\&H end
+'a'
+'\''
+'"'
+'\n'
+'\200'
+"it's"
+"say \"hi\""
+"\SOH"
+"\SO\&H"
+"\1234\&5"
+"\1234x"
+"a\\b"
+("length of shown newline",2)

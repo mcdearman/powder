@@ -1,0 +1,4 @@
+("instance from empty import","r","rb")
+("Show instance from empty import",BLUE,[RED,BLUE])
+("Num instance from qualified empty import",Vec 11 22,Vec 3 6)
+("fromInteger through instance",Vec 5 5,Vec (-1) 1)

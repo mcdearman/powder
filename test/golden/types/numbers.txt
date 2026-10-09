@@ -1,0 +1,4 @@
+mean :: [Double] -> Double
+newton :: Double -> Double
+half :: Ratio Integer
+main :: IO ()

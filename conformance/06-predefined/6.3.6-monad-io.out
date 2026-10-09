@@ -1,0 +1,33 @@
+5
+bound
+first
+second
+run abc
+("bind result",6)
+run x
+run yz
+("then keeps second result",2)
+("return",'r')
+run a
+run bb
+run ccc
+("mapM results in order",[1,2,3])
+1
+2
+3
+run p
+run qq
+("sequence results",[1,0,2])
+abc
+run only effects
+("mapM_ returns unit",())
+("mapM on empty",[])
+run flipped bind
+12
+3
+2
+1
+liftoff
+("nested binds",3,4)
+("let in bind",10)
+("seq on an action does not run it",'y')

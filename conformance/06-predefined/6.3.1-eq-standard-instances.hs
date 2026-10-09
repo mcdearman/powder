@@ -1,0 +1,27 @@
+-- Haskell 2010 Report 6.3.1: Eq instances of the standard types (all Prelude types except IO and functions)
+import Data.Ratio ((%))
+
+data Shape = Circle Int | Square Int | Origin deriving Eq
+
+main :: IO ()
+main = do
+  print ("Bool", True == True, True == False, True /= False)
+  print ("Char", 'a' == 'a', 'a' == 'A', 'a' /= 'b', '\n' == '\10')
+  print ("Int", (3 :: Int) == 3, (3 :: Int) /= 4, (minBound :: Int) == maxBound)
+  print ("Integer", (2 :: Integer) ^ (70 :: Int) == 2 ^ (70 :: Int), (10 :: Integer) ^ (30 :: Int) /= 10 ^ (30 :: Int) + 1)
+  print ("Double", (1.5 :: Double) == 1.5, (1 :: Double) == 1.0, (0.5 :: Double) /= 0.25)
+  print ("Float", (1.5 :: Float) == 1.5, (0.1 :: Float) /= 0.2)
+  print ("Rational", (1 % 2 :: Rational) == 2 % 4, (1 % 3 :: Rational) /= 1 % 2)
+  print ("unit", () == (), () /= ())
+  print ("Ordering", LT == LT, LT == GT, EQ /= GT)
+  print ("String", "abc" == "abc", "abc" == "abd", "" == "", "a" /= "")
+  print ("list", [1, 2, 3] == [1, 2, 3 :: Int], [1, 2] == [1, 2, 3 :: Int], [[1], []] == [[1], [] :: [Int]])
+  print ("list length differs", ([] :: [Int]) == [1], [1] /= ([] :: [Int]))
+  print ("tuple", (1 :: Int, 'a') == (1, 'a'), (1 :: Int, 'a') == (1, 'b'), (1 :: Int, 'a', True) /= (1, 'a', False))
+  print ("Maybe", Just 'a' == Just 'a', Just 'a' == Nothing, (Nothing :: Maybe Char) == Nothing)
+  print ("Either", (Left 1 :: Either Int Int) == Left 1, (Left 1 :: Either Int Int) == Right 1)
+  print ("nested", Just [(1 :: Int, "x")] == Just [(1, "x")], [Just (Left 'a')] == [Just (Right 'a' :: Either Char Char)])
+  print ("derived", Circle 1 == Circle 1, Circle 1 == Circle 2, Circle 1 == Square 1, Origin == Origin, Origin /= Square 0)
+  print ("short circuit on first difference", [1, undefined] == [2, 3 :: Int], (1 :: Int, undefined :: Int) == (2, 3))
+  print ("infinite list unequal prefix", [(1 :: Int) ..] == [1, 2, 4])
+  print ("precedence 4, non-assoc", 1 + 1 == (2 :: Int), not (1 == (2 :: Int)), (1 :: Int) == 1 && 'a' /= 'b')

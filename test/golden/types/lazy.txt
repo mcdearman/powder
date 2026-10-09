@@ -1,0 +1,4 @@
+primes :: [Int]
+fibs :: [Integer]
+collatz :: Int -> [Int]
+main :: IO ()

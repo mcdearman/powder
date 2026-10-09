@@ -1,0 +1,8 @@
+[error]: type error
+     ╭──▶ test/errors/type-mismatch.hs@2:26-2:27
+     │
+   2 │ f c = if c then 'a' else c
+     •                          ┬
+     •                          ╰╸ expected Char, but this has type Bool
+─────╯
+

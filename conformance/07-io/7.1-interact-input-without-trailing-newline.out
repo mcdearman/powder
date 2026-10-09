@@ -1,0 +1,9 @@
+5 [alpha]
+10 [beta gamma]
+0 []
+21 [omega without newline]
+lines: 4
+chars: 39
+newlines: 3
+ends with newline: False
+unlines . lines adds one: 1

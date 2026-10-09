@@ -1,0 +1,25 @@
+1 + 2 * 3
+(1 + 2) * 3
+1 + 2 + 3
+1 + (2 + 3)
+1 * (2 * 3)
+-(1 + 2)
+-1 + 2
+-(-1)
+Just (1 + 2)
+Just 1
+[1 + 2,3]
+(1 + 2,2 * 3)
+(1 + 2)
+1 + 2
+1 * 2 = 2
+<a>
+Just <a>
+[<a>,<b>]
+<p>
+<q>!
+Pair 'a' 'b'
+Pair (-1) 2
+Pair (Just True) Nothing
+Just (Pair 1 2)
+Pair (Pair <x> <y>) (Pair <z> <w>)

@@ -1,0 +1,3 @@
+("derived Show through chain",[Thing 1,Other,Thing 2])
+("user instance through chain",("<1><?><2>","<7>","yesno"))
+("Eq through chain",True)

@@ -1,0 +1,7 @@
+("eval literal",3)
+("eval var",7)
+("run",[("z",106),("y",6),("x",5)])
+("size expr",3)
+("size stmt",2)
+("size program",13)
+("show",Assign "k" (Block [Assign "j" (Lit 1)] (Var "j")))

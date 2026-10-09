@@ -1,0 +1,26 @@
+42
+42 rest
+42!
+prec 0 negative Int: -5
+prec 6 negative Int: -5
+prec 7 negative Int: (-5)
+prec 11 negative Int: (-5)
+prec 11 positive Int: 5
+prec 6 negative Integer: -12345678901234567890
+prec 7 negative Integer: (-12345678901234567890)
+prec 11 zero: 0
+abcdef
+xyz
+(inner)
+inner!
+(('c'))
+ab1(True)
+1;2;3;
+("show x == shows x \"\"",True,True)
+("shows == showsPrec 0",True)
+("showsPrec appends","(Just True)tail","[LT]tail")
+("basic types","True","'c'","\"s\"","()","LT","1.5")
+("numbers","0","-7","18446744073709551616","-9223372036854775808")
+("containers","[1,2]","(1,'a')","Just 'x'","Left 1")
+("empty containers","[]","\"\"","Nothing","[[]]")
+("no spaces after commas","[(1,True)]","([1],[()],\"x\")")

@@ -1,0 +1,13 @@
+("stdin readable/writable",True,False)
+("stdout readable/writable",False,True)
+("stderr readable/writable",False,True)
+("standard handles are open",True,True,True)
+("stdin is not closed",False)
+("hIsEOF stdin at start",False)
+("hLookAhead then hGetChar",'a','a')
+("hGetLine stdin","lpha")
+("getLine continues where hGetLine stdin stopped","beta")
+("getChar and hGetChar stdin share the stream",'g','a')
+("hGetContents stdin","mma\ndelta\n")
+("remaining lines",["mma","delta"])
+written with hPutStrLn stdout

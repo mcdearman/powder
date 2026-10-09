@@ -1,0 +1,15 @@
+("line read before getContents","header line")
+alpha beta gamma
+("characters",64)
+("lines",5)
+("words",13)
+("line lengths",[16,8,0,29,6])
+("last line","last 7")
+("ends with newline",True)
+("numbers",72)
+1| alpha beta gamma
+2| 10 20 30
+3| 
+4|    indented line with 5 words
+5| last 7
+done

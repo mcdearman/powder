@@ -1,0 +1,12 @@
+("knot through take",[1,1,1,1])
+("infinite list of ones",[1,1,1,1,1])
+("naturals",[0,1,2,3,4,5])
+("fibonacci",[0,1,1,2,3,5,8,13,21,34,55,89])
+("argument unused",5)
+effect happens once
+("with an effect","aaa")
+("lazy tuple knot",3,"abc")
+("cyclic structure",[1,2,3,1,2,3,1])
+("self-referential table",832040)
+inside the action: the argument is not forced
+("argument never forced","x")

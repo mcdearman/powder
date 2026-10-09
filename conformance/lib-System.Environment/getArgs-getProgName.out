@@ -1,0 +1,13 @@
+("args",["one","two words"])
+("number of args",2)
+("first","one")
+("second","two words")
+("words of second",["two","words"])
+("second contains a space",True)
+("lengths",[3,9])
+("getArgs is repeatable",True)
+("program name is non-empty",True)
+("program name is not an argument",True)
+("getProgName is repeatable",True)
+1: <one>
+2: <two words>
