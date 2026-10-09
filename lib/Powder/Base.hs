@@ -348,6 +348,10 @@ instance Eq Double where
 instance Ord Double where
   (<) = primDoubleLt
   (<=) = primDoubleLe
+  -- Each said for itself, since what is not a number is neither more
+  -- nor less than anything.
+  x > y = primDoubleLt y x
+  x >= y = primDoubleLe y x
 
 instance Show Double where
   showsPrec p x = showParen (p > 6 && (x < 0 || isNegativeZero x)) (showString (shownDouble x))
@@ -438,6 +442,8 @@ instance Eq Float where
 instance Ord Float where
   (<) = primCoerce primDoubleLt
   (<=) = primCoerce primDoubleLe
+  x > y = toDouble x > toDouble y
+  x >= y = toDouble x >= toDouble y
 
 instance Show Float where
   showsPrec p x = showParen (p > 6 && (x < 0 || isNegativeZero x)) (showString (from 0))
@@ -1227,17 +1233,23 @@ ord c = primCoerce (primCharToInt c)
 chr :: Int -> Char
 chr n = primIntToChar (primCoerce n)
 
+-- Which of Unicode's general categories a character is in, by its place
+-- in their order. Most questions about a character are asked of this,
+-- after the common ones have been answered without it.
+category :: Char -> Integer
+category c = primCharCategory (primCharToInt c)
+
 isDigit, isUpper, isLower, isAlpha, isAlphaNum, isSpace :: Char -> Bool
 isDigit c = c >= '0' && c <= '9'
-isUpper c = c >= 'A' && c <= 'Z'
-isLower c = c >= 'a' && c <= 'z'
-isAlpha c = isUpper c || isLower c
-isAlphaNum c = isAlpha c || isDigit c
-isSpace c = c == ' ' || c == '\n' || c == '\t' || c == '\r' || c == '\f' || c == '\v' || ord c == 160
+isUpper c = if ord c < 128 then c >= 'A' && c <= 'Z' else category c == 0 || category c == 2
+isLower c = if ord c < 128 then c >= 'a' && c <= 'z' else category c == 1
+isAlpha c = if ord c < 128 then c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' else category c <= 4
+isAlphaNum c = if ord c < 128 then isAlpha c || isDigit c else category c <= 4 || category c >= 8 && category c <= 10
+isSpace c = if ord c < 128 then c == ' ' || c >= '\t' && c <= '\r' else category c == 22
 
 toUpper, toLower :: Char -> Char
-toUpper c = if isLower c then chr (ord c - 32) else c
-toLower c = if isUpper c then chr (ord c + 32) else c
+toUpper c = if ord c < 128 then (if c >= 'a' && c <= 'z' then chr (ord c - 32) else c) else primIntToChar (primCharUpper (primCharToInt c))
+toLower c = if ord c < 128 then (if c >= 'A' && c <= 'Z' then chr (ord c + 32) else c) else primIntToChar (primCharLower (primCharToInt c))
 
 digitToInt :: Char -> Int
 digitToInt c

@@ -1,6 +1,6 @@
 module System.Exit (ExitCode (..), exitWith, exitFailure, exitSuccess) where
 
-data ExitCode = ExitSuccess | ExitFailure Int deriving (Eq, Ord, Show)
+data ExitCode = ExitSuccess | ExitFailure Int deriving (Eq, Ord, Show, Read)
 
 exitWith :: ExitCode -> IO a
 exitWith ExitSuccess = primExit 0

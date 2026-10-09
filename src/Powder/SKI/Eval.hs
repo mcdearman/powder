@@ -11,7 +11,7 @@ where
 
 import Control.Exception
 import Control.Monad
-import Data.Char (chr, ord)
+import Data.Char (chr, generalCategory, ord, toLower, toTitle, toUpper)
 import Data.Functor ((<&>))
 import Data.IORef
 import Data.Ratio ((%))
@@ -260,6 +260,10 @@ whnf m root = do
       Coerce | (n, a) : s <- stk -> redirect n a s
       IntNarrow | (n, a) : s <- stk -> int m a >>= \x -> update n (NInt (toInteger (fromInteger x :: Int64))) s
       FloatNarrow | (n, a) : s <- stk -> double m a >>= \x -> update n (NDbl (realToFrac (realToFrac x :: Float))) s
+      CharCategory | (n, a) : s <- stk -> int m a >>= \c -> update n (NInt (toInteger (fromEnum (generalCategory (chr (fromInteger c)))))) s
+      CharUpper | (n, a) : s <- stk -> int m a >>= \c -> update n (NInt (toInteger (ord (toUpper (chr (fromInteger c)))))) s
+      CharLower | (n, a) : s <- stk -> int m a >>= \c -> update n (NInt (toInteger (ord (toLower (chr (fromInteger c)))))) s
+      CharTitle | (n, a) : s <- stk -> int m a >>= \c -> update n (NInt (toInteger (ord (toTitle (chr (fromInteger c)))))) s
       FloatShowAt | (_, a) : (n, i) : s <- stk -> do
         x <- double m a
         at <- int m i

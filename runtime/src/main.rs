@@ -64,7 +64,7 @@ enum Prim {
     IntAdd, IntSub, IntMul, IntQuot, IntRem, IntEq, IntLt, IntLe, IntNarrow, IntToDouble,
     DoubleAdd, DoubleSub, DoubleMul, DoubleDiv, DoublePow, DoubleAtan2, DoubleEq, DoubleLt, DoubleLe,
     DoubleTruncate, DoubleFun, DoubleShowAt, FloatShowAt, FloatNarrow, DoubleMantissa, DoubleExponent,
-    DoubleEncode, DoubleFromRatio, MatchFail, PutChar, GetChar, Exit, PathChar, FileOpen, HGetChar, FileClose, HIsEOF,
+    DoubleEncode, DoubleFromRatio, CharCategory, CharUpper, CharLower, CharTitle, MatchFail, PutChar, GetChar, Exit, PathChar, FileOpen, HGetChar, FileClose, HIsEOF,
     ArgCount, ArgChar,
 }
 
@@ -79,7 +79,8 @@ fn prim_named(name: &str) -> Result<Prim, String> {
         "primDoubleLt" => DoubleLt, "primDoubleLe" => DoubleLe, "primDoubleTruncate" => DoubleTruncate,
         "primDoubleFun" => DoubleFun, "primDoubleShowAt" => DoubleShowAt, "primFloatShowAt" => FloatShowAt,
         "primFloatNarrow" => FloatNarrow, "primDoubleMantissa" => DoubleMantissa,
-        "primDoubleExponent" => DoubleExponent, "primDoubleEncode" => DoubleEncode, "primDoubleFromRatio" => DoubleFromRatio, "primMatchFail" => MatchFail,
+        "primDoubleExponent" => DoubleExponent, "primDoubleEncode" => DoubleEncode, "primDoubleFromRatio" => DoubleFromRatio, "primCharCategory" => CharCategory, "primCharUpper" => CharUpper,
+        "primCharLower" => CharLower, "primCharTitle" => CharTitle, "primMatchFail" => MatchFail,
         "primPutChar" => PutChar, "primGetChar" => GetChar, "primExit" => Exit, "primPathChar" => PathChar,
         "primFileOpen" => FileOpen, "primHGetChar" => HGetChar, "primFileClose" => FileClose,
         "primHIsEOF" => HIsEOF, "primArgCount" => ArgCount, "primArgChar" => ArgChar,
@@ -344,6 +345,35 @@ fn encode(m: &BigInt, e: i64) -> f64 {
     x
 }
 
+fn character(v: &Value) -> Result<char, String> {
+    Ok(char::from_u32(small(v)? as u32).unwrap_or(char::REPLACEMENT_CHARACTER))
+}
+
+/// A character's other case, where that is one character; itself where it
+/// is several, as Haskell's simple case mapping has it.
+fn single(c: char, map: impl Fn(char) -> Vec<char>) -> i64 {
+    match map(c).as_slice() {
+        [one] => *one as i64,
+        _ => c as i64,
+    }
+}
+
+/// Which of Unicode's general categories a character is in, in the order
+/// Haskell's `GeneralCategory` lists them.
+fn category(c: char) -> i64 {
+    use unicode_general_category::GeneralCategory::*;
+    match unicode_general_category::get_general_category(c) {
+        UppercaseLetter => 0, LowercaseLetter => 1, TitlecaseLetter => 2, ModifierLetter => 3, OtherLetter => 4,
+        NonspacingMark => 5, SpacingMark => 6, EnclosingMark => 7, DecimalNumber => 8, LetterNumber => 9,
+        OtherNumber => 10, ConnectorPunctuation => 11, DashPunctuation => 12, OpenPunctuation => 13,
+        ClosePunctuation => 14, InitialPunctuation => 15, FinalPunctuation => 16, OtherPunctuation => 17,
+        MathSymbol => 18, CurrencySymbol => 19, ModifierSymbol => 20, OtherSymbol => 21, SpaceSeparator => 22,
+        LineSeparator => 23, ParagraphSeparator => 24, Control => 25, Format => 26, Surrogate => 27,
+        PrivateUse => 28, Unassigned => 29,
+        _ => 29,
+    }
+}
+
 /// The double nearest the ratio of two integers.
 fn ratio(n: &BigInt, d: &BigInt) -> f64 {
     if d.is_zero() {
@@ -481,6 +511,24 @@ impl Machine {
             (DoubleExponent, [x]) => Value::Int(decode(double(x)?).1),
             (DoubleEncode, [m, e]) => Value::Double(encode(&big(m)?, small(e).unwrap_or(0).clamp(-100000, 100000))),
             (DoubleFromRatio, [n, d]) => Value::Double(ratio(&big(n)?, &big(d)?)),
+            (CharCategory, [c]) => Value::Int(match small(c)? {
+                // Half a pair is no character to Rust, and is one to Unicode.
+                0xD800..=0xDFFF => 27,
+                code => char::from_u32(code as u32).map_or(29, category),
+            }),
+            (CharUpper, [c]) => Value::Int(single(character(c)?, |x| x.to_uppercase().collect())),
+            (CharLower, [c]) => Value::Int(single(character(c)?, |x| x.to_lowercase().collect())),
+            (CharTitle, [c]) => {
+                // The few characters that are two letters in one have a title case of their own.
+                let c = character(c)?;
+                Value::Int(match c as u32 {
+                    0x01C4..=0x01C6 => 0x01C5,
+                    0x01C7..=0x01C9 => 0x01C8,
+                    0x01CA..=0x01CC => 0x01CB,
+                    0x01F1..=0x01F3 => 0x01F2,
+                    _ => single(c, |x| x.to_uppercase().collect()),
+                })
+            }
             (MatchFail, []) => return Err("pattern match failure".into()),
             (PutChar, [h, c]) => {
                 let c = char::from_u32(small(c)? as u32).unwrap_or(char::REPLACEMENT_CHARACTER);

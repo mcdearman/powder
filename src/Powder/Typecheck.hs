@@ -208,7 +208,14 @@ typecheck general program = runST $ do
       let classes = IntMap.elems (programClasses program)
       methods <- fmap catMaybes . forM (concatMap classMethods classes) $ \m -> fmap (m,) <$> declared m
       forM_ methods (uncurry recordScheme)
-      local (\env -> env {envSchemes = IntMap.fromList (constructors ++ [(nameKey m, p) | (m, p) <- methods])}) $
+      local (\env -> env {envSchemes = IntMap.fromList (constructors ++ [(nameKey m, p) | (m, p) <- methods])}) $ do
+        -- What a default declaration names must be a number.
+        forM_ (concatMap snd (programDefaults program)) $ \t -> at (Syntax.typeId t) $ do
+          (hd, _) <- fromSyntax t >>= lift . Unify.spine
+          known <- asks envInstances
+          case (hd, builtinNumeric (programBuiltins program)) of
+            (Con c, Just (num, _)) | Map.notMember (nameKey num, nameKey c) known -> complain "a default declaration names types that are instances of Num, and this is not one"
+            _ -> pure ()
         foldr unit (pure ()) [0 .. max 0 (length units - 1)]
       settle
       where
@@ -592,6 +599,10 @@ primitive p = do
     IntNarrow -> Fun integer integer
     FloatNarrow -> Fun double double
     FloatShowAt -> Fun double (Fun integer integer)
+    CharCategory -> Fun integer integer
+    CharUpper -> Fun integer integer
+    CharLower -> Fun integer integer
+    CharTitle -> Fun integer integer
     IntToDouble -> Fun integer double
     DoubleAdd -> Fun double (Fun double double)
     DoubleSub -> Fun double (Fun double double)
@@ -712,7 +723,16 @@ binding b = at (bindingId b) $ case bindingKind b of
             void (lift (Unify.unify t action))
           _ -> pure ()
         forM_ clauses (`clause` t)
-      else definition (bindingId b) clauses vs context t
+      else do
+        definition (bindingId b) clauses vs context t
+        -- A program's main is an action, and may not be said to be less.
+        program <- asks envProgram
+        case nameInfo program f of
+          Just (NameInfo "main" Global "Main") -> do
+            action <- App <$> builtin builtinIO <*> unknown
+            ok <- lift (Unify.unify t action)
+            unless ok (complain "main is what a program does, so its type must be IO of something")
+          _ -> pure ()
   Destructure p r -> do
     t <- unknown
     record (bindingId b) t

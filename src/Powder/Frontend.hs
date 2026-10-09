@@ -46,6 +46,7 @@ import Powder.Typecheck (Checked, typecheck)
 import Powder.Syntax.AST (Expr, Module, cast, moduleDecls, moduleHeader)
 import qualified Powder.Syntax.AST.Decl as Decl
 import qualified Powder.Syntax.Red as Red
+import Powder.Syntax.Token (Pos (..))
 import Data.List (isPrefixOf, isSuffixOf)
 import Data.Maybe (fromMaybe, mapMaybe)
 import System.Directory (doesFileExist)
@@ -81,10 +82,25 @@ parsed path src result = case parsedProblems result of
 -- | Parse a source file.
 parseFile :: FilePath -> String -> Either Failure (Unit Module)
 parseFile path src = do
+  -- In a literate file, program text marked line by line has a blank line
+  -- between it and anything else.
+  when (".lhs" `isSuffixOf` path) . forM_ (crowded src) $ \line ->
+    Left (Failure [(path, src)] [Problem "syntax error" "program text in a literate file must have a blank line between it and what is not program text" path (Just (Pos line 1, Pos line 2)) False])
   -- A literate file is its program text, the rest left blank, so that
   -- everything in it is where it was.
   tree <- parsed path src (parseModule (if ".lhs" `isSuffixOf` path then unlit src else src))
   maybe (Left (Failure [] [Problem "error" (path ++ " is not a module") "" Nothing False])) (Right . (\m -> Unit path src m Nothing)) (cast tree)
+
+-- | The lines of a literate source that are program text hard against
+-- text that is not.
+crowded :: String -> [Int]
+crowded src = [n | (n, before, l, after) <- zip4 [1 ..] ("" : ls) ls (drop 1 ls ++ [""]), marked l, any other [before, after]]
+  where
+    ls = lines src
+    marked l = take 1 l == ">"
+    other l = not (marked l) && any (`notElem` " \t") l
+    zip4 (a : as) (b : bs) (c : cs) (d : ds) = (a, b, c, d) : zip4 as bs cs ds
+    zip4 _ _ _ _ = []
 
 -- | The program in a literate source: the lines marked with a @>@, and
 -- those between @\\begin{code}@ and @\\end{code}@.

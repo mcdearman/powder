@@ -80,6 +80,13 @@ data Prim
   | FloatNarrow
   | -- | As 'DoubleShowAt', for a double shown as a single-precision number.
     FloatShowAt
+  | -- | Of a character's code: which of Unicode's thirty general
+    -- categories it is in, in their order; and the codes of its upper
+    -- case, lower case and title case.
+    CharCategory
+  | CharUpper
+  | CharLower
+  | CharTitle
   | -- Floating point. A function of two arguments that is named for one
     -- thing takes that last.
     IntToDouble

@@ -180,7 +180,7 @@ itemsOf = \case
   (k, c) : (K.LParen, _) : (K.DotDot, _) : (K.RParen, _) : rest | k `elem` constructors -> Thing c All : itemsOf rest
   (k, c) : (K.LParen, _) : rest | k `elem` constructors ->
     let (inside, after) = break ((== K.RParen) . fst) rest
-     in Thing c (Some [x | (k', x) <- inside, k' `elem` [K.VarId, K.ConId, K.VarSym, K.ConSym]]) : itemsOf (drop 1 after)
+     in Thing c (Some ([x | (k', x) <- inside, k' `elem` [K.VarId, K.ConId, K.VarSym, K.ConSym]] ++ [plain x | (k', x) <- inside, k' `elem` [K.QVarId, K.QConId]])) : itemsOf (drop 1 after)
   (k, c) : rest | k `elem` constructors -> Thing c None : itemsOf rest
   (K.KwModule, _) : (_, m) : rest -> Reexport m : itemsOf rest
   (K.RParen, _) : _ -> []
@@ -188,6 +188,9 @@ itemsOf = \case
   [] -> []
   where
     constructors = [K.ConId, K.QConId]
+    -- What belongs to a type may be named with its module, which says
+    -- nothing more than its name does.
+    plain = reverse . takeWhile (/= '.') . reverse
 
 data Literal
   = Number Integer

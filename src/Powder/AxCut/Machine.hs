@@ -14,7 +14,7 @@ module Powder.AxCut.Machine (run) where
 
 import Control.Exception
 import Control.Monad
-import Data.Char (chr, ord)
+import Data.Char (chr, generalCategory, ord, toLower, toTitle, toUpper)
 import Data.IORef
 import Data.Ratio ((%))
 import Data.Int (Int16, Int32, Int64, Int8)
@@ -234,6 +234,10 @@ primitive m p given = case (p, given) of
       f : _ | which >= 0 -> double (f a)
       _ -> failure "no such function of a double"
   (DoubleShowAt, [VDouble a, VInt i]) -> int (maybe (-1) (toInteger . ord) (lookup i (zip [0 ..] (show a))))
+  (CharCategory, [VInt c]) -> int (toInteger (fromEnum (generalCategory (chr (fromInteger c)))))
+  (CharUpper, [VInt c]) -> int (toInteger (ord (toUpper (chr (fromInteger c)))))
+  (CharLower, [VInt c]) -> int (toInteger (ord (toLower (chr (fromInteger c)))))
+  (CharTitle, [VInt c]) -> int (toInteger (ord (toTitle (chr (fromInteger c)))))
   (FloatShowAt, [VDouble a, VInt i]) -> int (maybe (-1) (toInteger . ord) (lookup i (zip [0 ..] (show (realToFrac a :: Float)))))
   (FloatNarrow, [VDouble a]) -> double (realToFrac (realToFrac a :: Float))
   (DoubleMantissa, [VDouble a]) -> int (fst (decodeFloat a))

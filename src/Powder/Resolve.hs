@@ -97,6 +97,8 @@ data St = St
     -- | The fixity each operator was declared to have, by 'NameId'.
     fixityTable :: Table (Assoc, Int),
     newtypes :: [NameId],
+    -- | Which of each constructor's fields are strict, by 'NameId'.
+    strict :: Table [Bool],
     problems :: [Problem]
   }
 
@@ -128,7 +130,7 @@ resolve lenient sources extra = case reverse (problems final) of
     ((bindings, builtins), final) =
       runState
         (runReaderT run (Env Map.empty Map.empty Map.empty Map.empty Map.empty Map.empty "" Nothing "" root Set.empty Map.empty Map.empty False))
-        (St 0 IntMap.empty IntMap.empty IntMap.empty IntMap.empty [] IntMap.empty [] IntMap.empty [] [] IntMap.empty [] [])
+        (St 0 IntMap.empty IntMap.empty IntMap.empty IntMap.empty [] IntMap.empty [] IntMap.empty [] [] IntMap.empty [] IntMap.empty [])
     moduleNames = nub [n | (_, n, _) <- sources]
     -- The module a prompt's expression is in, and whose names are spelled
     -- plainly in what is compiled: the last.
@@ -239,12 +241,23 @@ resolve lenient sources extra = case reverse (problems final) of
         forM_ (moduleDecls m) $ \d -> within d $ case d of
           Decl.Import name _ _ items
             | name `notElem` moduleNames -> complain ("there is no module " ++ name)
-            | Just (False, wanted) <- items -> forM_ wanted $ \item ->
-                when (picked belongings (Map.findWithDefault mempty name exports) item == mempty) (complain (name ++ " does not export " ++ itemName item))
+            | Just (False, wanted) <- items -> forM_ wanted $ \item -> do
+                let theirs = Map.findWithDefault mempty name exports
+                when (picked belongings theirs item == mempty) (complain (name ++ " does not export " ++ itemName item))
+                forM_ (lacking belongings theirs item) (\x -> complain (name ++ " does not export " ++ x ++ " with " ++ itemName item))
           _ -> pure ()
-        forM_ (moduleHeader m) $ \(_, listed) -> forM_ (fromMaybe [] listed) $ \item -> case item of
-          Syntax.Reexport _ -> pure ()
-          _ -> when (picked belongings (scopeOf n) item == mempty) (within m (complain (itemName item ++ " is exported, but is not in scope")))
+        forM_ (moduleHeader m) $ \(_, listed) -> within m $ do
+          forM_ (fromMaybe [] listed) $ \item -> case item of
+            Syntax.Reexport other ->
+              unless (other == n || other `elem` [fromMaybe name alias | (name, _, alias, _) <- importsOf n]) $
+                complain ("the module " ++ other ++ " is exported, but is not imported")
+            _ -> do
+              when (picked belongings (scopeOf n) item == mempty) (complain (itemName item ++ " is exported, but is not in scope"))
+              forM_ (lacking belongings (scopeOf n) item) (\x -> complain (x ++ " is exported with " ++ itemName item ++ ", which it does not belong to"))
+          -- One name is one thing to whoever imports it.
+          let mine = Map.findWithDefault mempty n exports
+              twice = concat [Map.keys (Map.filter ((> 1) . length) (f mine)) | f <- [scopeValues, scopeConstructors, scopeTypes, scopeClasses]]
+          forM_ (nub twice) (\x -> complain (x ++ " is exported as two different things"))
       -- The fixities each module declares, before any expression is read.
       forM_ sources $ \(file, n, m) -> inModule n file $ do
         env <- ask
@@ -403,11 +416,22 @@ picked belongings scope = \case
      in mempty
           { scopeTypes = at c (scopeTypes scope),
             scopeClasses = at c (scopeClasses scope),
-            scopeConstructors = Map.fromListWith (++) [(x, [n]) | (cs, _) <- belonging, (x, n) <- cs, wanted x],
-            scopeValues = Map.fromListWith (++) [(x, [n]) | (_, ms) <- belonging, (x, n) <- ms, wanted x]
+            scopeConstructors = Map.fromListWith (++) [(x, [n]) | (cs, _) <- belonging, (x, n) <- cs, wanted x, n `Set.member` constructorsThere],
+            scopeValues = Map.fromListWith (++) [(x, [n]) | (_, ms) <- belonging, (x, n) <- ms, wanted x, n `Set.member` valuesThere]
           }
   where
     at x = Map.filterWithKey (\k _ -> k == x)
+    -- What belongs to a type is picked only if it is there: a type may
+    -- be exported without its constructors.
+    constructorsThere = Set.fromList (concat (Map.elems (scopeConstructors scope)))
+    valuesThere = Set.fromList (concat (Map.elems (scopeValues scope)))
+
+-- | The names an item asks for of what belongs to a type or a class,
+-- that are not to be had.
+lacking :: IntMap.IntMap ([(Name, NameId)], [(Name, NameId)]) -> Scope -> Syntax.Listed -> [Name]
+lacking belongings scope item = case item of
+  Syntax.Thing _ (Syntax.Some xs) -> let got = picked belongings scope item in [x | x <- xs, Map.notMember x (scopeConstructors got), Map.notMember x (scopeValues got)]
+  _ -> []
 
 -- | What an import takes of what a module exports: all of it, the items
 -- it lists, or all but the items it hides.
@@ -643,6 +667,7 @@ typeDecl own d = within d $ case d of
     declared <- withTypeVariables scope . forM cs $ \c@(Syntax.Constructor name tys) -> within c ((,) name <$> mapM type' tys)
     let (name, ids) = own Map.! t
     constructorsAs ids name (map snd scope) declared
+    modify (\st -> st {strict = IntMap.union (IntMap.fromList (zip (map nameKey ids) (map Syntax.constructorStrict cs))) (strict st)})
     when (Decl.isNewtype d) $
       if map (length . snd) declared == [1]
         then modify (\st -> st {newtypes = ids ++ newtypes st})
@@ -933,29 +958,29 @@ readInstance cls t parameters constrained constructors = instanceHead cls t para
   where
     alternatives = if null constructors then "[]" else intercalate " ++ " (map alternative constructors)
     x i = "x" ++ show (i :: Int)
-    s i = "s" ++ show (i :: Int)
+    symbolic name = take 1 name == ":" || not (any (`elem` ['a' .. 'z'] ++ ['A' .. 'Z'] ++ "_") (take 1 name))
+    -- A name as lexemes: an operator where a name is wanted is in
+    -- parentheses, and a name where an operator is wanted in backquotes.
+    prefixed name = if symbolic name then [Left "(", Left name, Left ")"] else [Left name]
+    between name = if symbolic name then [Left name] else [Left "`", Left name, Left "`"]
     alternative (name, arity, fieldNames, infixed)
-      | arity == 0 = reading "False" (name, 1) [token 0 name]
-      -- Written between its fields: an operator is one lexeme, and a name
-      -- in backquotes three.
+      | arity == 0 = reading "False" (written' name) (prefixed name)
       | Just prec <- infixed,
         arity == 2 =
-          let quoted = take 1 name /= ":"
-              between = if quoted then [token 1 "`", token 2 name, token 3 "`"] else [token 1 name]
-              after = length between + 1
-              written' = if quoted then "`" ++ name ++ "`" else name
-           in reading ("(d > " ++ show prec ++ ")") (x 1 ++ " " ++ written' ++ " " ++ x 2, after + 1) ([value (prec + 1) 1 0] ++ between ++ [value (prec + 1) 2 after])
+          reading ("(d > " ++ show prec ++ ")") (x 1 ++ " " ++ (if symbolic name then name else "`" ++ name ++ "`") ++ " " ++ x 2) ([Right (prec + 1, 1)] ++ between name ++ [Right (prec + 1, 2)])
       | not (null fieldNames) =
-          let fieldAt i f = [token (4 * i + 1) (if i == 0 then "{" else ","), token (4 * i + 2) f, token (4 * i + 3) "=", value 0 (i + 1) (4 * i + 4)]
-              steps = token 0 name : concat (zipWith fieldAt [0 ..] fieldNames) ++ [token (4 * arity + 1) "}"]
-           in reading "(d > 11)" (unwords (name : map x [1 .. arity]), 4 * arity + 2) steps
-      | otherwise = reading "(d > 10)" (unwords (spelled name : map x [1 .. arity]), arity + 1) (token 0 name : [value 11 i i | i <- [1 .. arity]])
-    spelled name = if take 1 name == ":" then "(" ++ name ++ ")" else name
-    -- A step reads from one state to the next: a token, or a value.
-    token i text = "(" ++ show text ++ ", " ++ s (i + 1) ++ ") <- lex " ++ s i
-    value :: Int -> Int -> Int -> String
-    value prec i from = "(" ++ x i ++ ", " ++ s (from + 1) ++ ") <- readsPrec " ++ show prec ++ " " ++ s from
-    reading needed (made, final) steps = "readParen " ++ needed ++ " (\\s0 -> [(" ++ made ++ ", " ++ s final ++ ") | " ++ intercalate ", " steps ++ "]) r"
+          let field i f = [Left (if i == 1 then "{" else ",")] ++ prefixed f ++ [Left "=", Right (0, i)]
+           in reading "(d > 11)" (unwords (written' name : map x [1 .. arity])) (prefixed name ++ concat (zipWith field [1 ..] fieldNames) ++ [Left "}"])
+      | otherwise = reading "(d > 10)" (unwords (written' name : map x [1 .. arity])) (prefixed name ++ [Right (11, i) | i <- [1 .. arity]])
+    written' name = if symbolic name then "(" ++ name ++ ")" else name
+    -- A reader of lexemes and values in a row: each step reads from where
+    -- the one before it left off.
+    reading :: String -> String -> [Either String (Int, Int)] -> String
+    reading needed made steps =
+      "readParen " ++ needed ++ " (\\s0 -> [(" ++ made ++ ", s" ++ show (length steps) ++ ") | " ++ intercalate ", " (zipWith step [0 :: Int ..] steps) ++ "]) r"
+    step i = \case
+      Left lexeme -> "(" ++ show lexeme ++ ", s" ++ show (i + 1) ++ ") <- lex s" ++ show i
+      Right (prec, v) -> "(" ++ x v ++ ", s" ++ show (i + 1) ++ ") <- readsPrec " ++ show (prec :: Int) ++ " s" ++ show i
 
 -- | Indexed in the order the constructors were declared; or for the one
 -- constructor of a type, by its fields, the last counting fastest.
@@ -1415,6 +1440,9 @@ expr e = within e $ case e of
       Just k -> do
         arity <- arityOf k
         given <- placed k fs
+        musts <- gets (IntMap.findWithDefault [] (nameKey k) . strict)
+        when (or [must | (i, must) <- zip [0 ..] musts, i `notElem` map fst given]) $
+          complain ("a strict field of " ++ c ++ " is not given")
         arguments <- forM [0 .. arity - 1] (\i -> maybe (mk (Prim MatchFail)) expr (lookup i given))
         mk (Con k) >>= (`apply` arguments)
   -- A record changed: for each constructor that has all the fields, the

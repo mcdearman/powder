@@ -1,0 +1,75 @@
+# The suite that every pull request must pass before it is merged: the
+# compiler built, the machine in Rust built, and all the tests run, the
+# conformance suite among them.
+name: ci
+
+on:
+  pull_request:
+  merge_group:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: powder
+
+      # The line editor is a package beside this one.
+      - uses: actions/checkout@v4
+        with:
+          repository: mcdearman/lambline
+          path: lambline
+
+      - uses: haskell-actions/setup@v2
+        id: haskell
+        with:
+          ghc-version: "9.12.2"
+          cabal-version: "3.14"
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ${{ steps.haskell.outputs.cabal-store }}
+            powder/dist-newstyle
+          key: cabal-${{ runner.os }}-${{ hashFiles('powder/powder.cabal', 'powder/cabal.project', 'lambline/lambline.cabal') }}
+          restore-keys: cabal-${{ runner.os }}-
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            powder/runtime/target
+          key: cargo-${{ runner.os }}-${{ hashFiles('powder/runtime/Cargo.toml', 'powder/runtime/src/**') }}
+          restore-keys: cargo-${{ runner.os }}-
+
+      - name: Build the compiler
+        working-directory: powder
+        run: |
+          cabal update
+          cabal build all
+
+      - name: Build the machine in Rust
+        working-directory: powder/runtime
+        run: |
+          cargo build --release
+          cargo clippy --release -- -D warnings
+
+      - name: Lint
+        working-directory: powder
+        run: |
+          curl -sL https://github.com/ndmitchell/hlint/releases/download/v3.8/hlint-3.8-x86_64-linux.tar.gz | tar xz -C "$RUNNER_TEMP"
+          "$RUNNER_TEMP"/hlint-3.8/hlint src app test/*.hs -XLambdaCase -XPatternSynonyms -XViewPatterns
+
+      - name: Test
+        working-directory: powder
+        env:
+          LC_ALL: C.UTF-8
+        run: cabal test spec --test-show-details=failures
