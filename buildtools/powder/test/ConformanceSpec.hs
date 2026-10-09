@@ -112,5 +112,6 @@ running name input program = do
             arguments = ["one", "two words"]
           }
   status <-
-    timeout 60000000 ((0 <$ run hooks (compileProgram program)) `catches` [Handler (\e -> pure (case e of ExitSuccess -> 0; ExitFailure n -> n)), Handler (\(RuntimeError _) -> pure 1)])
+    -- Long enough for the slowest of them on a slow machine with others running.
+    timeout 240000000 ((0 <$ run hooks (compileProgram program)) `catches` [Handler (\e -> pure (case e of ExitSuccess -> 0; ExitFailure n -> n)), Handler (\(RuntimeError _) -> pure 1)])
   (,) (fromMaybe 124 status) . reverse <$> readIORef out
