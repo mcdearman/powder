@@ -31,6 +31,7 @@
 module Powder.Typecheck
   ( Checked (..),
     typecheck,
+    typecheckAfter,
     typeOf,
     schemeOf,
     evidenceAt,
@@ -160,7 +161,13 @@ type Tc s = ReaderT (Env s) (ST s)
 -- The names given are generalised even where the monomorphism restriction
 -- would have them not be: a prompt asks an expression's type that way.
 typecheck :: [NameId] -> Program -> (Checked, [Problem])
-typecheck general program = runST $ do
+typecheck = typecheckAfter IntMap.empty
+
+-- | Check a program that is a package compiled after others, given the
+-- types of what the others define. What is theirs in the program is
+-- taken as checked.
+typecheckAfter :: Table Scheme -> [NameId] -> Program -> (Checked, [Problem])
+typecheckAfter theirs general program = runST $ do
   -- Type variables made here must not be taken for the program's own.
   next <- newSTRef (1 + maximum (0 : IntMap.keys (programNames program) ++ IntMap.keys (programOrigins program)))
   types <- newSTRef IntMap.empty
@@ -208,7 +215,8 @@ typecheck general program = runST $ do
       let classes = IntMap.elems (programClasses program)
       methods <- fmap catMaybes . forM (concatMap classMethods classes) $ \m -> fmap (m,) <$> declared m
       forM_ methods (uncurry recordScheme)
-      local (\env -> env {envSchemes = IntMap.fromList (constructors ++ [(nameKey m, p) | (m, p) <- methods])}) $ do
+      known <- traverse thaw theirs
+      local (\env -> env {envSchemes = IntMap.union (IntMap.fromList (constructors ++ [(nameKey m, p) | (m, p) <- methods])) known}) $ do
         -- What a default declaration names must be a number.
         forM_ (concatMap snd (programDefaults program)) $ \t -> at (Syntax.typeId t) $ do
           (hd, _) <- fromSyntax t >>= lift . Unify.spine
@@ -222,12 +230,21 @@ typecheck general program = runST $ do
         unit i rest =
           bindings [b | b <- programBindings program, inUnit i (moduleOf (Just (bindingId b)))] $ do
             forM_ (IntMap.elems (programClasses program)) $ \cls ->
-              when (inUnit i (nameModule <$> nameInfo program (className cls))) (mapM_ binding (classDefaults cls))
-            forM_ (programInstances program) (\inst -> when (inUnit i (moduleOf (Just (instanceId inst)))) (instance' inst))
+              when (mine program (nameKey (className cls)) && inUnit i (nameModule <$> nameInfo program (className cls))) (mapM_ binding (classDefaults cls))
+            forM_ (programInstances program) (\inst -> when (mine program (nodeKey (instanceId inst)) && inUnit i (moduleOf (Just (instanceId inst)))) (instance' inst))
             settle
             rest
 
     zonkPoly (Poly vs context t) = Forall vs <$> mapM (\(Pred c a) -> Types.Pred c <$> Unify.zonk a) context <*> Unify.zonk t
+
+    -- A type found before, as one to check against.
+    thaw (Forall vs context t) = Poly vs <$> mapM (\(Types.Pred c a) -> Pred c <$> thawed a) context <*> thawed t
+    thawed = \case
+      Types.Con c -> pure (Con c)
+      Types.App f a -> App <$> thawed f <*> thawed a
+      Types.Fun a b -> Fun <$> thawed a <*> thawed b
+      Types.Rigid v -> pure (Rigid v)
+      Types.Meta _ -> unknown
 
 zonkEvidence :: Ev s -> ST s Evidence
 zonkEvidence = \case

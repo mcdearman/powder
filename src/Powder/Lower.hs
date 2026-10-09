@@ -55,8 +55,9 @@ lower program checked = do
     classes = IntMap.elems (HIR.programClasses program)
     everything = do
       defined <- dsBinds (HIR.programBindings program)
-      ofClasses <- concat <$> mapM dsClass classes
-      ofInstances <- mapM dsInstance (HIR.programInstances program)
+      -- Another package's classes and instances are that package's to make.
+      ofClasses <- concat <$> mapM dsClass [c | c <- classes, HIR.mine program (nameKey (HIR.className c))]
+      ofInstances <- mapM dsInstance [i | i <- HIR.programInstances program, HIR.mine program (HIR.nodeKey (HIR.instanceId i))]
       pure (defined ++ ofClasses ++ ofInstances)
     infos = IntMap.fromList [(n, info) | (n, NameInfo _ (Constructor info _) _) <- IntMap.toList (HIR.programNames program)]
     constructors = Map.fromList [(conName info, info) | info <- IntMap.elems infos]

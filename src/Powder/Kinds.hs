@@ -46,7 +46,8 @@ data Declared = OfData DataType | OfSynonym NameId Synonym | OfClass Class
 -- | What is wrong with the kinds of a program.
 kindcheck :: Program -> [Problem]
 kindcheck program = runST $ do
-  kinds <- newSTRef IntMap.empty
+  -- The function arrow is no declaration's: it takes two types to a type.
+  kinds <- newSTRef (IntMap.singleton (-1) (Arrow Star (Arrow Star Star)))
   problems <- newSTRef []
   runReaderT run (Env program kinds problems)
   reverse <$> readSTRef problems

@@ -18,7 +18,7 @@
 -- noted under it. A mistake does not stop the pass. It is reported, an
 -- error node stands in for what was wrong, and the rest is still resolved,
 -- so that everything wrong with a program is found at once.
-module Powder.Resolve (resolve) where
+module Powder.Resolve (resolve, resolveAfter, Seed (..), Linkage (..), Scope (..)) where
 
 import Control.Applicative ((<|>))
 import Control.Monad
@@ -34,7 +34,7 @@ import qualified Data.Set as Set
 import Numeric (readFloat)
 import Powder.Core (ConInfo (..), Name, Prim (MatchFail), primName)
 import Powder.Diagnostics (Problem (..))
-import Powder.HIR
+import Powder.HIR hiding (mine)
 import qualified Powder.HIR.Pat as Pat
 import qualified Powder.HIR.Type as Type
 import Powder.Parser (Parsed (..), parseModule)
@@ -123,21 +123,101 @@ type M = ReaderT Env (State St)
 -- one of the same name, where otherwise a use of it would be ambiguous:
 -- that is for a prompt, where defining again is what one does.
 resolve :: [Name] -> [(FilePath, Name, Module)] -> Maybe (Name, Maybe Name, FilePath, Syntax.Expr) -> Either [Problem] Program
-resolve lenient sources extra = case reverse (problems final) of
-  [] -> Right (Program (bindings ++ reverse (generated final)) (names final) (origins final) (signatures final) (reverse (dataTypes final)) (synonyms final) (classes final) (reverse (instances final)) builtins root (defaults final) (newtypes final) ([(file, n) | (file, n, _) <- sources] ++ [(file, root) | Just (_, _, file, _) <- [extra]]) [(n, [name | (name, _, _, _) <- importsOf n]) | n <- moduleNames])
+resolve lenient sources extra = fst <$> resolveAfter Nothing lenient sources extra
+
+-- | What name resolution knows that a program does not say: what each
+-- module lets out, and what the resolving of later modules looks up.
+-- With a program's tables it is all a package compiled later needs of
+-- one compiled before.
+data Linkage = Linkage
+  { -- | What each module exports.
+    linkExports :: Map.Map Name Scope,
+    -- | Everything the module the prelude is made from defines, which is
+    -- what the desugaring refers to.
+    linkBase :: Maybe Scope,
+    -- | What belongs to each type and class: constructors, and fields or
+    -- methods.
+    linkBelongings :: Table ([(Name, NameId)], [(Name, NameId)]),
+    -- | The types and constructors the language has, and what it refers
+    -- to itself.
+    linkWired :: Maybe ([(Name, NameId)], [(Name, NameId)], Builtins),
+    linkFields :: Table [(NameId, Int)],
+    linkFixities :: Table (Assoc, Int),
+    linkStrict :: Table [Bool]
+  }
+
+instance Semigroup Linkage where
+  Linkage a b c d e f g <> Linkage a' b' c' d' e' f' g' =
+    Linkage (Map.union a a') (b <|> b') (IntMap.union c c') (d <|> d') (IntMap.union e e') (IntMap.union f f') (IntMap.union g g')
+
+instance Monoid Linkage where
+  mempty = Linkage Map.empty Nothing IntMap.empty Nothing IntMap.empty IntMap.empty IntMap.empty
+
+-- | The packages a package is compiled after: where its identities start,
+-- and what is known of the others. The lists are in the order of a
+-- program's.
+data Seed = Seed
+  { seedFloor :: Int,
+    seedLinkage :: Linkage,
+    seedNames :: Table NameInfo,
+    seedOrigins :: Table Origin,
+    seedSignatures :: Table Signature,
+    seedSynonyms :: Table Synonym,
+    seedDataTypes :: [DataType],
+    seedClasses :: Table Class,
+    seedInstances :: [Instance],
+    seedNewtypes :: [NameId],
+    seedModules :: [(FilePath, String)],
+    seedImports :: [(String, [String])]
+  }
+
+-- | Resolve modules as 'resolve' does, as a package compiled after
+-- others if a seed is given. Then the program has the others' types,
+-- classes and instances in it beside its own, but only its own
+-- definitions; no module's names are spelled plainly; and a module of the
+-- others can be imported. With the program comes what a package compiled
+-- after this one will need to be given in its turn.
+resolveAfter :: Maybe Seed -> [Name] -> [(FilePath, Name, Module)] -> Maybe (Name, Maybe Name, FilePath, Syntax.Expr) -> Either [Problem] (Program, Linkage)
+resolveAfter seed lenient sources extra = case reverse (problems final) of
+  [] -> Right (program, linked {linkFields = fields final, linkFixities = fixityTable final, linkStrict = strict final})
   found -> Left found
   where
-    ((bindings, builtins), final) =
+    program = Program (bindings ++ reverse (generated final)) (names final) (origins final) (signatures final) (reverse (dataTypes final)) (synonyms final) (classes final) (reverse (instances final)) builtins spelled (defaults final) (newtypes final) (maybe [] seedModules seed ++ [(file, n) | (file, n, _) <- sources] ++ [(file, root) | Just (_, _, file, _) <- [extra]]) (maybe [] seedImports seed ++ [(n, [name | (name, _, _, _) <- importsOf n]) | n <- moduleNames]) (maybe (-1) seedFloor seed)
+    ((linked, (bindings, builtins)), final) =
       runState
-        (runReaderT run (Env Map.empty Map.empty Map.empty Map.empty Map.empty Map.empty "" Nothing "" root Set.empty Map.empty Map.empty False))
-        (St 0 IntMap.empty IntMap.empty IntMap.empty IntMap.empty [] IntMap.empty [] IntMap.empty [] [] IntMap.empty [] IntMap.empty [])
+        (runReaderT run (Env Map.empty Map.empty Map.empty Map.empty Map.empty Map.empty "" Nothing "" spelled Set.empty Map.empty Map.empty False))
+        initial
+    initial = case seed of
+      Nothing -> St 0 IntMap.empty IntMap.empty IntMap.empty IntMap.empty [] IntMap.empty [] IntMap.empty [] [] IntMap.empty [] IntMap.empty []
+      Just s ->
+        St
+          (seedFloor s)
+          (seedNames s)
+          (seedOrigins s)
+          (seedSignatures s)
+          (seedSynonyms s)
+          (reverse (seedDataTypes s))
+          (seedClasses s)
+          (reverse (seedInstances s))
+          (linkFields before)
+          []
+          []
+          (linkFixities before)
+          (seedNewtypes s)
+          (linkStrict before)
+          []
+    -- What the packages before this one let be known.
+    before = maybe mempty seedLinkage seed
+    -- In a package every name is spelled with its module's: no module is
+    -- the one a program starts in until packages are put together.
+    spelled = maybe root (const "") seed
     moduleNames = nub [n | (_, n, _) <- sources]
     -- The module a prompt's expression is in, and whose names are spelled
     -- plainly in what is compiled: the last.
     root = case reverse moduleNames of
       n : _ -> n
       [] -> "Main"
-    hasPrelude = "Prelude" `elem` moduleNames
+    hasPrelude = "Prelude" `elem` moduleNames || Map.member "Prelude" (linkExports before)
     sourcesOf n = [(file, m) | (file, n', m) <- sources, n' == n]
     importsOf n =
       -- An import of the module itself is an error, and brings in nothing.
@@ -145,7 +225,7 @@ resolve lenient sources extra = case reverse (problems final) of
         ++ [("Prelude", False, Nothing, Nothing) | hasPrelude, n /= "Prelude", null [() | (_, m) <- sourcesOf n, Decl.Import "Prelude" _ _ _ <- moduleDecls m]]
 
     run = do
-      (wiredTypes, wiredConstructors, wiredBuiltins) <- wiredIn
+      (wiredTypes, wiredConstructors, wiredBuiltins) <- maybe wiredIn pure (linkWired before)
       -- Every name a module declares at its top, before what any of them
       -- is: types and their constructors, classes, and values.
       declaredTypes <- forM sources $ \(file, n, m) -> inPart n file . fmap concat . forM (moduleDecls m) $ \d -> within d $ case d of
@@ -185,10 +265,13 @@ resolve lenient sources extra = case reverse (problems final) of
               }
           -- What belongs to each type and class: constructors, or methods.
           belongings =
-            IntMap.fromList
-              ( [(nameKey t, (cs, [(x, globalsOf n Map.! x) | x <- xs])) | ((_, n, _), ts, _) <- parts, (_, t, cs, xs) <- ts]
-                  ++ [(nameKey c, ([], [(x, globalsOf n Map.! x) | x <- xs])) | ((_, n, _), _, cs) <- parts, (_, c, xs) <- cs]
+            IntMap.union
+              ( IntMap.fromList
+                  ( [(nameKey t, (cs, [(x, globalsOf n Map.! x) | x <- xs])) | ((_, n, _), ts, _) <- parts, (_, t, cs, xs) <- ts]
+                      ++ [(nameKey c, ([], [(x, globalsOf n Map.! x) | x <- xs])) | ((_, n, _), _, cs) <- parts, (_, c, xs) <- cs]
+                  )
               )
+              (linkBelongings before)
           headerOf n = listToMaybe [h | (_, m) <- sourcesOf n, Just (_, Just h) <- [moduleHeader m]]
           imported known (name, qualified, alias, items) =
             let chosen = selected belongings items (Map.findWithDefault mempty name known)
@@ -206,9 +289,9 @@ resolve lenient sources extra = case reverse (problems final) of
                   | otherwise = mconcat [selected belongings items' (Map.findWithDefault mempty name known) | (name, False, alias, items') <- importsOf n, fromMaybe name alias == m]
                 exported _ item = unqualifiedNames (picked belongings scope item)
           settle known (rounds :: Int) =
-            let next = Map.fromList [(n, exportsIn known n) | n <- moduleNames]
+            let next = Map.union (Map.fromList [(n, exportsIn known n) | n <- moduleNames]) (linkExports before)
              in if next == known || rounds == 0 then known else settle next (rounds - 1)
-          exports = settle (Map.fromList [(n, mempty) | n <- moduleNames]) (4 * length moduleNames + 8)
+          exports = settle (Map.union (Map.fromList [(n, mempty) | n <- moduleNames]) (linkExports before)) (4 * length moduleNames + 8)
           wired = Scope Map.empty (Map.fromList [(c, [x]) | (c, x) <- wiredConstructors]) (Map.fromList [(t, [x]) | (t, x) <- wiredTypes]) Map.empty
           -- A module's own type of a name the language has hides that one.
           -- What the language has is the prelude's, to name it by.
@@ -221,6 +304,7 @@ resolve lenient sources extra = case reverse (problems final) of
           -- the prelude lets out.
           basis n
             | "Powder.Base" `elem` moduleNames = own "Powder.Base" <> wired
+            | Just base <- linkBase before = base <> wired
             | hasPrelude && n /= "Prelude" = Map.findWithDefault mempty "Prelude" exports
             | otherwise = scopeOf n
           inModule n file =
@@ -241,7 +325,7 @@ resolve lenient sources extra = case reverse (problems final) of
       forM_ sources $ \(file, n, m) -> inModule n file $ do
         forM_ (moduleDecls m) $ \d -> within d $ case d of
           Decl.Import name _ _ items
-            | name `notElem` moduleNames -> complain ("there is no module " ++ name)
+            | name `notElem` moduleNames && Map.notMember name (linkExports before) -> complain ("there is no module " ++ name)
             -- Said once, where what a file may not say is checked.
             | name == n -> pure ()
             | Just (False, wanted) <- items -> forM_ wanted $ \item -> do
@@ -352,7 +436,7 @@ resolve lenient sources extra = case reverse (problems final) of
             case IntMap.lookup (nameKey c) belongings of
               Just (_, ms) | x `elem` map snd ms -> Just (c, x)
               _ -> Nothing
-      pure (kept ++ asked, wiredBuiltins {builtinNumeric = method "Num" "fromInteger", builtinEquality = method "Eq" "==", builtinFractional = (\(c, x) k -> (c, x, k)) <$> method "Fractional" "fromRational" <*> Map.lookup ":%" (one (scopeConstructors (basis root)))})
+      pure (Linkage exports (if "Powder.Base" `elem` moduleNames then Just (own "Powder.Base") else linkBase before) belongings (Just (wiredTypes, wiredConstructors, wiredBuiltins)) IntMap.empty IntMap.empty IntMap.empty, (kept ++ asked, wiredBuiltins {builtinNumeric = method "Num" "fromInteger", builtinEquality = method "Eq" "==", builtinFractional = (\(c, x) k -> (c, x, k)) <$> method "Fractional" "fromRational" <*> Map.lookup ":%" (one (scopeConstructors (basis root)))}))
 
     overridden redefined b = case bindingKind b of
       Function f _ -> f `elem` redefined

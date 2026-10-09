@@ -66,10 +66,10 @@ jobs:
         working-directory: powder
         run: |
           curl -sL https://github.com/ndmitchell/hlint/releases/download/v3.8/hlint-3.8-x86_64-linux.tar.gz | tar xz -C "$RUNNER_TEMP"
-          "$RUNNER_TEMP"/hlint-3.8/hlint src app test/*.hs -XLambdaCase -XPatternSynonyms -XViewPatterns
+          "$RUNNER_TEMP"/hlint-3.8/hlint src app test/*.hs buildtools/powder/src buildtools/powder/app buildtools/powder/test -XLambdaCase -XPatternSynonyms -XViewPatterns
 
       - name: Test
         working-directory: powder
         env:
           LC_ALL: C.UTF-8
-        run: cabal test spec --test-show-details=failures
+        run: cabal test spec buildtools --test-show-details=failures

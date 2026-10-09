@@ -44,6 +44,7 @@ library
     Powder.Layout
     Powder.Lexer
     Powder.Lower
+    Powder.Package
     Powder.Parser
     Powder.Resolve
     Powder.Typecheck
@@ -72,6 +73,7 @@ library
   build-tool-depends: alex:alex
   build-depends:
     , array
+    , binary
     , bytestring
     , containers
     , diagnose >=2.5
