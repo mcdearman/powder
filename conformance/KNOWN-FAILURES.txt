@@ -1,25 +1,2 @@
 # Tests of the conformance suite that are known not to pass yet, one to a
 # line. See test/ConformanceSpec.hs.
-conformance/03-expressions/3.15-field-labels-patterns.hs
-conformance/08-ffi/8.4.2-foreign-types-prelude-double-float-int.hs
-conformance/08-ffi/8.7-c-types-as-numeric-types.hs
-conformance/11-deriving/11.4-read-show-roundtrip.hs
-conformance/lib-Numeric/readFloat-incomplete-lexemes-ghc-differs.hs
-conformance/lib-Numeric/show-float-rounding-ties-and-zero-digits-ghc-differs.hs
-conformance/lib-System.Environment/getEnv-getEnvironment.hs
-conformance/lib-System.IO.Error/attributes-ioeGetErrorString-ioeGetHandle-ioeGetFileName-annotateIOError.hs
-conformance/lib-System.IO.Error/mkIOError-error-types-and-classification.hs
-conformance/lib-System.IO.Error/non-report-ioeGetErrorType-type-predicates-modifyIOError-ghc-differs.hs
-conformance/lib-System.IO.Error/real-errors-doesNotExist-eof-illegalOperation.hs
-conformance/lib-System.IO/buffering-BufferMode-hSetBuffering-hGetBuffering.hs
-conformance/lib-System.IO/file-locking-single-writer.hs
-conformance/lib-System.IO/file-size-hFileSize-hSetFileSize.hs
-conformance/lib-System.IO/fixIO.hs
-conformance/lib-System.IO/handles-openFile-hClose-IOMode.hs
-conformance/lib-System.IO/input-hGetChar-hGetLine-hLookAhead-hGetContents-hIsEOF.hs
-conformance/lib-System.IO/instances-IOMode-SeekMode.hs
-conformance/lib-System.IO/properties-hIsTerminalDevice-hShow-hSetEcho-hGetEcho-hWaitForInput-hReady.hs
-conformance/lib-System.IO/seeking-hSeek-hTell-hGetPosn-hSetPosn.hs
-conformance/lib-System.IO/stdin-getChar-getLine-isEOF.hs
-conformance/lib-System.IO/stdin-handle-operations.hs
-conformance/lib-System.IO/withFile.hs

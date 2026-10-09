@@ -1,0 +1,7 @@
+()
+('i',True)
+('a','c')
+[2,3]
+"literals"
+("xy",'x',"q")
+"wildcards"

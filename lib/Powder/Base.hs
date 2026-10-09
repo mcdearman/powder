@@ -609,7 +609,7 @@ asTypeOf :: a -> a -> a
 asTypeOf = const
 
 error :: String -> a
-error msg = primPerformIO (hPutStr 2 ("error: " ++ msg ++ "\n") >> primExit 1)
+error msg = primPerformIO (mapM_ (primPutChar 2) ("error: " ++ msg ++ "\n") >> primExit 1)
 
 undefined :: a
 undefined = error "undefined"
@@ -1334,15 +1334,386 @@ when c m = if c then m else return ()
 unless :: Monad m => Bool -> m () -> m ()
 unless c m = if c then return () else m
 
--- Write to a handle: 1 is the standard output, and 2 the standard error.
-hPutStr :: Integer -> String -> IO ()
-hPutStr h = mapM_ (primPutChar h)
+-- Cells ---------------------------------------------------------------------
+
+-- A place for a value that can be changed, which the machine knows by a
+-- number. What is kept is kept in a box, so that keeping it does not work
+-- it out.
+newtype Ref a = Ref Integer
+
+data Box a = Box a
+
+newRef :: a -> IO (Ref a)
+newRef x = primCellNew (Box x) >>= \n -> return (Ref n)
+
+readRef :: Ref a -> IO a
+readRef (Ref n) = primCellRead n >>= \(Box x) -> return x
+
+writeRef :: Ref a -> a -> IO ()
+writeRef (Ref n) x = primCellWrite n (Box x)
+
+-- An action given its own result, which it must not look at until it is
+-- done.
+fixIO :: (a -> IO a) -> IO a
+fixIO f = do
+  r <- newRef (error "fixIO: the result was needed before there was one")
+  x <- f (primPerformIO (readRef r))
+  writeRef r x
+  return x
+
+-- I/O errors ----------------------------------------------------------------
+
+type FilePath = String
+
+data IOErrorType
+  = AlreadyExists
+  | NoSuchThing
+  | ResourceBusy
+  | ResourceExhausted
+  | EOF
+  | IllegalOperation
+  | PermissionDenied
+  | UserError
+  | OtherError
+  deriving (Eq, Ord)
+
+instance Show IOErrorType where
+  showsPrec _ t = showString $ case t of
+    AlreadyExists -> "already exists"
+    NoSuchThing -> "does not exist"
+    ResourceBusy -> "resource busy"
+    ResourceExhausted -> "resource exhausted"
+    EOF -> "end of file"
+    IllegalOperation -> "illegal operation"
+    PermissionDenied -> "permission denied"
+    UserError -> "user error"
+    OtherError -> "failed"
+
+-- What kind of thing went wrong, where, what is said of it, and the handle
+-- and the file it went wrong with.
+data IOError = IOError IOErrorType String String (Maybe Handle) (Maybe FilePath)
+
+instance Eq IOError where
+  IOError t l d h f == IOError t' l' d' h' f' = t == t' && l == l' && d == d' && h == h' && f == f'
+
+instance Show IOError where
+  showsPrec _ (IOError t place said h file) = subject . location . shows t . description
+    where
+      subject = case file of
+        Just name -> showString name . showString ": "
+        Nothing -> case h of
+          Just handle -> shows handle . showString ": "
+          Nothing -> id
+      location = if null place then id else showString place . showString ": "
+      description = if null said then id else showString " (" . showString said . showChar ')'
+
+userError :: String -> IOError
+userError s = IOError UserError "" s Nothing Nothing
+
+-- One that nothing catches ends the program, saying what it was.
+ioError :: IOError -> IO a
+ioError e = primThrow (mapM_ (primPutChar 2) (show e ++ "\n") >> primExit 1) e
+
+catchIOError :: IO a -> (IOError -> IO a) -> IO a
+catchIOError = primCatch
+
+-- Handles -------------------------------------------------------------------
+
+data IOMode = ReadMode | WriteMode | AppendMode | ReadWriteMode deriving (Eq, Ord, Show, Read, Enum)
+
+data BufferMode = NoBuffering | LineBuffering | BlockBuffering (Maybe Int) deriving (Eq, Ord, Show, Read)
+
+data SeekMode = AbsoluteSeek | RelativeSeek | SeekFromEnd deriving (Eq, Ord, Show, Read, Enum)
+
+-- A handle: the number the machine knows it by (0, 1 and 2 are the
+-- standard ones), what it is called, and where its state is kept.
+data Handle = Handle Integer String (Ref Opened)
+
+-- A handle's state: whether it is open (0), semi-closed (1) or closed (2);
+-- how it was opened; how it is said to be buffered; the code of a
+-- character read from it and not yet taken, or -1; and whether what is
+-- typed at it is echoed.
+data Opened = Opened Int IOMode BufferMode Integer Bool
+
+instance Eq Handle where
+  Handle _ _ (Ref a) == Handle _ _ (Ref b) = a == b
+
+instance Show Handle where
+  showsPrec _ (Handle n name _) = if n < 3 then showString name else showString "{handle: " . showString name . showChar '}'
+
+standard :: Integer -> String -> IOMode -> Handle
+standard n name mode = Handle n name (primPerformIO (primIsTerminal n >>= \t -> newRef (Opened 0 mode (buffered t) (negate 1) True)))
+  where
+    buffered t = if n == 2 then NoBuffering else if t then LineBuffering else BlockBuffering Nothing
+
+stdin, stdout, stderr :: Handle
+stdin = standard 0 "<stdin>" ReadMode
+stdout = standard 1 "<stdout>" WriteMode
+stderr = standard 2 "<stderr>" WriteMode
+
+-- The files that are open: each one's name, its handle's number, and
+-- whether it is open for more than reading. A file has many readers or
+-- one writer.
+locks :: Ref [(FilePath, Integer, Bool)]
+locks = primPerformIO (newRef [])
+
+refuse :: IOErrorType -> String -> String -> Handle -> IO a
+refuse t place said h = ioError (IOError t place said (Just h) Nothing)
+
+-- A handle's state, where it is open.
+wantOpen :: String -> Handle -> IO Opened
+wantOpen place h@(Handle _ _ r) =
+  readRef r >>= \s@(Opened phase _ _ _ _) ->
+    if phase == 2
+      then refuse IllegalOperation place "handle is closed" h
+      else if phase == 1 then refuse IllegalOperation place "handle is semi-closed" h else return s
+
+wantReadable :: String -> Handle -> IO Opened
+wantReadable place h =
+  wantOpen place h >>= \s@(Opened _ mode _ _ _) ->
+    if mode == WriteMode || mode == AppendMode then refuse IllegalOperation place "handle is not open for reading" h else return s
+
+-- For writing, a character read ahead is given back first, so that what
+-- is written lands where the program has read to.
+wantWritable :: String -> Handle -> IO ()
+wantWritable place h@(Handle n _ r) =
+  wantOpen place h >>= \(Opened phase mode buffering held echo) ->
+    if mode == ReadMode
+      then refuse IllegalOperation place "handle is not open for writing" h
+      else
+        if held < 0
+          then return ()
+          else primFileSeek n 1 (negate (width held)) >> writeRef r (Opened phase mode buffering (negate 1) echo)
+
+-- How many bytes a character is in a file.
+width :: Integer -> Integer
+width c = if c < 0 then 0 else if c < 128 then 1 else if c < 2048 then 2 else if c < 65536 then 3 else 4
+
+-- The code of the next character from what the machine has, or -1.
+raw :: Integer -> IO Integer
+raw n = if n == 0 then primGetChar else primHGetChar n
+
+-- The code of a handle's next character, or -1 at the end.
+next :: Handle -> IO Integer
+next (Handle n _ r) =
+  readRef r >>= \(Opened phase mode buffering held echo) ->
+    if held < 0 then raw n else writeRef r (Opened phase mode buffering (negate 1) echo) >> return held
+
+-- Close a handle for good: its file is free for others.
+shut :: Handle -> IO ()
+shut (Handle n _ r) = do
+  Opened _ mode buffering _ echo <- readRef r
+  writeRef r (Opened 2 mode buffering (negate 1) echo)
+  if n < 3
+    then return ()
+    else do
+      primFileClose n
+      held <- readRef locks
+      writeRef locks (filter (\(_, m, _) -> m /= n) held)
+
+openFile :: FilePath -> IOMode -> IO Handle
+openFile path mode = do
+  held <- readRef locks
+  let writing = mode /= ReadMode
+      failed t said = ioError (IOError t "openFile" said Nothing (Just path))
+  if any (\(p, _, w) -> p == path && (w || writing)) held
+    then failed ResourceBusy "file is locked"
+    else do
+      mapM_ primPathChar path
+      n <- primFileOpen (toInteger (fromEnum mode))
+      if n >= 0
+        then do
+          writeRef locks ((path, n, writing) : held)
+          r <- newRef (Opened 0 mode (BlockBuffering Nothing) (negate 1) False)
+          return (Handle n path r)
+        else
+          if n == negate 1
+            then failed NoSuchThing "No such file or directory"
+            else
+              if n == negate 2
+                then failed PermissionDenied "Permission denied"
+                else if n == negate 3 then failed ResourceBusy "file is locked" else failed OtherError ""
+
+hClose :: Handle -> IO ()
+hClose h@(Handle n _ r) =
+  readRef r >>= \(Opened phase mode _ _ _) ->
+    if phase == 2 then return () else (if mode == ReadMode then return () else primFileFlush n) >> shut h
+
+-- The action is given the handle, which is closed however the action ends.
+withFile :: FilePath -> IOMode -> (Handle -> IO a) -> IO a
+withFile path mode act = do
+  h <- openFile path mode
+  x <- catchIOError (act h) (\e -> hClose h >> ioError e)
+  hClose h
+  return x
+
+hIsOpen :: Handle -> IO Bool
+hIsOpen (Handle _ _ r) = readRef r >>= \(Opened phase _ _ _ _) -> return (phase == 0)
+
+hIsClosed :: Handle -> IO Bool
+hIsClosed (Handle _ _ r) = readRef r >>= \(Opened phase _ _ _ _) -> return (phase == 2)
+
+hIsReadable :: Handle -> IO Bool
+hIsReadable h = wantOpen "hIsReadable" h >>= \(Opened _ mode _ _ _) -> return (mode == ReadMode || mode == ReadWriteMode)
+
+hIsWritable :: Handle -> IO Bool
+hIsWritable h = wantOpen "hIsWritable" h >>= \(Opened _ mode _ _ _) -> return (mode /= ReadMode)
+
+-- A file can be moved about in unless it is only being added to.
+hIsSeekable :: Handle -> IO Bool
+hIsSeekable h@(Handle n _ _) =
+  wantOpen "hIsSeekable" h >>= \(Opened _ mode _ _ _) ->
+    if n < 3 || mode == AppendMode then return False else primFileSeek n 1 0 >>= \at -> return (at >= 0)
+
+hIsTerminalDevice :: Handle -> IO Bool
+hIsTerminalDevice h@(Handle n _ _) = wantOpen "hIsTerminalDevice" h >> primIsTerminal n
+
+-- Only a terminal echoes; what is asked of anything else is not kept.
+hSetEcho :: Handle -> Bool -> IO ()
+hSetEcho h@(Handle n _ r) echo =
+  wantOpen "hSetEcho" h >>= \(Opened phase mode buffering held _) ->
+    primIsTerminal n >>= \t -> if t then writeRef r (Opened phase mode buffering held echo) else return ()
+
+hGetEcho :: Handle -> IO Bool
+hGetEcho h@(Handle n _ _) = wantOpen "hGetEcho" h >>= \(Opened _ _ _ _ echo) -> primIsTerminal n >>= \t -> return (t && echo)
+
+hShow :: Handle -> IO String
+hShow h@(Handle _ _ r) =
+  readRef r >>= \(Opened phase mode buffering _ _) ->
+    return
+      ( "{loc=" ++ show h ++ ",type="
+          ++ (if phase == 2 then "closed" else if phase == 1 then "semi-closed" else show mode)
+          ++ ",buffering="
+          ++ show buffering
+          ++ "}"
+      )
+
+-- How a handle is buffered is kept and given back; the machine decides
+-- for itself what it holds, and hFlush sends that on.
+hSetBuffering :: Handle -> BufferMode -> IO ()
+hSetBuffering h@(Handle _ _ r) buffering =
+  wantOpen "hSetBuffering" h >>= \(Opened phase mode _ held echo) -> case buffering of
+    BlockBuffering (Just n) | n <= 0 -> refuse IllegalOperation "hSetBuffering" "illegal buffer size" h
+    _ -> writeRef r (Opened phase mode buffering held echo)
+
+hGetBuffering :: Handle -> IO BufferMode
+hGetBuffering h = wantOpen "hGetBuffering" h >>= \(Opened _ _ buffering _ _) -> return buffering
+
+hFlush :: Handle -> IO ()
+hFlush h@(Handle n _ _) = wantWritable "hFlush" h >> primFileFlush n
+
+hFileSize :: Handle -> IO Integer
+hFileSize h@(Handle n _ _) =
+  wantOpen "hFileSize" h >> primFileSeek n 3 0 >>= \size ->
+    if size < 0 then refuse IllegalOperation "hFileSize" "not a regular file" h else return size
+
+hSetFileSize :: Handle -> Integer -> IO ()
+hSetFileSize h@(Handle n _ _) size =
+  wantOpen "hSetFileSize" h >> primFileTruncate n size >>= \done ->
+    if done < 0 then refuse IllegalOperation "hSetFileSize" "the file's size cannot be set" h else return ()
+
+-- Where a handle is: where the machine is, less what was read ahead.
+hTell :: Handle -> IO Integer
+hTell h@(Handle n _ _) =
+  wantOpen "hTell" h >>= \(Opened _ mode _ held _) ->
+    (if mode == AppendMode then return (negate 1) else primFileSeek n 1 0) >>= \at ->
+      if at < 0 then refuse IllegalOperation "hTell" "handle is not seekable" h else return (at - width held)
+
+hSeek :: Handle -> SeekMode -> Integer -> IO ()
+hSeek h@(Handle n _ r) whence offset =
+  wantOpen "hSeek" h >>= \(Opened phase mode buffering held echo) -> do
+    let from = if whence == RelativeSeek then offset - width held else offset
+    at <- if mode == AppendMode then return (negate 1) else primFileSeek n (toInteger (fromEnum whence)) from
+    if at < 0
+      then refuse IllegalOperation "hSeek" "handle is not seekable" h
+      else writeRef r (Opened phase mode buffering (negate 1) echo)
+
+data HandlePosn = HandlePosn Handle Integer
+
+instance Eq HandlePosn where
+  HandlePosn h a == HandlePosn k b = h == k && a == b
+
+instance Show HandlePosn where
+  showsPrec p (HandlePosn h at) = showsPrec p h . showString " at position " . shows at
+
+hGetPosn :: Handle -> IO HandlePosn
+hGetPosn h = hTell h >>= \at -> return (HandlePosn h at)
+
+hSetPosn :: HandlePosn -> IO ()
+hSetPosn (HandlePosn h at) = hSeek h AbsoluteSeek at
+
+hIsEOF :: Handle -> IO Bool
+hIsEOF h@(Handle n _ _) = wantReadable "hIsEOF" h >>= \(Opened _ _ _ held _) -> if held < 0 then primHIsEOF n else return False
+
+isEOF :: IO Bool
+isEOF = hIsEOF stdin
+
+-- Whether there is something to read, which here is waited for however
+-- long was asked: at the end there never will be, and that is an error.
+hWaitForInput :: Handle -> Int -> IO Bool
+hWaitForInput h _ = hIsEOF h >>= \done -> if done then refuse EOF "hWaitForInput" "" h else return True
+
+hReady :: Handle -> IO Bool
+hReady h = hWaitForInput h 0
+
+hLookAhead :: Handle -> IO Char
+hLookAhead h@(Handle n _ r) =
+  wantReadable "hLookAhead" h >>= \(Opened phase mode buffering held echo) ->
+    if held >= 0
+      then return (primIntToChar held)
+      else
+        raw n >>= \c ->
+          if c < 0
+            then refuse EOF "hLookAhead" "" h
+            else writeRef r (Opened phase mode buffering c echo) >> return (primIntToChar c)
+
+hGetChar :: Handle -> IO Char
+hGetChar h = wantReadable "hGetChar" h >> next h >>= \c -> if c < 0 then refuse EOF "hGetChar" "" h else return (primIntToChar c)
+
+-- A line, without its end. The last line need not have one; but where
+-- there is nothing at all to read, that is the end of the input.
+hGetLine :: Handle -> IO String
+hGetLine h@(Handle n _ _) = wantReadable "hGetLine" h >> next h >>= \c -> if c < 0 then refuse EOF "hGetLine" "" h else go [] c
+  where
+    go acc c = if c < 0 || c == 10 then return (reverse acc) else raw n >>= go (primIntToChar c : acc)
+
+-- Characters read one at a time, each when it is first looked at, and
+-- something done when there are no more.
+lazily :: IO Integer -> IO () -> String
+lazily step done = primPerformIO (step >>= \c -> if c < 0 then done >> return [] else return (primIntToChar c : lazily step done))
+
+-- All that is left to read, read as it is looked at. The handle is
+-- semi-closed until the end is reached, and then closed; closing it
+-- sooner ends what is read there.
+hGetContents :: Handle -> IO String
+hGetContents h@(Handle n _ r) =
+  wantReadable "hGetContents" h >>= \(Opened _ mode buffering held echo) -> do
+    writeRef r (Opened 1 mode buffering held echo)
+    return (lazily step (shut h))
+  where
+    step =
+      readRef r >>= \(Opened phase mode buffering held echo) ->
+        if phase == 2
+          then return (negate 1)
+          else if held < 0 then raw n else writeRef r (Opened phase mode buffering (negate 1) echo) >> return held
+
+hPutChar :: Handle -> Char -> IO ()
+hPutChar h@(Handle n _ _) c = wantWritable "hPutChar" h >> primPutChar n c
+
+hPutStr :: Handle -> String -> IO ()
+hPutStr h@(Handle n _ _) s = wantWritable "hPutStr" h >> mapM_ (primPutChar n) s
+
+hPutStrLn :: Handle -> String -> IO ()
+hPutStrLn h s = hPutStr h s >> hPutChar h '\n'
+
+hPrint :: Show a => Handle -> a -> IO ()
+hPrint h x = hPutStrLn h (show x)
 
 putChar :: Char -> IO ()
-putChar = primPutChar 1
+putChar = hPutChar stdout
 
 putStr :: String -> IO ()
-putStr = hPutStr 1
+putStr = hPutStr stdout
 
 putStrLn :: String -> IO ()
 putStrLn s = putStr s >> putChar '\n'
@@ -1351,22 +1722,13 @@ print :: Show a => a -> IO ()
 print x = putStrLn (show x)
 
 getChar :: IO Char
-getChar = primGetChar >>= \c -> if c < 0 then ioError (IOError 2 "Prelude.getChar: end of file") else return (primIntToChar c)
+getChar = hGetChar stdin
 
--- A line, without its end. The last line need not have one; but where
--- there is nothing at all to read, that is the end of the input.
 getLine :: IO String
-getLine = primGetChar >>= \c -> if c < 0 then ioError (IOError 2 "Prelude.getLine: end of file") else go [] c
-  where
-    go acc c = if c < 0 || c == 10 then return (reverse acc) else primGetChar >>= go (primIntToChar c : acc)
-
--- Characters read one at a time, each when it is first looked at, and
--- something done when there are no more.
-lazily :: IO Integer -> IO () -> String
-lazily next done = primPerformIO (next >>= \c -> if c < 0 then done >> return [] else return (primIntToChar c : lazily next done))
+getLine = hGetLine stdin
 
 getContents :: IO String
-getContents = return (lazily primGetChar (return ()))
+getContents = hGetContents stdin
 
 interact :: (String -> String) -> IO ()
 interact f = getContents >>= \s -> putStr (f s)
@@ -1374,48 +1736,15 @@ interact f = getContents >>= \s -> putStr (f s)
 exitWith :: Int -> IO a
 exitWith n = primExit (toInteger n)
 
--- Files -------------------------------------------------------------------
-
-type FilePath = String
-
--- What went wrong, and whether it was that something was not there.
--- What kind of thing went wrong, and what is said of it. The kinds are
--- the program's own (0), something not being there (1), the end of what
--- was being read (2), and something being there already (3).
-data IOError = IOError Int String
-
-instance Eq IOError where
-  IOError a s == IOError b t = a == b && s == t
-
-instance Show IOError where
-  showsPrec _ (IOError kind s) = if kind == 0 then showString "user error (" . showString s . showChar ')' else showString s
-
-userError :: String -> IOError
-userError = IOError 0
-
--- One that nothing catches ends the program, saying what it was.
-ioError :: IOError -> IO a
-ioError e = primThrow (hPutStr 2 (show e ++ "\n") >> primExit 1) e
-
-catchIOError :: IO a -> (IOError -> IO a) -> IO a
-catchIOError = primCatch
-
--- Open a file: to read (0), to write (1) or to add to (2).
-opened :: FilePath -> Integer -> IO Integer
-opened path mode = do
-  mapM_ primPathChar path
-  h <- primFileOpen mode
-  if h < 0 then ioError (IOError 1 (path ++ ": openFile: does not exist (No such file or directory)")) else return h
-
 -- The file is read as the string is looked at, and closed at its end.
 readFile :: FilePath -> IO String
-readFile path = opened path 0 >>= \h -> return (lazily (primHGetChar h) (primFileClose h))
+readFile path = openFile path ReadMode >>= hGetContents
 
 writeFile :: FilePath -> String -> IO ()
-writeFile path s = opened path 1 >>= \h -> hPutStr h s >> primFileClose h
+writeFile path s = openFile path WriteMode >>= \h -> hPutStr h s >> hClose h
 
 appendFile :: FilePath -> String -> IO ()
-appendFile path s = opened path 2 >>= \h -> hPutStr h s >> primFileClose h
+appendFile path s = openFile path AppendMode >>= \h -> hPutStr h s >> hClose h
 
 -- Reading -----------------------------------------------------------------
 

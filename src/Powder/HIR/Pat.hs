@@ -24,6 +24,11 @@ data Kind
   | -- | Matches anything, and is taken apart only when one of its names
     -- is wanted.
     Lazy Pat
+  | -- | A constructor pattern whose fields are matched in another order
+    -- than the constructor has them: the places of the fields to match
+    -- first, in turn. It is what a pattern with field labels is when the
+    -- labels are not written in the constructor's order.
+    Ordered [Int] Pat
   | -- | Where the source was wrong.
     Error
 
@@ -33,6 +38,7 @@ binders p = case patKind p of
   Var x -> [x]
   As x q -> x : binders q
   Lazy q -> binders q
+  Ordered _ q -> binders q
   Con _ ps -> concatMap binders ps
   Wild -> []
   Lit _ -> []
@@ -44,4 +50,5 @@ subpatterns p = case patKind p of
   Con _ ps -> ps
   As _ q -> [q]
   Lazy q -> [q]
+  Ordered _ q -> [q]
   _ -> []

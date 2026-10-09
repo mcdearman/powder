@@ -67,6 +67,23 @@ data Prim
     -- argument -1, or -1 past its end.
     ArgCount
   | ArgChar
+  | -- | Move to a place in a file and give the place: counted from the
+    -- start (0), from where it is (1) or from the end (2); or give its
+    -- size (3). Make a file a size. Send on what has been written. All
+    -- give -1 where it cannot be done.
+    FileSeek
+  | FileTruncate
+  | FileFlush
+  | -- | Whether a handle is a terminal.
+    IsTerminal
+  | -- | The code of a character of the environment: of the entry at a
+    -- place, written @NAME=value@, the character at a place; or -1.
+    EnvChar
+  | -- | A cell: a place for a value that can be changed. Make one, giving
+    -- its number; and read and write the one with a number.
+    CellNew
+  | CellRead
+  | CellWrite
   | -- | A character's code, and the character with a code. Both are the
     -- identity when a program runs: a character is its code.
     CharToInt

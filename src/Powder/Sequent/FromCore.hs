@@ -170,7 +170,8 @@ arity = \case
   MatchFail -> 0
   GetChar -> 0
   ArgCount -> 0
-  p | p `elem` [Seq, Bind, PutChar, Throw, Catch, ArgChar, DoubleShowAt, FloatShowAt, DoubleFun, DoubleEncode, DoubleFromRatio] -> 2
+  FileSeek -> 3
+  p | p `elem` [Seq, Bind, PutChar, Throw, Catch, ArgChar, FileTruncate, EnvChar, CellWrite, DoubleShowAt, FloatShowAt, DoubleFun, DoubleEncode, DoubleFromRatio] -> 2
   p | p `elem` [IntAdd, IntSub, IntMul, IntQuot, IntRem, IntEq, IntLt, IntLe] -> 2
   p | p `elem` [DoubleAdd, DoubleSub, DoubleMul, DoubleDiv, DoublePow, DoubleAtan2, DoubleEq, DoubleLt, DoubleLe] -> 2
   _ -> 1
@@ -209,7 +210,7 @@ action p = case p of
       err <- fresh "err"
       Action ok err <$> body ok err
     wrong = error "Powder.Sequent.FromCore: an action given the wrong number of arguments"
-    effects = [PutChar, GetChar, Exit, PathChar, FileOpen, HGetChar, FileClose, HIsEOF, ArgCount, ArgChar]
+    effects = [PutChar, GetChar, Exit, PathChar, FileOpen, HGetChar, FileClose, HIsEOF, ArgCount, ArgChar, FileSeek, FileTruncate, FileFlush, IsTerminal, EnvChar, CellNew, CellRead, CellWrite]
 
 -- | A primitive given all its arguments, with where its result goes.
 primitive :: Prim -> [Core] -> Consumer -> M Statement

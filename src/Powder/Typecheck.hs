@@ -593,6 +593,14 @@ primitive p = do
     HIsEOF -> Fun integer (App io bool)
     ArgCount -> App io integer
     ArgChar -> Fun integer (Fun integer (App io integer))
+    FileSeek -> Fun integer (Fun integer (Fun integer (App io integer)))
+    FileTruncate -> Fun integer (Fun integer (App io integer))
+    FileFlush -> Fun integer (App io unit)
+    IsTerminal -> Fun integer (App io bool)
+    EnvChar -> Fun integer (Fun integer (App io integer))
+    CellNew -> Fun a (App io integer)
+    CellRead -> Fun integer (App io a)
+    CellWrite -> Fun integer (Fun a (App io unit))
     CharToInt -> Fun char integer
     IntToChar -> Fun integer char
     Coerce -> Fun a b
@@ -814,6 +822,7 @@ pattern' p t = at (Pat.patId p) $ do
       concat <$> zipWithM pattern' ps (fields ++ extra)
     Pat.As x q -> ((x, t) :) <$> pattern' q t
     Pat.Lazy q -> pattern' q t
+    Pat.Ordered _ q -> pattern' q t
     Pat.Error -> pure []
   where
     arrows = \case

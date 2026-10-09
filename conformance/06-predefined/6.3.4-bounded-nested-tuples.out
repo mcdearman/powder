@@ -1,0 +1,7 @@
+("min nested",(False,('\NUL',-9223372036854775808),LT))
+("max nested",(True,('\1114111',9223372036854775807),GT))
+("unit inside",(((),False),(True,())))
+("triple of pairs",((False,False),(LT,LT),(-9223372036854775808,'\NUL')))
+("deep",(True,(True,(True,(True,GT)))))
+("component",GT,LT)
+("equal to components",True)

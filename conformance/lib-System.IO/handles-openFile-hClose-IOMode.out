@@ -1,14 +1,17 @@
-WriteMode: open=True closed=False readable=False writable=True seekable=True
+WriteMode: open=True closed=False readable=False writable=True
+WriteMode: seekable=True
 WriteMode after hClose: open=False closed=True
 closing a closed handle has no effect
 ("written","hello\nworld\n")
-ReadMode: open=True closed=False readable=True writable=False seekable=True
+ReadMode: open=True closed=False readable=True writable=False
+ReadMode: seekable=True
 ("first line","hello")
 ReadMode after hClose: open=False closed=True
-AppendMode: open=True closed=False readable=False writable=True seekable=False
+AppendMode: open=True closed=False readable=False writable=True
 AppendMode after hClose: open=False closed=True
 ("AppendMode keeps old contents","hello\nworld\nappended\n")
-ReadWriteMode: open=True closed=False readable=True writable=True seekable=True
+ReadWriteMode: open=True closed=False readable=True writable=True
+ReadWriteMode: seekable=True
 ("ReadWriteMode does not truncate","Jello")
 ReadWriteMode after hClose: open=False closed=True
 ("after ReadWriteMode","Jello\nworld\nappended\n")

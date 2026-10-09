@@ -1,0 +1,12 @@
+(B,C,F,G)
+[B,C,D,E,F,G,H]
+[B,D,F]
+[]
+[A,D,G]
+[H,F,D,B]
+[G,D,A]
+(A,H)
+(Both False LT,Both True GT)
+([0,3,7],F)
+True
+(8,[H,G,F])

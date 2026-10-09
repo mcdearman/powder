@@ -149,7 +149,14 @@ What is not as the Report has it:
   `Foreign.Marshal`, `Foreign.C.String` and the rest), and there is no
   `foreign export` or `"wrapper"`: nothing here is compiled to what C
   could call.
-- **Handles** have no buffering to set: nothing written is held back.
+- **Handles** are the Report's: open, semi-closed after `hGetContents`
+  and closed; many readers or one writer of a file; `hLookAhead`,
+  seeking, sizes, and I/O errors that say what kind they are and what
+  handle and file they are about. Their state is kept by the library in
+  [lib/Powder/Base.hs](lib/Powder/Base.hs), over a few things the
+  machines do. Two things are only kept and given back: how a handle is
+  buffered (`hFlush` does send on what is held), and a file is known to
+  be locked by its name, where GHC knows it by what file it is.
 
 Reading and showing are the Report's own definitions: `lex`, the escapes
 of characters and strings, `Read` and `Show` for the Prelude's types, and
@@ -561,15 +568,17 @@ allows and GHC does not compile without help.
 [conformance/KNOWN-FAILURES.txt](conformance/KNOWN-FAILURES.txt) lists the
 tests that do not pass yet. `cabal test` passes those over, and fails if
 one of them starts passing, so the list stays true. As this is written
-about 700 pass and 51 do not: most of those are the formatting functions
-of `Numeric`, Unicode beyond ASCII in `Data.Char`, the rest of
-`System.IO`, single-precision arguments to C, and a handful of checks on
-export lists and on `main`.
+the list is empty: all 800 or so pass, on the combinator reducer and on
+the Rust machine.
 
-[Hazy](https://github.com/Superstar64/Hazy)'s tests are another check,
-run from a clone of it and not kept here: they found, among other things,
-that tabs were not counted as the layout rule counts them and that a
-record's field could not be an operator.
+Some of the tests are on ground that
+[Hazy](https://github.com/Superstar64/Hazy)'s tests cover, where that is
+the Report's and not an extension's: class defaults, derived instances,
+fields shared between constructors, clauses over strings and numbers,
+tabs in layout, a module that imports itself. They are written anew here,
+not copied: Hazy's are under the GPL. Running Hazy's own, from a clone,
+found among other things that tabs were not counted as the layout rule
+counts them and that a record's field could not be an operator.
 
 ## Ideas for what next
 

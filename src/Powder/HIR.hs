@@ -351,6 +351,7 @@ pretty program = unlines (map (binding 0) (programBindings program))
       Pat.Con c ps -> parens atomic (unwords (name c : map (pat True) ps))
       Pat.As x q -> name x ++ "@" ++ pat True q
       Pat.Lazy q -> "~" ++ pat True q
+      Pat.Ordered _ q -> pat atomic q
       Pat.Error -> "<error>"
 
     literal = \case

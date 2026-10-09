@@ -2,7 +2,8 @@
 
 Tests derived section by section from the Haskell 2010 Language Report. Every test is a small
 strict-Haskell-2010 program (no extensions, only Report modules) whose stdout is compared with
-the output of the same program built with `ghc -XHaskell2010`.
+the output of the same program run with `runghc -XHaskell2010` (not with `-w`: on GHC 9.10 and 9.12 that
+flag made instances of `Eq` and `Ord` for `Maybe` go missing).
 
 ## Layout
 
@@ -22,11 +23,12 @@ the output of the same program built with `ghc -XHaskell2010`.
 - Tests write temporary files only under `/tmp/powder-conformance-<testname>`.
 - Only stdout is compared. Each result is printed on its own labelled line.
 - `10-syntax/2.2-unicode-in-literals-and-names.hs` is the only source with non-ASCII characters (UTF-8); its output is ASCII.
-- `10-syntax/2.7-layout-tabs-are-8-columns.hs` and `10-syntax/2.6-string-gaps.hs` contain TAB characters on purpose.
+- `10-syntax/2.7-layout-tabs-are-8-columns.hs` and `10-syntax/2.6-string-gaps-ghc-differs.hs` contain TAB characters on purpose.
 
 ## Files where GHC differs from the Report (`-ghc-differs`)
 
-Expected output for these cannot simply be taken from GHC.
+Expected output for these cannot simply be taken from GHC. Where a test of this name has a `.out` beside it,
+that is what the Report says it prints, and `run.sh` leaves it alone.
 
 - `05-modules/5.7-mutually-recursive-modules-functions-ghc-differs`
 - `05-modules/5.7-mutually-recursive-modules-three-cycle-ghc-differs`
@@ -35,6 +37,16 @@ Expected output for these cannot simply be taken from GHC.
 - `06-predefined/6.4.2-gcd-zero-zero-ghc-differs.hs`
 - `09-prelude/9-func-numeric-gcd-zero-zero-ghc-differs.hs`
 - `lib-Data.Bits/bitSize-ghc-differs.hs`
+- `lib-Numeric/readFloat-incomplete-lexemes-ghc-differs.hs`: the Report's `readFloat` reads no `5.` or `1e`, skips
+  no space, and reads `NaN` and `Infinity`.
+- `lib-Numeric/show-float-rounding-ties-and-zero-digits-ghc-differs.hs`: the Report's `showEFloat (Just 0)` shows one
+  digit after the point.
+- `lib-System.IO.Error/non-report-ioeGetErrorType-type-predicates-modifyIOError-ghc-differs.hs`: names GHC exports
+  that the Report's list does not have.
+- `10-syntax/2.4-identifiers-ghc-differs.hs`: `forall` is an ordinary name in Haskell 2010; GHC 9.10 and later
+  refuse it.
+- `10-syntax/2.6-string-gaps-ghc-differs.hs`: a tab is white space in a string gap; GHC 9.12 refuses it. Its
+  `.out` is GHC 9.10's.
 
 The three `05-modules/5.7-mutually-recursive-modules-*-ghc-differs/` tests are import cycles, which the Report allows
 but GHC only compiles with `.hs-boot` files; each has a hand-derived `expected-output.txt`.

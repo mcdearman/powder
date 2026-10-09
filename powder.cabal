@@ -31,6 +31,7 @@ library
     Powder.Bytecode
     Powder.Core
     Powder.Diagnostics
+    Powder.Files
     Powder.Frontend
     Powder.HIR
     Powder.HIR.Id

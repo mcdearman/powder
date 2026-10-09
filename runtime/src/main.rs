@@ -21,7 +21,7 @@ use num_traits::{FromPrimitive, One, ToPrimitive, Zero};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{BufRead, BufReader, BufWriter, Write};
+use std::io::{BufRead, BufReader, BufWriter, IsTerminal as _, Seek, SeekFrom, Write};
 use std::rc::Rc;
 
 // Values ---------------------------------------------------------------------
@@ -65,7 +65,7 @@ enum Prim {
     DoubleAdd, DoubleSub, DoubleMul, DoubleDiv, DoublePow, DoubleAtan2, DoubleEq, DoubleLt, DoubleLe,
     DoubleTruncate, DoubleFun, DoubleShowAt, FloatShowAt, FloatNarrow, DoubleMantissa, DoubleExponent,
     DoubleEncode, DoubleFromRatio, CharCategory, CharUpper, CharLower, CharTitle, MatchFail, PutChar, GetChar, Exit, PathChar, FileOpen, HGetChar, FileClose, HIsEOF,
-    ArgCount, ArgChar,
+    ArgCount, ArgChar, FileSeek, FileTruncate, FileFlush, IsTerminal, EnvChar, CellNew, CellRead, CellWrite,
 }
 
 fn prim_named(name: &str) -> Result<Prim, String> {
@@ -84,6 +84,9 @@ fn prim_named(name: &str) -> Result<Prim, String> {
         "primPutChar" => PutChar, "primGetChar" => GetChar, "primExit" => Exit, "primPathChar" => PathChar,
         "primFileOpen" => FileOpen, "primHGetChar" => HGetChar, "primFileClose" => FileClose,
         "primHIsEOF" => HIsEOF, "primArgCount" => ArgCount, "primArgChar" => ArgChar,
+        "primFileSeek" => FileSeek, "primFileTruncate" => FileTruncate, "primFileFlush" => FileFlush,
+        "primIsTerminal" => IsTerminal, "primEnvChar" => EnvChar, "primCellNew" => CellNew,
+        "primCellRead" => CellRead, "primCellWrite" => CellWrite,
         other => return Err(format!("the image uses a primitive this machine has not got: {other}")),
     })
 }
@@ -398,18 +401,21 @@ fn ratio(n: &BigInt, d: &BigInt) -> f64 {
 
 // The machine ----------------------------------------------------------------
 
-enum Open {
-    Reading(BufReader<File>),
-    Writing(File),
-}
-
 struct Machine {
     image: Image,
     globals: Vec<Rc<RefCell<Cell>>>,
     out: BufWriter<std::io::Stdout>,
     input: BufReader<std::io::Stdin>,
     path: String,
-    files: HashMap<i64, Open>,
+    // The files that are open, by number, and how many ever were: a number
+    // is not used twice. What is read is read ahead; what is written is not
+    // held back.
+    files: HashMap<i64, BufReader<File>>,
+    opened: i64,
+    // The program's cells, each a place for a value that can be changed.
+    cells: Vec<Value>,
+    // The environment, each entry written NAME=value.
+    environment: Vec<String>,
     arguments: Vec<String>,
     name: String,
 }
@@ -434,6 +440,15 @@ fn read_char(from: &mut dyn BufRead) -> Option<char> {
     let mut bytes = vec![first[0]];
     bytes.extend_from_slice(&rest[..n]);
     Some(std::str::from_utf8(&bytes).ok().and_then(|s| s.chars().next()).unwrap_or(char::REPLACEMENT_CHARACTER))
+}
+
+/// Give back what was read ahead of where the program has read to, so that
+/// what is done to the file next is done there.
+#[allow(clippy::seek_from_current)]
+fn settle(file: &mut BufReader<File>) {
+    if !file.buffer().is_empty() {
+        let _ = file.seek(SeekFrom::Current(0));
+    }
 }
 
 fn code_of(c: Option<char>) -> Value {
@@ -540,10 +555,11 @@ impl Machine {
                         let _ = std::io::stderr().write_all(text);
                     }
                     h => match self.files.get_mut(&h) {
-                        Some(Open::Writing(file)) => {
-                            let _ = file.write_all(text);
+                        Some(file) => {
+                            settle(file);
+                            let _ = file.get_mut().write_all(text);
                         }
-                        _ => {
+                        None => {
                             let _ = self.out.write_all(text);
                         }
                     },
@@ -562,42 +578,93 @@ impl Machine {
             }
             (FileOpen, [mode]) => {
                 let path = std::mem::take(&mut self.path);
+                let mut options = std::fs::OpenOptions::new();
                 let opened = match small(mode)? {
-                    0 => File::open(&path).map(|f| Open::Reading(BufReader::new(f))),
-                    1 => File::create(&path).map(Open::Writing),
-                    _ => std::fs::OpenOptions::new().append(true).create(true).open(&path).map(Open::Writing),
-                };
+                    0 => options.read(true),
+                    1 => options.write(true).create(true).truncate(true),
+                    2 => options.append(true).create(true),
+                    _ => options.read(true).write(true).create(true),
+                }
+                .open(&path)
+                .and_then(|file| if file.metadata()?.is_dir() { Err(std::io::ErrorKind::Other.into()) } else { Ok(file) });
                 match opened {
                     Ok(file) => {
-                        let handle = 3 + self.files.len() as i64;
-                        self.files.insert(handle, file);
+                        let handle = 3 + self.opened;
+                        self.opened += 1;
+                        self.files.insert(handle, BufReader::new(file));
                         Value::Int(handle)
                     }
-                    Err(_) => Value::Int(-1),
+                    Err(e) => Value::Int(match e.kind() {
+                        std::io::ErrorKind::NotFound => -1,
+                        std::io::ErrorKind::PermissionDenied => -2,
+                        _ => -4,
+                    }),
                 }
             }
             (HGetChar, [h]) => match self.files.get_mut(&small(h)?) {
-                Some(Open::Reading(file)) => code_of(read_char(file)),
-                _ => Value::Int(-1),
+                Some(file) => code_of(read_char(file)),
+                None => Value::Int(-1),
             },
             (FileClose, [h]) => {
-                // The entry stays, so that no later file is given its number.
-                if let Some(file) = self.files.get_mut(&small(h)?) {
-                    if let Open::Writing(f) = file {
-                        let _ = f.flush();
-                    }
-                    *file = Open::Reading(BufReader::new(File::open("/dev/null").map_err(|e| e.to_string())?));
-                }
+                self.files.remove(&small(h)?);
                 UNIT
             }
             (HIsEOF, [h]) => match self.files.get_mut(&small(h)?) {
-                Some(Open::Reading(file)) => truth(file.fill_buf().map_or(true, |b| b.is_empty())),
-                Some(Open::Writing(_)) => truth(true),
+                Some(file) => truth(file.fill_buf().map_or(true, |b| b.is_empty())),
                 None => {
                     let _ = self.out.flush();
                     truth(self.input.fill_buf().map_or(true, |b| b.is_empty()))
                 }
             },
+            (FileSeek, [h, whence, offset]) => {
+                let (whence, offset) = (small(whence)?, small(offset)?);
+                Value::Int(match self.files.get_mut(&small(h)?) {
+                    Some(file) => match whence {
+                        0 if offset < 0 => -1,
+                        0 => file.seek(SeekFrom::Start(offset as u64)).map_or(-1, |p| p as i64),
+                        1 => file.seek(SeekFrom::Current(offset)).map_or(-1, |p| p as i64),
+                        2 => file.seek(SeekFrom::End(offset)).map_or(-1, |p| p as i64),
+                        _ => file.get_ref().metadata().map_or(-1, |m| m.len() as i64),
+                    },
+                    None => -1,
+                })
+            }
+            (FileTruncate, [h, size]) => {
+                let size = small(size)?;
+                Value::Int(match self.files.get_mut(&small(h)?) {
+                    Some(file) if size >= 0 => {
+                        settle(file);
+                        file.get_ref().set_len(size as u64).map_or(-1, |()| 0)
+                    }
+                    _ => -1,
+                })
+            }
+            (FileFlush, [h]) => {
+                if small(h)? == 1 {
+                    let _ = self.out.flush();
+                }
+                UNIT
+            }
+            (IsTerminal, [h]) => truth(match small(h)? {
+                0 => std::io::stdin().is_terminal(),
+                1 => std::io::stdout().is_terminal(),
+                2 => std::io::stderr().is_terminal(),
+                h => self.files.get(&h).is_some_and(|file| file.get_ref().is_terminal()),
+            }),
+            (EnvChar, [i, j]) => {
+                let (i, j) = (small(i)?, small(j)?.max(0) as usize);
+                code_of(usize::try_from(i).ok().and_then(|i| self.environment.get(i)).and_then(|entry| entry.chars().nth(j)))
+            }
+            (CellNew, [x]) => {
+                self.cells.push(x.clone());
+                Value::Int(self.cells.len() as i64 - 1)
+            }
+            (CellRead, [n]) => usize::try_from(small(n)?).ok().and_then(|n| self.cells.get(n)).cloned().ok_or("there is no such cell")?,
+            (CellWrite, [n, x]) => {
+                let cell = usize::try_from(small(n)?).ok().and_then(|n| self.cells.get_mut(n)).ok_or("there is no such cell")?;
+                *cell = x.clone();
+                UNIT
+            }
             (ArgCount, []) => Value::Int(self.arguments.len() as i64),
             (ArgChar, [i, j]) => {
                 let (i, j) = (small(i)?, small(j)?.max(0) as usize);
@@ -682,9 +749,9 @@ impl Machine {
                     let given = shape
                         .chars()
                         .zip(&arguments)
-                        .map(|(kind, v)| if kind == 'D' { double(v).map(foreign::Number::Double) } else { small(v).map(foreign::Number::Long) })
+                        .map(|(kind, v)| if kind == 'D' || kind == 'F' { double(v).map(foreign::Number::Double) } else { small(v).map(foreign::Number::Long) })
                         .collect::<Result<Vec<_>, _>>()?;
-                    let class = if *result == 'D' || *result == 'V' { *result } else { 'L' };
+                    let class = if matches!(*result, 'D' | 'F' | 'V') { *result } else { 'L' };
                     env.push(match (result, foreign::call(symbol, shape, class, &given)?) {
                         ('V', _) => UNIT,
                         (_, foreign::Number::Double(x)) => Value::Double(x),
@@ -820,6 +887,9 @@ fn main() {
             input: BufReader::new(std::io::stdin()),
             path: String::new(),
             files: HashMap::new(),
+            opened: 0,
+            cells: Vec::new(),
+            environment: std::env::vars_os().map(|(name, value)| format!("{}={}", name.to_string_lossy(), value.to_string_lossy())).collect(),
             arguments: rest,
             name: path,
         };

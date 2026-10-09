@@ -13,6 +13,8 @@ import Data.Char (ord)
 import Data.Function (on)
 import Data.Graph (flattenSCC, stronglyConnComp)
 import qualified Data.IntMap.Strict as IntMap
+import Control.Applicative ((<|>))
+import Data.Functor ((<&>))
 import Data.List (nub, nubBy)
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map as Map
@@ -330,8 +332,12 @@ foreign' at f symbol = do
       unwound t = case HIR.Type.typeForm t of
         HIR.Type.Fun a r -> let (as, result) = unwound r in (a : as, result)
         _ -> ([], t)
-      argument t = named t >>= \n -> if n `elem` ["Double", "CDouble"] then Just 'D' else if n `elem` map fst integers then Just 'L' else Nothing
-      resulting t = named t >>= \n -> if n `elem` ["Double", "CDouble"] then Just 'D' else if n == "()" then Just 'V' else lookup n integers
+      floating n
+        | n `elem` ["Double", "CDouble"] = Just 'D'
+        | n `elem` ["Float", "CFloat"] = Just 'F'
+        | otherwise = Nothing
+      argument t = named t >>= \n -> floating n <|> (if n `elem` map fst integers then Just 'L' else Nothing)
+      resulting t = named t >>= \n -> floating n <|> (if n == "()" then Just 'V' else lookup n integers)
       -- The integers C has, each with how one is read when it comes back.
       integers =
         [ ("Int", 'L'), ("CLong", 'L'), ("CLLong", 'L'), ("Int64", 'L'), ("CULong", 'Q'), ("CULLong", 'Q'), ("CSize", 'Q'),
@@ -367,6 +373,9 @@ data Pattern
     -- something is equal to it.
     Exactly Rational (Maybe Core)
   | Built Name [Pattern]
+  | -- | A constructor's pattern, with the places of the fields to match
+    -- first.
+    Ordered [Int] Pattern
   | Named Name Pattern
   | -- | Matched only when one of its variables is wanted.
     Lazily Pattern
@@ -407,6 +416,10 @@ dsPat p = case Pat.patKind p of
       _ -> Built (conName con) <$> mapM dsPat ps
   Pat.As x q -> Named <$> name x <*> dsPat q
   Pat.Lazy q -> Lazily <$> dsPat q
+  Pat.Ordered order q ->
+    dsPat q <&> \case
+      built@(Built _ _) -> Ordered order built
+      other -> other
   Pat.Error -> err (Pat.patId p) "this pattern could not be resolved"
 
 patVars :: Pattern -> [Name]
@@ -415,6 +428,7 @@ patVars = \case
   Named x p -> x : patVars p
   Lazily p -> patVars p
   Built _ ps -> concatMap patVars ps
+  Ordered _ p -> patVars p
   Anything -> []
   Exactly _ _ -> []
 
@@ -435,7 +449,9 @@ dsClauses n clauses = case clauses of
     lams xs e = foldr Lam e xs
     simple = \case Variable x -> Just x; Anything -> Just "_"; _ -> Nothing
 
-data Head = HVar | HCon Name [Pattern] | HLit Rational (Maybe Core)
+-- | What a clause's first pattern is. A constructor's has the places of
+-- the fields to match first, where that is not the order they are in.
+data Head = HVar | HCon Name [Int] [Pattern] | HLit Rational (Maybe Core)
 
 -- | Wadler's match algorithm ("Efficient compilation of pattern matching",
 -- in Peyton Jones 1987). @match us clauses failE@ matches the variables
@@ -450,8 +466,10 @@ match [] ((_, body) : rest) failE = do
   withAtom r body
 match (u : us) clauses failE = go (NE.groupBy ((==) `on` (kind . fst)) (map (headOf u) clauses))
   where
-    kind :: Head -> Int
-    kind = \case HVar -> 0; HCon {} -> 1; HLit {} -> 2
+    -- Constructor patterns that take their fields in different orders
+    -- are of different kinds: each order is a run of its own.
+    kind :: Head -> (Int, [Int])
+    kind = \case HVar -> (0, []); HCon _ order _ -> (1, order); HLit {} -> (2, [])
 
     -- The mixture rule: each run of clauses whose first patterns are of one
     -- kind falls through to the runs after it.
@@ -462,15 +480,16 @@ match (u : us) clauses failE = go (NE.groupBy ((==) `on` (kind . fst)) (map (hea
       withAtom r (matchRun (NE.toList run))
 
     matchRun run f = case run of
-      (HCon c _, _) : _ -> do
+      (HCon c order _, _) : _ -> do
+        let arrange xs = [x | i <- order, x <- take 1 (drop i xs)] ++ [x | (i, x) <- zip [0 ..] xs, i `notElem` order]
         fam <- conFamily c
         fmap (Case (Var u)) . forM fam $ \ci -> do
-          let sub = [(qs, clause) | (HCon c' qs, clause) <- run, c' == conName ci]
+          let sub = [(qs, clause) | (HCon c' _ qs, clause) <- run, c' == conName ci]
           if null sub
             then pure (Alt ci (replicate (conArity ci) "_") f)
             else do
               vs <- replicateM (conArity ci) fresh
-              Alt ci vs <$> match (vs ++ us) [(qs ++ ps, body) | (qs, (ps, body)) <- sub] f
+              Alt ci vs <$> match (arrange vs ++ us) [(arrange qs ++ ps, body) | (qs, (ps, body)) <- sub] f
       (HLit _ _, _) : _ -> foldr test (pure f) (nubBy ((==) `on` fst) [(n, how) | (HLit n how, _) <- run])
         where
           test (n, how) rest =
@@ -486,7 +505,9 @@ headOf u (pats, body) = case pats of
   Anything : ps -> (HVar, (ps, body))
   Variable x : ps -> (HVar, (ps, bound x body))
   Named x p : ps -> let (h, (ps', body')) = headOf u (p : ps, body) in (h, (ps', bound x body'))
-  Built c qs : ps -> (HCon c qs, (ps, body))
+  Built c qs : ps -> (HCon c [] qs, (ps, body))
+  Ordered order (Built c qs) : ps -> (HCon c order qs, (ps, body))
+  Ordered _ p : ps -> headOf u (p : ps, body)
   -- Each variable is what matching would bind it to, if it comes to that.
   Lazily p : ps ->
     ( HVar,
