@@ -68,10 +68,10 @@ open fs mode = do
       | isPermissionError e -> pure (-2)
       | isAlreadyInUseError e -> pure (-3)
       | otherwise -> pure (-4)
-    Right handle -> do
+    Right found -> do
       n <- (+ 3) <$> readIORef (count fs)
       modifyIORef' (count fs) (+ 1)
-      modifyIORef' (files fs) (Map.insert n handle)
+      modifyIORef' (files fs) (Map.insert n found)
       pure n
 
 close :: Files -> Integer -> IO ()
@@ -83,14 +83,14 @@ close fs h = do
 get :: Files -> Integer -> IO (Maybe Char)
 get fs h =
   file fs h >>= \case
-    Just handle -> refused Nothing (hIsEOF handle >>= \done -> if done then pure Nothing else Just <$> hGetChar handle)
+    Just found -> refused Nothing (hIsEOF found >>= \done -> if done then pure Nothing else Just <$> hGetChar found)
     Nothing -> pure Nothing
 
 -- | Write a character to a file. False where the number is not a file's.
 put :: Files -> Integer -> Char -> IO Bool
 put fs h c =
   file fs h >>= \case
-    Just handle -> True <$ refused () (hPutChar handle c)
+    Just found -> True <$ refused () (hPutChar found c)
     Nothing -> pure False
 
 -- | Whether a file has nothing more to read. Nothing where the number is
@@ -105,32 +105,32 @@ atEnd fs h = mapM (refused True . hIsEOF) =<< file fs h
 seek :: Files -> Integer -> Integer -> Integer -> IO Integer
 seek fs h whence offset =
   file fs h >>= \case
-    Just handle
-      | whence == 3 -> refused (-1) (hFileSize handle)
+    Just found
+      | whence == 3 -> refused (-1) (hFileSize found)
       | otherwise -> refused (-1) $ do
-          hSeek handle (case whence of 0 -> AbsoluteSeek; 1 -> RelativeSeek; _ -> SeekFromEnd) offset
-          hTell handle
+          hSeek found (case whence of 0 -> AbsoluteSeek; 1 -> RelativeSeek; _ -> SeekFromEnd) offset
+          hTell found
     Nothing -> pure (-1)
 
 -- | Make a file a size: 0 when done, and -1 when not.
 resize :: Files -> Integer -> Integer -> IO Integer
 resize fs h size =
   file fs h >>= \case
-    Just handle -> refused (-1) (0 <$ hSetFileSize handle size)
+    Just found -> refused (-1) (0 <$ hSetFileSize found size)
     Nothing -> pure (-1)
 
 -- | Send on what has been written and is being held.
 flush :: Files -> Integer -> IO ()
 flush fs h =
   file fs h >>= \case
-    Just handle -> refused () (hFlush handle)
+    Just found -> refused () (hFlush found)
     Nothing -> refused () (hFlush (if h == 2 then stderr else stdout))
 
 -- | Whether a file, or one of the standard three, is a terminal.
 terminal :: Files -> Integer -> IO Bool
 terminal fs h =
   file fs h >>= \case
-    Just handle -> refused False (hIsTerminalDevice handle)
+    Just found -> refused False (hIsTerminalDevice found)
     Nothing -> refused False (hIsTerminalDevice (case h of 0 -> stdin; 1 -> stdout; _ -> stderr))
 
 -- | A character of the environment: of its entry at a place, written

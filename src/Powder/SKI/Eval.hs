@@ -394,9 +394,9 @@ runIO m r = do
       h' <- int m h
       whence' <- int m whence
       int m offset >>= Files.seek (files m) h' whence' >>= number
-    (NPrim FileTruncate, [h, size]) -> do
+    (NPrim FileTruncate, [h, to]) -> do
       h' <- int m h
-      int m size >>= Files.resize (files m) h' >>= number
+      int m to >>= Files.resize (files m) h' >>= number
     (NPrim FileFlush, [h]) -> int m h >>= Files.flush (files m) >> unit
     (NPrim IsTerminal, [h]) -> int m h >>= Files.terminal (files m) >>= truth
     (NPrim EnvChar, [i, j]) -> do

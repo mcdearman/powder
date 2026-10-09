@@ -28,7 +28,6 @@ import qualified Powder.Files as Files
 import Powder.SKI.Eval (Hooks (..), RuntimeError (..))
 import Powder.SKI.Foreign (callForeign)
 import System.Exit
-import System.IO
 
 data Value
   = VInt Integer

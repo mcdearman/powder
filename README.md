@@ -575,10 +575,22 @@ Some of the tests are on ground that
 [Hazy](https://github.com/Superstar64/Hazy)'s tests cover, where that is
 the Report's and not an extension's: class defaults, derived instances,
 fields shared between constructors, clauses over strings and numbers,
-tabs in layout, a module that imports itself. They are written anew here,
-not copied: Hazy's are under the GPL. Running Hazy's own, from a clone,
-found among other things that tabs were not counted as the layout rule
-counts them and that a record's field could not be an operator.
+tabs in layout, a module that imports itself. Those are written anew.
+
+Hazy's own tests that are Haskell 2010 are in [hazy](hazy) as Hazy has
+them, and `cabal test` runs them too: programs that must print what Hazy
+says they print, modules that must be accepted, and modules that must be
+refused. [hazy/README.md](hazy/README.md) says which were left out and
+why. They found, among other things, that tabs were not counted as the
+layout rule counts them and that a record's field could not be an
+operator.
+
+## Licence
+
+Powder is under the BSD 3-Clause licence: see [LICENSE](LICENSE). The
+tests in [hazy](hazy) are not Powder's: they are Hazy's, under the GNU
+General Public License version 3, and are kept apart, with that licence
+beside them.
 
 ## Ideas for what next
 
