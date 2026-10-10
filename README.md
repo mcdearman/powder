@@ -635,8 +635,11 @@ circles be.
 
 A tracing collector as an alternative is to come, and after it a JIT and
 ahead-of-time compilation to native code, from the same bytecode. The
-machine is slower than the reducer on programs that allocate heavily,
-which is not the collector's doing and has not been looked into.
+machine is as fast as the reducer or faster on most programs, and up to
+two and a half times slower on the ones that allocate most. What time is
+left is spread over the whole loop that runs instructions, so the next
+gains are in what the compiler gives it to run: fewer rows made again,
+and fewer thunks where a value is known to be wanted.
 
 Every example is run on all three, the reducer, the machine for AxCut and
 the machine in Rust, and they must agree.

@@ -17,6 +17,11 @@
 mod foreign;
 mod gc;
 
+// The machine allocates and frees small things all the time, which is what
+// this allocator is quick at.
+#[global_allocator]
+static ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 use num_bigint::BigInt;
 use num_integer::Integer;
 use num_traits::{FromPrimitive, One, ToPrimitive, Zero};
@@ -25,6 +30,7 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufRead, BufReader, BufWriter, IsTerminal as _, Seek, SeekFrom, Write};
 use gc::Gc;
+use smallvec::SmallVec;
 use std::rc::Rc;
 
 // Values ---------------------------------------------------------------------
@@ -42,15 +48,19 @@ enum Value {
     Object(Gc<RefCell<Cell>>),
 }
 
+/// The values a constructed value or an object holds. Most hold few, and
+/// those are kept in the value itself, with nothing more to allocate.
+type Held = SmallVec<[Value; 4]>;
+
 struct Data {
     tag: u32,
-    fields: Vec<Value>,
+    fields: Held,
 }
 
 /// What an object is. A thunk is `Delayed`, then `Working`, then `Done`.
 enum Cell {
-    Made { captured: Vec<Value>, method: u8, parameters: usize, block: usize },
-    Delayed { captured: Vec<Value>, block: usize },
+    Made { captured: Held, method: u8, parameters: usize, block: usize },
+    Delayed { captured: Held, block: usize },
     Working,
     Done(Value),
     /// The consumer a thunk's body is given: it keeps the value in the
@@ -139,7 +149,10 @@ struct Made {
 }
 
 enum Instruction {
-    Substitute(Vec<usize>),
+    /// The row made again: each value of the new one, with the place in the
+    /// old of the value it is, and whether that is the last the old value
+    /// is wanted for, so that it can be moved and not copied.
+    Substitute(Vec<(usize, bool)>),
     Let { tag: u32, arity: usize },
     Switch(Vec<(usize, usize)>),
     New { made: Made, captured: usize },
@@ -231,7 +244,8 @@ fn load(bytes: &[u8]) -> Result<Image, String> {
             block.push(match r.byte()? {
                 0 => {
                     let n = r.number()?;
-                    Instruction::Substitute((0..n).map(|_| r.number()).collect::<Result<_, _>>()?)
+                    let sources = (0..n).map(|_| r.number()).collect::<Result<Vec<usize>, _>>()?;
+                    Instruction::Substitute(sources.iter().enumerate().map(|(j, &i)| (i, !sources[j + 1..].contains(&i))).collect())
                 }
                 1 => Instruction::Let { tag: r.number()? as u32, arity: r.number()? },
                 2 => {
@@ -472,6 +486,8 @@ struct Machine {
     name: String,
     // The actions that answer calls from C, by number; and the calls being
     // answered, the innermost last: each its arguments, and its result.
+    // A buffer for the row being made by a substitute.
+    spare: Vec<Value>,
     answers: Vec<Value>,
     frames: Vec<(Vec<foreign::Number>, foreign::Number)>,
     // How many possible roots of circles there are to be before they are
@@ -827,7 +843,7 @@ impl Machine {
         })
     }
 
-    fn object(made: &Made, captured: Vec<Value>) -> Cell {
+    fn object(made: &Made, captured: Held) -> Cell {
         if made.thunk {
             Cell::Delayed { captured, block: made.block }
         } else {
@@ -887,15 +903,29 @@ impl Machine {
             match unsafe { &*instruction } {
                 Instruction::Halt => return Ok(()),
                 Instruction::Substitute(sources) => {
-                    env = sources.iter().map(|&i| env[i].clone()).collect();
+                    // The new row is made in a buffer kept for it, and the
+                    // old row becomes the buffer: nothing is allocated.
+                    let mut next = std::mem::take(&mut self.spare);
+                    for &(i, last) in sources {
+                        let Some(old) = env.get_mut(i) else { return Err(malformed("a substitute of a value that is not there")) };
+                        next.push(if last { std::mem::replace(old, Value::Tag(0)) } else { old.clone() });
+                    }
+                    std::mem::swap(&mut env, &mut next);
+                    next.clear();
+                    self.spare = next;
                 }
                 Instruction::Let { tag, arity } => {
-                    let fields = env.split_off(env.len() - arity);
-                    env.push(if fields.is_empty() { Value::Tag(*tag) } else { Value::Data(Gc::new(Data { tag: *tag, fields })) });
+                    let made = if *arity == 0 {
+                        Value::Tag(*tag)
+                    } else {
+                        let from = env.len() - arity;
+                        Value::Data(Gc::new(Data { tag: *tag, fields: env.drain(from..).collect() }))
+                    };
+                    env.push(made);
                 }
                 Instruction::Switch(clauses) => {
                     let (tag, fields) = match env.pop() {
-                        Some(Value::Tag(tag)) => (tag, Vec::new()),
+                        Some(Value::Tag(tag)) => (tag, Held::new()),
                         // If nothing else holds it, its fields are moved out.
                         Some(Value::Data(mut data)) => match data.get_mut() {
                             Some(mine) => (mine.tag, std::mem::take(&mut mine.fields)),
@@ -912,7 +942,8 @@ impl Machine {
                     at = 0;
                 }
                 Instruction::New { made, captured } => {
-                    let held = env.split_off(env.len() - captured);
+                    let from = env.len() - captured;
+                    let held: Held = env.drain(from..).collect();
                     env.push(Value::Object(Gc::new(RefCell::new(Self::object(made, held)))));
                 }
                 Instruction::Rec(objects) => {
@@ -920,7 +951,7 @@ impl Machine {
                     let total: usize = objects.iter().map(|(_, mine, _)| mine).sum();
                     let mut values = env.split_off(env.len() - total).into_iter();
                     for ((made, mine, theirs), cell) in objects.iter().zip(&cells) {
-                        let mut held: Vec<Value> = values.by_ref().take(*mine).collect();
+                        let mut held: Held = values.by_ref().take(*mine).collect();
                         held.extend(theirs.iter().map(|&i| Value::Object(cells[i].clone())));
                         *cell.borrow_mut() = Self::object(made, held);
                     }
@@ -929,8 +960,9 @@ impl Machine {
                 Instruction::Lit(v) => env.push(v.clone()),
                 Instruction::Global(i) => env.push(Value::Object(self.globals[*i].clone())),
                 Instruction::Prim(p, n) => {
-                    let arguments = env.split_off(env.len() - n);
-                    let result = self.primitive(*p, &arguments)?;
+                    let from = env.len() - n;
+                    let result = self.primitive(*p, &env[from..])?;
+                    env.truncate(from);
                     env.push(result);
                 }
                 // A C function made of an action of the program's.
@@ -968,13 +1000,17 @@ impl Machine {
                                 return Err(malformed("a force with more in the environment than a value and its consumer"));
                             };
                             match self.force(x, k)? {
-                                Entered::Body(captured, to) => {
-                                    env = captured;
+                                Entered::Body(update, captured, to) => {
+                                    env.push(update);
+                                    env.extend(captured);
                                     block = to;
                                     at = 0;
                                     continue;
                                 }
-                                Entered::Call(k, v) => (k, RET, vec![v]),
+                                Entered::Call(k, v) => {
+                                    env.push(v);
+                                    (k, RET, std::mem::take(&mut env))
+                                }
                             }
                         }
                         Instruction::Invoke(m) => {
@@ -986,24 +1022,45 @@ impl Machine {
                     // A thunk's value coming back is kept and passed on,
                     // which may be to another thunk's consumer.
                     loop {
-                        let Value::Object(cell) = &target else {
+                        let Value::Object(cell) = &mut target else {
                             return Err(malformed("a call of what is not an object"));
                         };
-                        let next = match &*cell.borrow() {
-                            Cell::Made { captured, method: has, parameters, block: to } => {
-                                if *has != method || *parameters != arguments.len() {
-                                    return Err(malformed("an object was called by a method it has not got"));
+                        // What nothing else refers to is used up by the
+                        // call: what it holds is moved out, not copied.
+                        let next = if let Some(only) = cell.get_mut() {
+                            match only.get_mut() {
+                                Cell::Made { captured, method: has, parameters, block: to } => {
+                                    if *has != method || *parameters != arguments.len() {
+                                        return Err(malformed("an object was called by a method it has not got"));
+                                    }
+                                    arguments.extend(captured.drain(..));
+                                    block = *to;
+                                    at = 0;
+                                    None
                                 }
-                                arguments.extend(captured.iter().cloned());
-                                block = *to;
-                                at = 0;
-                                None
+                                Cell::Update { thunk, consumer } if method == RET && arguments.len() == 1 => {
+                                    *thunk.borrow_mut() = Cell::Done(arguments[0].clone());
+                                    Some(std::mem::replace(consumer, Value::Tag(0)))
+                                }
+                                _ => return Err(malformed("a call of what is not an object with that method")),
                             }
-                            Cell::Update { thunk, consumer } if method == RET && arguments.len() == 1 => {
-                                *thunk.borrow_mut() = Cell::Done(arguments[0].clone());
-                                Some(consumer.clone())
+                        } else {
+                            match &*cell.borrow() {
+                                Cell::Made { captured, method: has, parameters, block: to } => {
+                                    if *has != method || *parameters != arguments.len() {
+                                        return Err(malformed("an object was called by a method it has not got"));
+                                    }
+                                    arguments.extend(captured.iter().cloned());
+                                    block = *to;
+                                    at = 0;
+                                    None
+                                }
+                                Cell::Update { thunk, consumer } if method == RET && arguments.len() == 1 => {
+                                    *thunk.borrow_mut() = Cell::Done(arguments[0].clone());
+                                    Some(consumer.clone())
+                                }
+                                _ => return Err(malformed("a call of what is not an object with that method")),
                             }
-                            _ => return Err(malformed("a call of what is not an object with that method")),
                         };
                         match next {
                             None => break,
@@ -1013,7 +1070,8 @@ impl Machine {
                             }
                         }
                     }
-                    env = std::mem::take(&mut arguments);
+                    // The row's old buffer is kept for the next row made.
+                    env = arguments;
                 }
             }
         }
@@ -1030,9 +1088,7 @@ impl Machine {
             match state {
                 Cell::Delayed { captured, block } => {
                     let update = Value::Object(Gc::new(RefCell::new(Cell::Update { thunk: cell.clone(), consumer: k })));
-                    let mut env = vec![update];
-                    env.extend(captured);
-                    return Ok(Entered::Body(env, block));
+                    return Ok(Entered::Body(update, captured, block));
                 }
                 Cell::Done(v) => {
                     *cell.borrow_mut() = Cell::Done(v.clone());
@@ -1049,8 +1105,9 @@ impl Machine {
 }
 
 enum Entered {
-    /// A thunk's body, with the environment it runs in.
-    Body(Vec<Value>, usize),
+    /// A thunk's body: the consumer it is given, what it captured, and
+    /// its block.
+    Body(Value, Held, usize),
     /// A consumer, and the value it is to be given.
     Call(Value, Value),
 }
@@ -1084,7 +1141,7 @@ fn main() {
             eprintln!("powder-vm: {path}: {e}");
             std::process::exit(2);
         });
-        let globals = image.definitions.iter().map(|&block| Gc::new(RefCell::new(Cell::Delayed { captured: Vec::new(), block }))).collect();
+        let globals = image.definitions.iter().map(|&block| Gc::new(RefCell::new(Cell::Delayed { captured: Held::new(), block }))).collect();
         let mut machine = Machine {
             image,
             globals,
@@ -1097,6 +1154,7 @@ fn main() {
             environment: std::env::vars_os().map(|(name, value)| format!("{}={}", name.to_string_lossy(), value.to_string_lossy())).collect(),
             arguments: rest,
             name: path,
+            spare: Vec::new(),
             answers: Vec::new(),
             frames: Vec::new(),
             // POWDER_GC=off leaves circles be, which is for measuring
