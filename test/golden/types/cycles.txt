@@ -1,0 +1,5 @@
+parity :: Int -> (Bool, Bool)
+evens :: Int -> Int -> Int
+ring :: Int -> Int
+rings :: Int -> Int -> Int
+main :: IO ()
