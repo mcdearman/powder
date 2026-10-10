@@ -571,13 +571,26 @@ exactly that. So the machine counts references by the statements alone:
 a count goes up where a `substitute` copies, and a value is let go where
 one leaves it out.
 
-The machine in Rust is a first version. It counts references, as above,
-and runs in constant stack. It does not yet collect values that refer to
-themselves, which lazy code makes (`let xs = 1 : xs`): that needs the
-cycle collector that is to come, and after it a tracing collector as an
-alternative. Its only failing meanwhile is that such values are not
-freed. A JIT and ahead-of-time compilation to native code are to come
-after that, from the same bytecode.
+The machine in Rust counts references, as above, and runs in constant
+stack. A count frees a value the moment the last reference to it is let
+go of, but values that refer to each other in a circle, which lazy code
+makes (`let xs = 1 : xs`, or two local functions that call each other),
+keep each other's counts up for good. Those are freed by a cycle
+collector ([runtime/src/gc.rs](runtime/src/gc.rs)), Bacon and Rajan's
+trial deletion: a value whose count goes down but not to nothing is
+noted as a possible way into a circle; to collect, the counts of
+everything those reach are taken down by the references among them, and
+what is left with no count is garbage. It looks only at what the
+possible roots reach, never at the whole heap, and runs between
+instructions when enough roots have gathered, less often when a look
+finds little. `POWDER_GC_STATS=1` has the machine say, as it leaves, how
+many values it made and how each was freed, and `POWDER_GC=off` leaves
+circles be.
+
+A tracing collector as an alternative is to come, and after it a JIT and
+ahead-of-time compilation to native code, from the same bytecode. The
+machine is slower than the reducer on programs that allocate heavily,
+which is not the collector's doing and has not been looked into.
 
 Every example is run on all three, the reducer, the machine for AxCut and
 the machine in Rust, and they must agree.

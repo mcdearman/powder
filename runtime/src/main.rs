@@ -10,10 +10,12 @@
 //! who holds it, and the environment is linear: an instruction uses up
 //! what it takes, so the only places a count goes up or a value is let go
 //! are the instruction that makes the row again and the ones that copy
-//! out of an object that is still shared. Values that refer to themselves
-//! are not yet collected; a collector for those is to come.
+//! out of an object that is still shared. Values that refer to each other
+//! in a circle, which counts alone would never free, are found and freed
+//! by the collector in `gc.rs`, between instructions.
 
 mod foreign;
+mod gc;
 
 use num_bigint::BigInt;
 use num_integer::Integer;
@@ -22,6 +24,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufRead, BufReader, BufWriter, IsTerminal as _, Seek, SeekFrom, Write};
+use gc::Gc;
 use std::rc::Rc;
 
 // Values ---------------------------------------------------------------------
@@ -35,8 +38,8 @@ enum Value {
     Double(f64),
     /// A constructed value with no fields: which constructor of its type.
     Tag(u32),
-    Data(Rc<Data>),
-    Object(Rc<RefCell<Cell>>),
+    Data(Gc<Data>),
+    Object(Gc<RefCell<Cell>>),
 }
 
 struct Data {
@@ -52,7 +55,38 @@ enum Cell {
     Done(Value),
     /// The consumer a thunk's body is given: it keeps the value in the
     /// thunk and passes it on to the consumer of the force.
-    Update { thunk: Rc<RefCell<Cell>>, consumer: Value },
+    Update { thunk: Gc<RefCell<Cell>>, consumer: Value },
+}
+
+impl Value {
+    /// What it refers to on the heap, if it is a reference.
+    fn edge(&self, visit: &mut dyn FnMut(gc::Edge)) {
+        match self {
+            Value::Data(data) => visit(data.edge()),
+            Value::Object(object) => visit(object.edge()),
+            _ => {}
+        }
+    }
+}
+
+impl gc::Trace for Data {
+    fn trace(&self, visit: &mut dyn FnMut(gc::Edge)) {
+        self.fields.iter().for_each(|field| field.edge(visit));
+    }
+}
+
+impl gc::Trace for RefCell<Cell> {
+    fn trace(&self, visit: &mut dyn FnMut(gc::Edge)) {
+        match &*self.borrow() {
+            Cell::Made { captured, .. } | Cell::Delayed { captured, .. } => captured.iter().for_each(|held| held.edge(visit)),
+            Cell::Done(value) => value.edge(visit),
+            Cell::Update { thunk, consumer } => {
+                visit(thunk.edge());
+                consumer.edge(visit);
+            }
+            Cell::Working => {}
+        }
+    }
 }
 
 const RET: u8 = 0;
@@ -421,7 +455,7 @@ fn ratio(n: &BigInt, d: &BigInt) -> f64 {
 
 struct Machine {
     image: Image,
-    globals: Vec<Rc<RefCell<Cell>>>,
+    globals: Vec<Gc<RefCell<Cell>>>,
     out: BufWriter<std::io::Stdout>,
     input: BufReader<std::io::Stdin>,
     path: String,
@@ -440,7 +474,13 @@ struct Machine {
     // answered, the innermost last: each its arguments, and its result.
     answers: Vec<Value>,
     frames: Vec<(Vec<foreign::Number>, foreign::Number)>,
+    // How many possible roots of circles there are to be before they are
+    // next looked at.
+    due: usize,
 }
+
+/// How many possible roots there are to be before the first collection.
+const FIRST_COLLECTION: usize = 16384;
 
 /// Read one character of UTF-8, or nothing at the end.
 fn read_char(from: &mut dyn BufRead) -> Option<char> {
@@ -486,6 +526,21 @@ const UNIT: Value = Value::Tag(0);
 impl Machine {
     fn finish(&mut self, status: i32) -> ! {
         let _ = self.out.flush();
+        // How memory went, for whoever asks.
+        if std::env::var_os("POWDER_GC_STATS").is_some() {
+            // What is left is to be what the program still had, so the
+            // circles let go of since the last look are freed first.
+            gc::collect();
+            let stats = gc::stats();
+            eprintln!(
+                "gc: made {}, freed by count {}, freed in circles {}, left {}, collections {}",
+                stats.made,
+                stats.freed_by_count,
+                stats.freed_in_circles,
+                stats.made - stats.freed_by_count - stats.freed_in_circles,
+                stats.collections
+            );
+        }
         std::process::exit(status)
     }
 
@@ -808,7 +863,22 @@ impl Machine {
         let malformed = |what: &str| format!("the image is malformed: {what}");
         let mut block = start;
         let mut at = 0;
+        let mut since = 0u32;
         loop {
+            // Between instructions nothing is half made, so here is where
+            // circles of garbage are looked for, when enough values have
+            // been let go of that might be the way into one.
+            since += 1;
+            if since >= 4096 {
+                since = 0;
+                if gc::pending() > self.due {
+                    // Looking costs as much as there is to look at. Where
+                    // little of it turns out to be garbage, look less
+                    // often; where much does, more often again.
+                    let (looked, freed) = gc::collect();
+                    self.due = if freed * 8 < looked { self.due.saturating_mul(2).min(1 << 26) } else { (self.due / 2).max(FIRST_COLLECTION) };
+                }
+            }
             // The image is not changed while it runs, so an instruction can
             // be looked at while the rest of the machine is changed.
             let instruction: *const Instruction = &self.image.blocks[block][at];
@@ -821,15 +891,15 @@ impl Machine {
                 }
                 Instruction::Let { tag, arity } => {
                     let fields = env.split_off(env.len() - arity);
-                    env.push(if fields.is_empty() { Value::Tag(*tag) } else { Value::Data(Rc::new(Data { tag: *tag, fields })) });
+                    env.push(if fields.is_empty() { Value::Tag(*tag) } else { Value::Data(Gc::new(Data { tag: *tag, fields })) });
                 }
                 Instruction::Switch(clauses) => {
                     let (tag, fields) = match env.pop() {
                         Some(Value::Tag(tag)) => (tag, Vec::new()),
                         // If nothing else holds it, its fields are moved out.
-                        Some(Value::Data(data)) => match Rc::try_unwrap(data) {
-                            Ok(data) => (data.tag, data.fields),
-                            Err(shared) => (shared.tag, shared.fields.clone()),
+                        Some(Value::Data(mut data)) => match data.get_mut() {
+                            Some(mine) => (mine.tag, std::mem::take(&mut mine.fields)),
+                            None => (data.tag, data.fields.clone()),
                         },
                         _ => return Err(malformed("a switch on what is not a constructed value")),
                     };
@@ -843,10 +913,10 @@ impl Machine {
                 }
                 Instruction::New { made, captured } => {
                     let held = env.split_off(env.len() - captured);
-                    env.push(Value::Object(Rc::new(RefCell::new(Self::object(made, held)))));
+                    env.push(Value::Object(Gc::new(RefCell::new(Self::object(made, held)))));
                 }
                 Instruction::Rec(objects) => {
-                    let cells: Vec<_> = objects.iter().map(|_| Rc::new(RefCell::new(Cell::Working))).collect();
+                    let cells: Vec<_> = objects.iter().map(|_| Gc::new(RefCell::new(Cell::Working))).collect();
                     let total: usize = objects.iter().map(|(_, mine, _)| mine).sum();
                     let mut values = env.split_off(env.len() - total).into_iter();
                     for ((made, mine, theirs), cell) in objects.iter().zip(&cells) {
@@ -959,7 +1029,7 @@ impl Machine {
             let state = std::mem::replace(&mut *cell.borrow_mut(), Cell::Working);
             match state {
                 Cell::Delayed { captured, block } => {
-                    let update = Value::Object(Rc::new(RefCell::new(Cell::Update { thunk: cell.clone(), consumer: k })));
+                    let update = Value::Object(Gc::new(RefCell::new(Cell::Update { thunk: cell.clone(), consumer: k })));
                     let mut env = vec![update];
                     env.extend(captured);
                     return Ok(Entered::Body(env, block));
@@ -1014,7 +1084,7 @@ fn main() {
             eprintln!("powder-vm: {path}: {e}");
             std::process::exit(2);
         });
-        let globals = image.definitions.iter().map(|&block| Rc::new(RefCell::new(Cell::Delayed { captured: Vec::new(), block }))).collect();
+        let globals = image.definitions.iter().map(|&block| Gc::new(RefCell::new(Cell::Delayed { captured: Vec::new(), block }))).collect();
         let mut machine = Machine {
             image,
             globals,
@@ -1029,6 +1099,9 @@ fn main() {
             name: path,
             answers: Vec::new(),
             frames: Vec::new(),
+            // POWDER_GC=off leaves circles be, which is for measuring
+            // what looking for them costs.
+            due: if std::env::var_os("POWDER_GC").is_some_and(|v| v == "off") { usize::MAX } else { FIRST_COLLECTION },
         };
         // SAFETY: the machine is in one place for as long as the thread
         // runs, and C calls back only from inside a call the machine made.

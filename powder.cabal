@@ -108,6 +108,7 @@ test-suite spec
   hs-source-dirs: test app/ski
   main-is:        Spec.hs
   other-modules:
+    CollectorSpec
     ConformanceSpec
     DiagnosticsSpec
     Entry

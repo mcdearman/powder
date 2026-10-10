@@ -1,6 +1,7 @@
 -- | Every test of the compiler and its runtimes.
 module Main (main) where
 
+import qualified CollectorSpec
 import qualified ConformanceSpec
 import qualified DiagnosticsSpec
 import qualified EntrySpec
@@ -19,5 +20,6 @@ main = hspec $ do
   describe "types" TypecheckSpec.spec
   describe "diagnostics" DiagnosticsSpec.spec
   describe "the examples" ExamplesSpec.spec
+  describe "the machine's memory" CollectorSpec.spec
   describe "Haskell 2010 conformance" ConformanceSpec.spec
   describe "Hazy's tests" HazySpec.spec
