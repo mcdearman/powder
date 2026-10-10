@@ -66,6 +66,7 @@ enum Prim {
     DoubleTruncate, DoubleFun, DoubleShowAt, FloatShowAt, FloatNarrow, DoubleMantissa, DoubleExponent,
     DoubleEncode, DoubleFromRatio, CharCategory, CharUpper, CharLower, CharTitle, MatchFail, PutChar, GetChar, Exit, PathChar, FileOpen, HGetChar, FileClose, HIsEOF,
     ArgCount, ArgChar, FileSeek, FileTruncate, FileFlush, IsTerminal, EnvChar, CellNew, CellRead, CellWrite,
+    PeekInt, PeekDouble, PokeInt, PokeDouble, ErrnoGet, ErrnoSet,
 }
 
 fn prim_named(name: &str) -> Result<Prim, String> {
@@ -87,6 +88,8 @@ fn prim_named(name: &str) -> Result<Prim, String> {
         "primFileSeek" => FileSeek, "primFileTruncate" => FileTruncate, "primFileFlush" => FileFlush,
         "primIsTerminal" => IsTerminal, "primEnvChar" => EnvChar, "primCellNew" => CellNew,
         "primCellRead" => CellRead, "primCellWrite" => CellWrite,
+        "primPeekInt" => PeekInt, "primPeekDouble" => PeekDouble, "primPokeInt" => PokeInt,
+        "primPokeDouble" => PokeDouble, "primErrnoGet" => ErrnoGet, "primErrnoSet" => ErrnoSet,
         other => return Err(format!("the image uses a primitive this machine has not got: {other}")),
     })
 }
@@ -665,6 +668,57 @@ impl Machine {
                 *cell = x.clone();
                 UNIT
             }
+            // SAFETY: the program says what is at the address, as a C
+            // program would, and is as wrong as one would be if it is not.
+            (PeekInt, [kind, address]) => {
+                let at = small(address)? as usize;
+                Value::Int(unsafe {
+                    match small(kind)? {
+                        0 => (at as *const i8).read_unaligned() as i64,
+                        1 => (at as *const i16).read_unaligned() as i64,
+                        2 => (at as *const i32).read_unaligned() as i64,
+                        3 => (at as *const i64).read_unaligned(),
+                        4 => (at as *const u8).read_unaligned() as i64,
+                        5 => (at as *const u16).read_unaligned() as i64,
+                        6 => (at as *const u32).read_unaligned() as i64,
+                        _ => return Ok(integer(BigInt::from((at as *const u64).read_unaligned()))),
+                    }
+                })
+            }
+            (PeekDouble, [kind, address]) => {
+                let at = small(address)? as usize;
+                Value::Double(unsafe { if small(kind)? == 8 { (at as *const f32).read_unaligned() as f64 } else { (at as *const f64).read_unaligned() } })
+            }
+            (PokeInt, [kind, address, value]) => {
+                let at = small(address)? as usize;
+                // An integer too wide for the place is cut to it, as C does.
+                let value = (big(value)? & BigInt::from(u64::MAX)).to_u64().unwrap_or(0);
+                unsafe {
+                    match small(kind)? {
+                        0 | 4 => (at as *mut u8).write_unaligned(value as u8),
+                        1 | 5 => (at as *mut u16).write_unaligned(value as u16),
+                        2 | 6 => (at as *mut u32).write_unaligned(value as u32),
+                        _ => (at as *mut u64).write_unaligned(value),
+                    }
+                }
+                UNIT
+            }
+            (PokeDouble, [kind, address, value]) => {
+                let (at, value) = (small(address)? as usize, double(value)?);
+                unsafe {
+                    if small(kind)? == 8 {
+                        (at as *mut f32).write_unaligned(value as f32)
+                    } else {
+                        (at as *mut f64).write_unaligned(value)
+                    }
+                }
+                UNIT
+            }
+            (ErrnoGet, []) => Value::Int(foreign::errno() as i64),
+            (ErrnoSet, [value]) => {
+                foreign::set_errno(small(value)? as i32);
+                UNIT
+            }
             (ArgCount, []) => Value::Int(self.arguments.len() as i64),
             (ArgChar, [i, j]) => {
                 let (i, j) = (small(i)?, small(j)?.max(0) as usize);
@@ -751,8 +805,7 @@ impl Machine {
                         .zip(&arguments)
                         .map(|(kind, v)| if kind == 'D' || kind == 'F' { double(v).map(foreign::Number::Double) } else { small(v).map(foreign::Number::Long) })
                         .collect::<Result<Vec<_>, _>>()?;
-                    let class = if matches!(*result, 'D' | 'F' | 'V') { *result } else { 'L' };
-                    env.push(match (result, foreign::call(symbol, shape, class, &given)?) {
+                    env.push(match (result, foreign::call(symbol, shape, *result, &given)?) {
                         ('V', _) => UNIT,
                         (_, foreign::Number::Double(x)) => Value::Double(x),
                         (kind, foreign::Number::Long(n)) => Value::Int(match kind {
@@ -893,7 +946,7 @@ fn main() {
             arguments: rest,
             name: path,
         };
-        let outcome = machine.run();
+        let outcome = foreign::load_libraries().and_then(|()| machine.run());
         let _ = machine.out.flush();
         match outcome {
             Ok(()) => machine.finish(0),

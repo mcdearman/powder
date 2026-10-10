@@ -1,0 +1,8 @@
+("values come back","a string",42,[1,2,3])
+("as often as asked",True)
+("equality",True)
+("as a pointer it is not null",True)
+("through a pointer and back","a string")
+("kept in memory","a string")
+"a value is not looked at to be kept"
+freed

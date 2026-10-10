@@ -1,0 +1,10 @@
+("mallocForeignPtr",42)
+("mallocForeignPtrBytes",7)
+("mallocForeignPtrArray",[1,2,3,4])
+("mallocForeignPtrArray0",[5,6,7])
+("newForeignPtr with free",99)
+("equality and order",True,False,EQ)
+("newForeignPtr_ of null",True)
+finalized early
+finalizing again does nothing
+("castForeignPtr",42)

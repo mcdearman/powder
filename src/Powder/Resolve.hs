@@ -25,7 +25,7 @@ import Control.Monad
 import Control.Monad.Reader
 import Control.Monad.State.Strict
 import qualified Data.IntMap.Strict as IntMap
-import Data.List (intercalate, nub, (\\))
+import Data.List (intercalate, isSuffixOf, nub, (\\))
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map as Map
 import Data.Char (isAlphaNum, isUpper)
@@ -409,11 +409,19 @@ resolveAfter seed lenient sources extra = case reverse (problems final) of
           Decl.Foreign entity x ty -> within d $ do
             declared' <- signatureOf [] ty
             modify (\st -> st {signatures = IntMap.insert (nameKey (globalsOf n Map.! x)) declared' (signatures st)})
-            -- What C calls it is the last word of what is said, which may
-            -- name a header first; or failing that its name here.
-            let symbol = case words (filter (/= '&') (fromMaybe "" entity)) of
-                  [] -> x
-                  said -> last said
+            -- What is said of it: that it is called by an address it is
+            -- given (dynamic), that it makes a C function of one here
+            -- (wrapper), or what C calls it, perhaps after a header, and
+            -- with an & if it is the address that is wanted and not a
+            -- call. Failing any of that it is called what it is here.
+            let said = words (concatMap (\c -> if c == '&' then " & " else [c]) (fromMaybe "" entity))
+                -- A header says where C declares the function, which
+                -- nothing here reads.
+                names = [w | w <- said, w `notElem` ["static", "&"], not (".h" `isSuffixOf` w)]
+                symbol
+                  | said `elem` [["dynamic"], ["wrapper"]] = concat said
+                  | "&" `elem` said = '&' : fromMaybe x (listToMaybe (reverse names))
+                  | otherwise = fromMaybe x (listToMaybe (reverse names))
             b <- node
             body <- mk (Foreign symbol) >>= plain
             pure . Binding b . Function (globalsOf n Map.! x) . pure . (\c -> Clause c [] body) <$> node

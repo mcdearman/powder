@@ -1,6 +1,8 @@
 -- The types of C's numbers. Each whole number is an Integer kept within
 -- its size, a CDouble is a Double and a CFloat a Float.
-module Foreign.C.Types (CChar, CSChar, CUChar, CShort, CUShort, CInt, CUInt, CLong, CULong, CLLong, CULLong, CSize, CDouble, CFloat) where
+module Foreign.C.Types (CChar, CSChar, CUChar, CShort, CUShort, CInt, CUInt, CLong, CULong, CLLong, CULLong, CSize, CDouble, CFloat, CPtrdiff, CWchar, CSigAtomic, CClock, CTime, CIntPtr, CUIntPtr, CIntMax, CUIntMax, CFile, CFpos, CJmpBuf) where
+
+import Data.Bits
 
 newtype CChar = MkCChar Integer
 
@@ -771,3 +773,764 @@ instance Enum CFloat where
   enumFromThen (MkCFloat a) (MkCFloat b) = map MkCFloat (enumFromThen a b)
   enumFromTo (MkCFloat a) (MkCFloat b) = map MkCFloat (enumFromTo a b)
   enumFromThenTo (MkCFloat a) (MkCFloat b) (MkCFloat c) = map MkCFloat (enumFromThenTo a b c)
+
+newtype CPtrdiff = MkCPtrdiff Integer
+
+toCPtrdiff :: Integer -> CPtrdiff
+toCPtrdiff x = MkCPtrdiff (mod (x + 9223372036854775808) 18446744073709551616 - 9223372036854775808)
+
+instance Eq CPtrdiff where
+  MkCPtrdiff a == MkCPtrdiff b = a == b
+
+instance Ord CPtrdiff where
+  compare (MkCPtrdiff a) (MkCPtrdiff b) = compare a b
+  MkCPtrdiff a <= MkCPtrdiff b = a <= b
+  MkCPtrdiff a < MkCPtrdiff b = a < b
+
+instance Show CPtrdiff where
+  showsPrec p (MkCPtrdiff a) = showsPrec p a
+
+instance Read CPtrdiff where
+  readsPrec p s = [(toCPtrdiff x, t) | (x, t) <- readsPrec p s]
+
+instance Num CPtrdiff where
+  MkCPtrdiff a + MkCPtrdiff b = toCPtrdiff (a + b)
+  MkCPtrdiff a - MkCPtrdiff b = toCPtrdiff (a - b)
+  MkCPtrdiff a * MkCPtrdiff b = toCPtrdiff (a * b)
+  negate (MkCPtrdiff a) = toCPtrdiff (negate a)
+  abs (MkCPtrdiff a) = toCPtrdiff (abs a)
+  signum (MkCPtrdiff a) = MkCPtrdiff (signum a)
+  fromInteger = toCPtrdiff
+
+instance Real CPtrdiff where
+  toRational (MkCPtrdiff a) = toRational a
+
+instance Enum CPtrdiff where
+  succ x = x + 1
+  pred x = x - 1
+  toEnum n = toCPtrdiff (toInteger n)
+  fromEnum (MkCPtrdiff a) = fromInteger a
+  enumFrom x = enumFromTo x maxBound
+  enumFromTo (MkCPtrdiff a) (MkCPtrdiff b) = map MkCPtrdiff (enumFromTo a b)
+  enumFromThen x y = enumFromThenTo x y (if y >= x then maxBound else minBound)
+  enumFromThenTo (MkCPtrdiff a) (MkCPtrdiff b) (MkCPtrdiff d) = map MkCPtrdiff (enumFromThenTo a b d)
+
+instance Integral CPtrdiff where
+  quot (MkCPtrdiff a) (MkCPtrdiff b) = toCPtrdiff (quot a b)
+  rem (MkCPtrdiff a) (MkCPtrdiff b) = toCPtrdiff (rem a b)
+  div (MkCPtrdiff a) (MkCPtrdiff b) = toCPtrdiff (div a b)
+  mod (MkCPtrdiff a) (MkCPtrdiff b) = toCPtrdiff (mod a b)
+  quotRem x y = (quot x y, rem x y)
+  divMod x y = (div x y, mod x y)
+  toInteger (MkCPtrdiff a) = a
+
+instance Bounded CPtrdiff where
+  minBound = MkCPtrdiff (negate 9223372036854775808)
+  maxBound = MkCPtrdiff 9223372036854775807
+
+newtype CWchar = MkCWchar Integer
+
+toCWchar :: Integer -> CWchar
+toCWchar x = MkCWchar (mod (x + 2147483648) 4294967296 - 2147483648)
+
+instance Eq CWchar where
+  MkCWchar a == MkCWchar b = a == b
+
+instance Ord CWchar where
+  compare (MkCWchar a) (MkCWchar b) = compare a b
+  MkCWchar a <= MkCWchar b = a <= b
+  MkCWchar a < MkCWchar b = a < b
+
+instance Show CWchar where
+  showsPrec p (MkCWchar a) = showsPrec p a
+
+instance Read CWchar where
+  readsPrec p s = [(toCWchar x, t) | (x, t) <- readsPrec p s]
+
+instance Num CWchar where
+  MkCWchar a + MkCWchar b = toCWchar (a + b)
+  MkCWchar a - MkCWchar b = toCWchar (a - b)
+  MkCWchar a * MkCWchar b = toCWchar (a * b)
+  negate (MkCWchar a) = toCWchar (negate a)
+  abs (MkCWchar a) = toCWchar (abs a)
+  signum (MkCWchar a) = MkCWchar (signum a)
+  fromInteger = toCWchar
+
+instance Real CWchar where
+  toRational (MkCWchar a) = toRational a
+
+instance Enum CWchar where
+  succ x = x + 1
+  pred x = x - 1
+  toEnum n = toCWchar (toInteger n)
+  fromEnum (MkCWchar a) = fromInteger a
+  enumFrom x = enumFromTo x maxBound
+  enumFromTo (MkCWchar a) (MkCWchar b) = map MkCWchar (enumFromTo a b)
+  enumFromThen x y = enumFromThenTo x y (if y >= x then maxBound else minBound)
+  enumFromThenTo (MkCWchar a) (MkCWchar b) (MkCWchar d) = map MkCWchar (enumFromThenTo a b d)
+
+instance Integral CWchar where
+  quot (MkCWchar a) (MkCWchar b) = toCWchar (quot a b)
+  rem (MkCWchar a) (MkCWchar b) = toCWchar (rem a b)
+  div (MkCWchar a) (MkCWchar b) = toCWchar (div a b)
+  mod (MkCWchar a) (MkCWchar b) = toCWchar (mod a b)
+  quotRem x y = (quot x y, rem x y)
+  divMod x y = (div x y, mod x y)
+  toInteger (MkCWchar a) = a
+
+instance Bounded CWchar where
+  minBound = MkCWchar (negate 2147483648)
+  maxBound = MkCWchar 2147483647
+
+newtype CSigAtomic = MkCSigAtomic Integer
+
+toCSigAtomic :: Integer -> CSigAtomic
+toCSigAtomic x = MkCSigAtomic (mod (x + 2147483648) 4294967296 - 2147483648)
+
+instance Eq CSigAtomic where
+  MkCSigAtomic a == MkCSigAtomic b = a == b
+
+instance Ord CSigAtomic where
+  compare (MkCSigAtomic a) (MkCSigAtomic b) = compare a b
+  MkCSigAtomic a <= MkCSigAtomic b = a <= b
+  MkCSigAtomic a < MkCSigAtomic b = a < b
+
+instance Show CSigAtomic where
+  showsPrec p (MkCSigAtomic a) = showsPrec p a
+
+instance Read CSigAtomic where
+  readsPrec p s = [(toCSigAtomic x, t) | (x, t) <- readsPrec p s]
+
+instance Num CSigAtomic where
+  MkCSigAtomic a + MkCSigAtomic b = toCSigAtomic (a + b)
+  MkCSigAtomic a - MkCSigAtomic b = toCSigAtomic (a - b)
+  MkCSigAtomic a * MkCSigAtomic b = toCSigAtomic (a * b)
+  negate (MkCSigAtomic a) = toCSigAtomic (negate a)
+  abs (MkCSigAtomic a) = toCSigAtomic (abs a)
+  signum (MkCSigAtomic a) = MkCSigAtomic (signum a)
+  fromInteger = toCSigAtomic
+
+instance Real CSigAtomic where
+  toRational (MkCSigAtomic a) = toRational a
+
+instance Enum CSigAtomic where
+  succ x = x + 1
+  pred x = x - 1
+  toEnum n = toCSigAtomic (toInteger n)
+  fromEnum (MkCSigAtomic a) = fromInteger a
+  enumFrom x = enumFromTo x maxBound
+  enumFromTo (MkCSigAtomic a) (MkCSigAtomic b) = map MkCSigAtomic (enumFromTo a b)
+  enumFromThen x y = enumFromThenTo x y (if y >= x then maxBound else minBound)
+  enumFromThenTo (MkCSigAtomic a) (MkCSigAtomic b) (MkCSigAtomic d) = map MkCSigAtomic (enumFromThenTo a b d)
+
+instance Integral CSigAtomic where
+  quot (MkCSigAtomic a) (MkCSigAtomic b) = toCSigAtomic (quot a b)
+  rem (MkCSigAtomic a) (MkCSigAtomic b) = toCSigAtomic (rem a b)
+  div (MkCSigAtomic a) (MkCSigAtomic b) = toCSigAtomic (div a b)
+  mod (MkCSigAtomic a) (MkCSigAtomic b) = toCSigAtomic (mod a b)
+  quotRem x y = (quot x y, rem x y)
+  divMod x y = (div x y, mod x y)
+  toInteger (MkCSigAtomic a) = a
+
+instance Bounded CSigAtomic where
+  minBound = MkCSigAtomic (negate 2147483648)
+  maxBound = MkCSigAtomic 2147483647
+
+newtype CClock = MkCClock Integer
+
+toCClock :: Integer -> CClock
+toCClock x = MkCClock (mod (x + 9223372036854775808) 18446744073709551616 - 9223372036854775808)
+
+instance Eq CClock where
+  MkCClock a == MkCClock b = a == b
+
+instance Ord CClock where
+  compare (MkCClock a) (MkCClock b) = compare a b
+  MkCClock a <= MkCClock b = a <= b
+  MkCClock a < MkCClock b = a < b
+
+instance Show CClock where
+  showsPrec p (MkCClock a) = showsPrec p a
+
+instance Read CClock where
+  readsPrec p s = [(toCClock x, t) | (x, t) <- readsPrec p s]
+
+instance Num CClock where
+  MkCClock a + MkCClock b = toCClock (a + b)
+  MkCClock a - MkCClock b = toCClock (a - b)
+  MkCClock a * MkCClock b = toCClock (a * b)
+  negate (MkCClock a) = toCClock (negate a)
+  abs (MkCClock a) = toCClock (abs a)
+  signum (MkCClock a) = MkCClock (signum a)
+  fromInteger = toCClock
+
+instance Real CClock where
+  toRational (MkCClock a) = toRational a
+
+instance Enum CClock where
+  succ x = x + 1
+  pred x = x - 1
+  toEnum n = toCClock (toInteger n)
+  fromEnum (MkCClock a) = fromInteger a
+  enumFrom x = enumFromTo x maxBound
+  enumFromTo (MkCClock a) (MkCClock b) = map MkCClock (enumFromTo a b)
+  enumFromThen x y = enumFromThenTo x y (if y >= x then maxBound else minBound)
+  enumFromThenTo (MkCClock a) (MkCClock b) (MkCClock d) = map MkCClock (enumFromThenTo a b d)
+
+instance Integral CClock where
+  quot (MkCClock a) (MkCClock b) = toCClock (quot a b)
+  rem (MkCClock a) (MkCClock b) = toCClock (rem a b)
+  div (MkCClock a) (MkCClock b) = toCClock (div a b)
+  mod (MkCClock a) (MkCClock b) = toCClock (mod a b)
+  quotRem x y = (quot x y, rem x y)
+  divMod x y = (div x y, mod x y)
+  toInteger (MkCClock a) = a
+
+instance Bounded CClock where
+  minBound = MkCClock (negate 9223372036854775808)
+  maxBound = MkCClock 9223372036854775807
+
+newtype CTime = MkCTime Integer
+
+toCTime :: Integer -> CTime
+toCTime x = MkCTime (mod (x + 9223372036854775808) 18446744073709551616 - 9223372036854775808)
+
+instance Eq CTime where
+  MkCTime a == MkCTime b = a == b
+
+instance Ord CTime where
+  compare (MkCTime a) (MkCTime b) = compare a b
+  MkCTime a <= MkCTime b = a <= b
+  MkCTime a < MkCTime b = a < b
+
+instance Show CTime where
+  showsPrec p (MkCTime a) = showsPrec p a
+
+instance Read CTime where
+  readsPrec p s = [(toCTime x, t) | (x, t) <- readsPrec p s]
+
+instance Num CTime where
+  MkCTime a + MkCTime b = toCTime (a + b)
+  MkCTime a - MkCTime b = toCTime (a - b)
+  MkCTime a * MkCTime b = toCTime (a * b)
+  negate (MkCTime a) = toCTime (negate a)
+  abs (MkCTime a) = toCTime (abs a)
+  signum (MkCTime a) = MkCTime (signum a)
+  fromInteger = toCTime
+
+instance Real CTime where
+  toRational (MkCTime a) = toRational a
+
+instance Enum CTime where
+  succ x = x + 1
+  pred x = x - 1
+  toEnum n = toCTime (toInteger n)
+  fromEnum (MkCTime a) = fromInteger a
+  enumFrom x = enumFromTo x maxBound
+  enumFromTo (MkCTime a) (MkCTime b) = map MkCTime (enumFromTo a b)
+  enumFromThen x y = enumFromThenTo x y (if y >= x then maxBound else minBound)
+  enumFromThenTo (MkCTime a) (MkCTime b) (MkCTime d) = map MkCTime (enumFromThenTo a b d)
+
+instance Integral CTime where
+  quot (MkCTime a) (MkCTime b) = toCTime (quot a b)
+  rem (MkCTime a) (MkCTime b) = toCTime (rem a b)
+  div (MkCTime a) (MkCTime b) = toCTime (div a b)
+  mod (MkCTime a) (MkCTime b) = toCTime (mod a b)
+  quotRem x y = (quot x y, rem x y)
+  divMod x y = (div x y, mod x y)
+  toInteger (MkCTime a) = a
+
+instance Bounded CTime where
+  minBound = MkCTime (negate 9223372036854775808)
+  maxBound = MkCTime 9223372036854775807
+
+newtype CIntPtr = MkCIntPtr Integer
+
+toCIntPtr :: Integer -> CIntPtr
+toCIntPtr x = MkCIntPtr (mod (x + 9223372036854775808) 18446744073709551616 - 9223372036854775808)
+
+instance Eq CIntPtr where
+  MkCIntPtr a == MkCIntPtr b = a == b
+
+instance Ord CIntPtr where
+  compare (MkCIntPtr a) (MkCIntPtr b) = compare a b
+  MkCIntPtr a <= MkCIntPtr b = a <= b
+  MkCIntPtr a < MkCIntPtr b = a < b
+
+instance Show CIntPtr where
+  showsPrec p (MkCIntPtr a) = showsPrec p a
+
+instance Read CIntPtr where
+  readsPrec p s = [(toCIntPtr x, t) | (x, t) <- readsPrec p s]
+
+instance Num CIntPtr where
+  MkCIntPtr a + MkCIntPtr b = toCIntPtr (a + b)
+  MkCIntPtr a - MkCIntPtr b = toCIntPtr (a - b)
+  MkCIntPtr a * MkCIntPtr b = toCIntPtr (a * b)
+  negate (MkCIntPtr a) = toCIntPtr (negate a)
+  abs (MkCIntPtr a) = toCIntPtr (abs a)
+  signum (MkCIntPtr a) = MkCIntPtr (signum a)
+  fromInteger = toCIntPtr
+
+instance Real CIntPtr where
+  toRational (MkCIntPtr a) = toRational a
+
+instance Enum CIntPtr where
+  succ x = x + 1
+  pred x = x - 1
+  toEnum n = toCIntPtr (toInteger n)
+  fromEnum (MkCIntPtr a) = fromInteger a
+  enumFrom x = enumFromTo x maxBound
+  enumFromTo (MkCIntPtr a) (MkCIntPtr b) = map MkCIntPtr (enumFromTo a b)
+  enumFromThen x y = enumFromThenTo x y (if y >= x then maxBound else minBound)
+  enumFromThenTo (MkCIntPtr a) (MkCIntPtr b) (MkCIntPtr d) = map MkCIntPtr (enumFromThenTo a b d)
+
+instance Integral CIntPtr where
+  quot (MkCIntPtr a) (MkCIntPtr b) = toCIntPtr (quot a b)
+  rem (MkCIntPtr a) (MkCIntPtr b) = toCIntPtr (rem a b)
+  div (MkCIntPtr a) (MkCIntPtr b) = toCIntPtr (div a b)
+  mod (MkCIntPtr a) (MkCIntPtr b) = toCIntPtr (mod a b)
+  quotRem x y = (quot x y, rem x y)
+  divMod x y = (div x y, mod x y)
+  toInteger (MkCIntPtr a) = a
+
+instance Bounded CIntPtr where
+  minBound = MkCIntPtr (negate 9223372036854775808)
+  maxBound = MkCIntPtr 9223372036854775807
+
+newtype CUIntPtr = MkCUIntPtr Integer
+
+toCUIntPtr :: Integer -> CUIntPtr
+toCUIntPtr x = MkCUIntPtr (mod x 18446744073709551616)
+
+instance Eq CUIntPtr where
+  MkCUIntPtr a == MkCUIntPtr b = a == b
+
+instance Ord CUIntPtr where
+  compare (MkCUIntPtr a) (MkCUIntPtr b) = compare a b
+  MkCUIntPtr a <= MkCUIntPtr b = a <= b
+  MkCUIntPtr a < MkCUIntPtr b = a < b
+
+instance Show CUIntPtr where
+  showsPrec p (MkCUIntPtr a) = showsPrec p a
+
+instance Read CUIntPtr where
+  readsPrec p s = [(toCUIntPtr x, t) | (x, t) <- readsPrec p s]
+
+instance Num CUIntPtr where
+  MkCUIntPtr a + MkCUIntPtr b = toCUIntPtr (a + b)
+  MkCUIntPtr a - MkCUIntPtr b = toCUIntPtr (a - b)
+  MkCUIntPtr a * MkCUIntPtr b = toCUIntPtr (a * b)
+  negate (MkCUIntPtr a) = toCUIntPtr (negate a)
+  abs (MkCUIntPtr a) = toCUIntPtr (abs a)
+  signum (MkCUIntPtr a) = MkCUIntPtr (signum a)
+  fromInteger = toCUIntPtr
+
+instance Real CUIntPtr where
+  toRational (MkCUIntPtr a) = toRational a
+
+instance Enum CUIntPtr where
+  succ x = x + 1
+  pred x = x - 1
+  toEnum n = toCUIntPtr (toInteger n)
+  fromEnum (MkCUIntPtr a) = fromInteger a
+  enumFrom x = enumFromTo x maxBound
+  enumFromTo (MkCUIntPtr a) (MkCUIntPtr b) = map MkCUIntPtr (enumFromTo a b)
+  enumFromThen x y = enumFromThenTo x y (if y >= x then maxBound else minBound)
+  enumFromThenTo (MkCUIntPtr a) (MkCUIntPtr b) (MkCUIntPtr d) = map MkCUIntPtr (enumFromThenTo a b d)
+
+instance Integral CUIntPtr where
+  quot (MkCUIntPtr a) (MkCUIntPtr b) = toCUIntPtr (quot a b)
+  rem (MkCUIntPtr a) (MkCUIntPtr b) = toCUIntPtr (rem a b)
+  div (MkCUIntPtr a) (MkCUIntPtr b) = toCUIntPtr (div a b)
+  mod (MkCUIntPtr a) (MkCUIntPtr b) = toCUIntPtr (mod a b)
+  quotRem x y = (quot x y, rem x y)
+  divMod x y = (div x y, mod x y)
+  toInteger (MkCUIntPtr a) = a
+
+instance Bounded CUIntPtr where
+  minBound = MkCUIntPtr (0)
+  maxBound = MkCUIntPtr 18446744073709551615
+
+newtype CIntMax = MkCIntMax Integer
+
+toCIntMax :: Integer -> CIntMax
+toCIntMax x = MkCIntMax (mod (x + 9223372036854775808) 18446744073709551616 - 9223372036854775808)
+
+instance Eq CIntMax where
+  MkCIntMax a == MkCIntMax b = a == b
+
+instance Ord CIntMax where
+  compare (MkCIntMax a) (MkCIntMax b) = compare a b
+  MkCIntMax a <= MkCIntMax b = a <= b
+  MkCIntMax a < MkCIntMax b = a < b
+
+instance Show CIntMax where
+  showsPrec p (MkCIntMax a) = showsPrec p a
+
+instance Read CIntMax where
+  readsPrec p s = [(toCIntMax x, t) | (x, t) <- readsPrec p s]
+
+instance Num CIntMax where
+  MkCIntMax a + MkCIntMax b = toCIntMax (a + b)
+  MkCIntMax a - MkCIntMax b = toCIntMax (a - b)
+  MkCIntMax a * MkCIntMax b = toCIntMax (a * b)
+  negate (MkCIntMax a) = toCIntMax (negate a)
+  abs (MkCIntMax a) = toCIntMax (abs a)
+  signum (MkCIntMax a) = MkCIntMax (signum a)
+  fromInteger = toCIntMax
+
+instance Real CIntMax where
+  toRational (MkCIntMax a) = toRational a
+
+instance Enum CIntMax where
+  succ x = x + 1
+  pred x = x - 1
+  toEnum n = toCIntMax (toInteger n)
+  fromEnum (MkCIntMax a) = fromInteger a
+  enumFrom x = enumFromTo x maxBound
+  enumFromTo (MkCIntMax a) (MkCIntMax b) = map MkCIntMax (enumFromTo a b)
+  enumFromThen x y = enumFromThenTo x y (if y >= x then maxBound else minBound)
+  enumFromThenTo (MkCIntMax a) (MkCIntMax b) (MkCIntMax d) = map MkCIntMax (enumFromThenTo a b d)
+
+instance Integral CIntMax where
+  quot (MkCIntMax a) (MkCIntMax b) = toCIntMax (quot a b)
+  rem (MkCIntMax a) (MkCIntMax b) = toCIntMax (rem a b)
+  div (MkCIntMax a) (MkCIntMax b) = toCIntMax (div a b)
+  mod (MkCIntMax a) (MkCIntMax b) = toCIntMax (mod a b)
+  quotRem x y = (quot x y, rem x y)
+  divMod x y = (div x y, mod x y)
+  toInteger (MkCIntMax a) = a
+
+instance Bounded CIntMax where
+  minBound = MkCIntMax (negate 9223372036854775808)
+  maxBound = MkCIntMax 9223372036854775807
+
+newtype CUIntMax = MkCUIntMax Integer
+
+toCUIntMax :: Integer -> CUIntMax
+toCUIntMax x = MkCUIntMax (mod x 18446744073709551616)
+
+instance Eq CUIntMax where
+  MkCUIntMax a == MkCUIntMax b = a == b
+
+instance Ord CUIntMax where
+  compare (MkCUIntMax a) (MkCUIntMax b) = compare a b
+  MkCUIntMax a <= MkCUIntMax b = a <= b
+  MkCUIntMax a < MkCUIntMax b = a < b
+
+instance Show CUIntMax where
+  showsPrec p (MkCUIntMax a) = showsPrec p a
+
+instance Read CUIntMax where
+  readsPrec p s = [(toCUIntMax x, t) | (x, t) <- readsPrec p s]
+
+instance Num CUIntMax where
+  MkCUIntMax a + MkCUIntMax b = toCUIntMax (a + b)
+  MkCUIntMax a - MkCUIntMax b = toCUIntMax (a - b)
+  MkCUIntMax a * MkCUIntMax b = toCUIntMax (a * b)
+  negate (MkCUIntMax a) = toCUIntMax (negate a)
+  abs (MkCUIntMax a) = toCUIntMax (abs a)
+  signum (MkCUIntMax a) = MkCUIntMax (signum a)
+  fromInteger = toCUIntMax
+
+instance Real CUIntMax where
+  toRational (MkCUIntMax a) = toRational a
+
+instance Enum CUIntMax where
+  succ x = x + 1
+  pred x = x - 1
+  toEnum n = toCUIntMax (toInteger n)
+  fromEnum (MkCUIntMax a) = fromInteger a
+  enumFrom x = enumFromTo x maxBound
+  enumFromTo (MkCUIntMax a) (MkCUIntMax b) = map MkCUIntMax (enumFromTo a b)
+  enumFromThen x y = enumFromThenTo x y (if y >= x then maxBound else minBound)
+  enumFromThenTo (MkCUIntMax a) (MkCUIntMax b) (MkCUIntMax d) = map MkCUIntMax (enumFromThenTo a b d)
+
+instance Integral CUIntMax where
+  quot (MkCUIntMax a) (MkCUIntMax b) = toCUIntMax (quot a b)
+  rem (MkCUIntMax a) (MkCUIntMax b) = toCUIntMax (rem a b)
+  div (MkCUIntMax a) (MkCUIntMax b) = toCUIntMax (div a b)
+  mod (MkCUIntMax a) (MkCUIntMax b) = toCUIntMax (mod a b)
+  quotRem x y = (quot x y, rem x y)
+  divMod x y = (div x y, mod x y)
+  toInteger (MkCUIntMax a) = a
+
+instance Bounded CUIntMax where
+  minBound = MkCUIntMax (0)
+  maxBound = MkCUIntMax 18446744073709551615
+
+-- What C keeps to itself: there is nothing to do with one but point at it.
+data CFile = CFile
+
+data CFpos = CFpos
+
+data CJmpBuf = CJmpBuf
+
+-- Bits, for the integers.
+
+instance Bits CChar where
+  MkCChar a .&. MkCChar b = toCChar (a .&. b)
+  MkCChar a .|. MkCChar b = toCChar (a .|. b)
+  xor (MkCChar a) (MkCChar b) = toCChar (xor a b)
+  complement (MkCChar a) = toCChar (complement a)
+  shiftL (MkCChar a) n = toCChar (shiftL a n)
+  shiftR (MkCChar a) n = toCChar (shiftR a n)
+  bit n = toCChar (bit n)
+  testBit (MkCChar a) n = testBit a n
+  rotate (MkCChar a) n = let k = mod n 8; u = mod a 256 in toCChar (u * 2 ^ k + div u (2 ^ (8 - k)))
+  bitSize _ = 8
+  isSigned _ = True
+  popCount (MkCChar a) = popCount (if a < 0 then a + 256 else a)
+
+instance Bits CSChar where
+  MkCSChar a .&. MkCSChar b = toCSChar (a .&. b)
+  MkCSChar a .|. MkCSChar b = toCSChar (a .|. b)
+  xor (MkCSChar a) (MkCSChar b) = toCSChar (xor a b)
+  complement (MkCSChar a) = toCSChar (complement a)
+  shiftL (MkCSChar a) n = toCSChar (shiftL a n)
+  shiftR (MkCSChar a) n = toCSChar (shiftR a n)
+  bit n = toCSChar (bit n)
+  testBit (MkCSChar a) n = testBit a n
+  rotate (MkCSChar a) n = let k = mod n 8; u = mod a 256 in toCSChar (u * 2 ^ k + div u (2 ^ (8 - k)))
+  bitSize _ = 8
+  isSigned _ = True
+  popCount (MkCSChar a) = popCount (if a < 0 then a + 256 else a)
+
+instance Bits CUChar where
+  MkCUChar a .&. MkCUChar b = toCUChar (a .&. b)
+  MkCUChar a .|. MkCUChar b = toCUChar (a .|. b)
+  xor (MkCUChar a) (MkCUChar b) = toCUChar (xor a b)
+  complement (MkCUChar a) = toCUChar (complement a)
+  shiftL (MkCUChar a) n = toCUChar (shiftL a n)
+  shiftR (MkCUChar a) n = toCUChar (shiftR a n)
+  bit n = toCUChar (bit n)
+  testBit (MkCUChar a) n = testBit a n
+  rotate (MkCUChar a) n = let k = mod n 8; u = mod a 256 in toCUChar (u * 2 ^ k + div u (2 ^ (8 - k)))
+  bitSize _ = 8
+  isSigned _ = False
+  popCount (MkCUChar a) = popCount a
+
+instance Bits CShort where
+  MkCShort a .&. MkCShort b = toCShort (a .&. b)
+  MkCShort a .|. MkCShort b = toCShort (a .|. b)
+  xor (MkCShort a) (MkCShort b) = toCShort (xor a b)
+  complement (MkCShort a) = toCShort (complement a)
+  shiftL (MkCShort a) n = toCShort (shiftL a n)
+  shiftR (MkCShort a) n = toCShort (shiftR a n)
+  bit n = toCShort (bit n)
+  testBit (MkCShort a) n = testBit a n
+  rotate (MkCShort a) n = let k = mod n 16; u = mod a 65536 in toCShort (u * 2 ^ k + div u (2 ^ (16 - k)))
+  bitSize _ = 16
+  isSigned _ = True
+  popCount (MkCShort a) = popCount (if a < 0 then a + 65536 else a)
+
+instance Bits CUShort where
+  MkCUShort a .&. MkCUShort b = toCUShort (a .&. b)
+  MkCUShort a .|. MkCUShort b = toCUShort (a .|. b)
+  xor (MkCUShort a) (MkCUShort b) = toCUShort (xor a b)
+  complement (MkCUShort a) = toCUShort (complement a)
+  shiftL (MkCUShort a) n = toCUShort (shiftL a n)
+  shiftR (MkCUShort a) n = toCUShort (shiftR a n)
+  bit n = toCUShort (bit n)
+  testBit (MkCUShort a) n = testBit a n
+  rotate (MkCUShort a) n = let k = mod n 16; u = mod a 65536 in toCUShort (u * 2 ^ k + div u (2 ^ (16 - k)))
+  bitSize _ = 16
+  isSigned _ = False
+  popCount (MkCUShort a) = popCount a
+
+instance Bits CInt where
+  MkCInt a .&. MkCInt b = toCInt (a .&. b)
+  MkCInt a .|. MkCInt b = toCInt (a .|. b)
+  xor (MkCInt a) (MkCInt b) = toCInt (xor a b)
+  complement (MkCInt a) = toCInt (complement a)
+  shiftL (MkCInt a) n = toCInt (shiftL a n)
+  shiftR (MkCInt a) n = toCInt (shiftR a n)
+  bit n = toCInt (bit n)
+  testBit (MkCInt a) n = testBit a n
+  rotate (MkCInt a) n = let k = mod n 32; u = mod a 4294967296 in toCInt (u * 2 ^ k + div u (2 ^ (32 - k)))
+  bitSize _ = 32
+  isSigned _ = True
+  popCount (MkCInt a) = popCount (if a < 0 then a + 4294967296 else a)
+
+instance Bits CUInt where
+  MkCUInt a .&. MkCUInt b = toCUInt (a .&. b)
+  MkCUInt a .|. MkCUInt b = toCUInt (a .|. b)
+  xor (MkCUInt a) (MkCUInt b) = toCUInt (xor a b)
+  complement (MkCUInt a) = toCUInt (complement a)
+  shiftL (MkCUInt a) n = toCUInt (shiftL a n)
+  shiftR (MkCUInt a) n = toCUInt (shiftR a n)
+  bit n = toCUInt (bit n)
+  testBit (MkCUInt a) n = testBit a n
+  rotate (MkCUInt a) n = let k = mod n 32; u = mod a 4294967296 in toCUInt (u * 2 ^ k + div u (2 ^ (32 - k)))
+  bitSize _ = 32
+  isSigned _ = False
+  popCount (MkCUInt a) = popCount a
+
+instance Bits CLong where
+  MkCLong a .&. MkCLong b = toCLong (a .&. b)
+  MkCLong a .|. MkCLong b = toCLong (a .|. b)
+  xor (MkCLong a) (MkCLong b) = toCLong (xor a b)
+  complement (MkCLong a) = toCLong (complement a)
+  shiftL (MkCLong a) n = toCLong (shiftL a n)
+  shiftR (MkCLong a) n = toCLong (shiftR a n)
+  bit n = toCLong (bit n)
+  testBit (MkCLong a) n = testBit a n
+  rotate (MkCLong a) n = let k = mod n 64; u = mod a 18446744073709551616 in toCLong (u * 2 ^ k + div u (2 ^ (64 - k)))
+  bitSize _ = 64
+  isSigned _ = True
+  popCount (MkCLong a) = popCount (if a < 0 then a + 18446744073709551616 else a)
+
+instance Bits CULong where
+  MkCULong a .&. MkCULong b = toCULong (a .&. b)
+  MkCULong a .|. MkCULong b = toCULong (a .|. b)
+  xor (MkCULong a) (MkCULong b) = toCULong (xor a b)
+  complement (MkCULong a) = toCULong (complement a)
+  shiftL (MkCULong a) n = toCULong (shiftL a n)
+  shiftR (MkCULong a) n = toCULong (shiftR a n)
+  bit n = toCULong (bit n)
+  testBit (MkCULong a) n = testBit a n
+  rotate (MkCULong a) n = let k = mod n 64; u = mod a 18446744073709551616 in toCULong (u * 2 ^ k + div u (2 ^ (64 - k)))
+  bitSize _ = 64
+  isSigned _ = False
+  popCount (MkCULong a) = popCount a
+
+instance Bits CLLong where
+  MkCLLong a .&. MkCLLong b = toCLLong (a .&. b)
+  MkCLLong a .|. MkCLLong b = toCLLong (a .|. b)
+  xor (MkCLLong a) (MkCLLong b) = toCLLong (xor a b)
+  complement (MkCLLong a) = toCLLong (complement a)
+  shiftL (MkCLLong a) n = toCLLong (shiftL a n)
+  shiftR (MkCLLong a) n = toCLLong (shiftR a n)
+  bit n = toCLLong (bit n)
+  testBit (MkCLLong a) n = testBit a n
+  rotate (MkCLLong a) n = let k = mod n 64; u = mod a 18446744073709551616 in toCLLong (u * 2 ^ k + div u (2 ^ (64 - k)))
+  bitSize _ = 64
+  isSigned _ = True
+  popCount (MkCLLong a) = popCount (if a < 0 then a + 18446744073709551616 else a)
+
+instance Bits CULLong where
+  MkCULLong a .&. MkCULLong b = toCULLong (a .&. b)
+  MkCULLong a .|. MkCULLong b = toCULLong (a .|. b)
+  xor (MkCULLong a) (MkCULLong b) = toCULLong (xor a b)
+  complement (MkCULLong a) = toCULLong (complement a)
+  shiftL (MkCULLong a) n = toCULLong (shiftL a n)
+  shiftR (MkCULLong a) n = toCULLong (shiftR a n)
+  bit n = toCULLong (bit n)
+  testBit (MkCULLong a) n = testBit a n
+  rotate (MkCULLong a) n = let k = mod n 64; u = mod a 18446744073709551616 in toCULLong (u * 2 ^ k + div u (2 ^ (64 - k)))
+  bitSize _ = 64
+  isSigned _ = False
+  popCount (MkCULLong a) = popCount a
+
+instance Bits CSize where
+  MkCSize a .&. MkCSize b = toCSize (a .&. b)
+  MkCSize a .|. MkCSize b = toCSize (a .|. b)
+  xor (MkCSize a) (MkCSize b) = toCSize (xor a b)
+  complement (MkCSize a) = toCSize (complement a)
+  shiftL (MkCSize a) n = toCSize (shiftL a n)
+  shiftR (MkCSize a) n = toCSize (shiftR a n)
+  bit n = toCSize (bit n)
+  testBit (MkCSize a) n = testBit a n
+  rotate (MkCSize a) n = let k = mod n 64; u = mod a 18446744073709551616 in toCSize (u * 2 ^ k + div u (2 ^ (64 - k)))
+  bitSize _ = 64
+  isSigned _ = False
+  popCount (MkCSize a) = popCount a
+
+instance Bits CPtrdiff where
+  MkCPtrdiff a .&. MkCPtrdiff b = toCPtrdiff (a .&. b)
+  MkCPtrdiff a .|. MkCPtrdiff b = toCPtrdiff (a .|. b)
+  xor (MkCPtrdiff a) (MkCPtrdiff b) = toCPtrdiff (xor a b)
+  complement (MkCPtrdiff a) = toCPtrdiff (complement a)
+  shiftL (MkCPtrdiff a) n = toCPtrdiff (shiftL a n)
+  shiftR (MkCPtrdiff a) n = toCPtrdiff (shiftR a n)
+  bit n = toCPtrdiff (bit n)
+  testBit (MkCPtrdiff a) n = testBit a n
+  rotate (MkCPtrdiff a) n = let k = mod n 64; u = mod a 18446744073709551616 in toCPtrdiff (u * 2 ^ k + div u (2 ^ (64 - k)))
+  bitSize _ = 64
+  isSigned _ = True
+  popCount (MkCPtrdiff a) = popCount (if a < 0 then a + 18446744073709551616 else a)
+
+instance Bits CWchar where
+  MkCWchar a .&. MkCWchar b = toCWchar (a .&. b)
+  MkCWchar a .|. MkCWchar b = toCWchar (a .|. b)
+  xor (MkCWchar a) (MkCWchar b) = toCWchar (xor a b)
+  complement (MkCWchar a) = toCWchar (complement a)
+  shiftL (MkCWchar a) n = toCWchar (shiftL a n)
+  shiftR (MkCWchar a) n = toCWchar (shiftR a n)
+  bit n = toCWchar (bit n)
+  testBit (MkCWchar a) n = testBit a n
+  rotate (MkCWchar a) n = let k = mod n 32; u = mod a 4294967296 in toCWchar (u * 2 ^ k + div u (2 ^ (32 - k)))
+  bitSize _ = 32
+  isSigned _ = True
+  popCount (MkCWchar a) = popCount (if a < 0 then a + 4294967296 else a)
+
+instance Bits CSigAtomic where
+  MkCSigAtomic a .&. MkCSigAtomic b = toCSigAtomic (a .&. b)
+  MkCSigAtomic a .|. MkCSigAtomic b = toCSigAtomic (a .|. b)
+  xor (MkCSigAtomic a) (MkCSigAtomic b) = toCSigAtomic (xor a b)
+  complement (MkCSigAtomic a) = toCSigAtomic (complement a)
+  shiftL (MkCSigAtomic a) n = toCSigAtomic (shiftL a n)
+  shiftR (MkCSigAtomic a) n = toCSigAtomic (shiftR a n)
+  bit n = toCSigAtomic (bit n)
+  testBit (MkCSigAtomic a) n = testBit a n
+  rotate (MkCSigAtomic a) n = let k = mod n 32; u = mod a 4294967296 in toCSigAtomic (u * 2 ^ k + div u (2 ^ (32 - k)))
+  bitSize _ = 32
+  isSigned _ = True
+  popCount (MkCSigAtomic a) = popCount (if a < 0 then a + 4294967296 else a)
+
+instance Bits CIntPtr where
+  MkCIntPtr a .&. MkCIntPtr b = toCIntPtr (a .&. b)
+  MkCIntPtr a .|. MkCIntPtr b = toCIntPtr (a .|. b)
+  xor (MkCIntPtr a) (MkCIntPtr b) = toCIntPtr (xor a b)
+  complement (MkCIntPtr a) = toCIntPtr (complement a)
+  shiftL (MkCIntPtr a) n = toCIntPtr (shiftL a n)
+  shiftR (MkCIntPtr a) n = toCIntPtr (shiftR a n)
+  bit n = toCIntPtr (bit n)
+  testBit (MkCIntPtr a) n = testBit a n
+  rotate (MkCIntPtr a) n = let k = mod n 64; u = mod a 18446744073709551616 in toCIntPtr (u * 2 ^ k + div u (2 ^ (64 - k)))
+  bitSize _ = 64
+  isSigned _ = True
+  popCount (MkCIntPtr a) = popCount (if a < 0 then a + 18446744073709551616 else a)
+
+instance Bits CUIntPtr where
+  MkCUIntPtr a .&. MkCUIntPtr b = toCUIntPtr (a .&. b)
+  MkCUIntPtr a .|. MkCUIntPtr b = toCUIntPtr (a .|. b)
+  xor (MkCUIntPtr a) (MkCUIntPtr b) = toCUIntPtr (xor a b)
+  complement (MkCUIntPtr a) = toCUIntPtr (complement a)
+  shiftL (MkCUIntPtr a) n = toCUIntPtr (shiftL a n)
+  shiftR (MkCUIntPtr a) n = toCUIntPtr (shiftR a n)
+  bit n = toCUIntPtr (bit n)
+  testBit (MkCUIntPtr a) n = testBit a n
+  rotate (MkCUIntPtr a) n = let k = mod n 64; u = mod a 18446744073709551616 in toCUIntPtr (u * 2 ^ k + div u (2 ^ (64 - k)))
+  bitSize _ = 64
+  isSigned _ = False
+  popCount (MkCUIntPtr a) = popCount a
+
+instance Bits CIntMax where
+  MkCIntMax a .&. MkCIntMax b = toCIntMax (a .&. b)
+  MkCIntMax a .|. MkCIntMax b = toCIntMax (a .|. b)
+  xor (MkCIntMax a) (MkCIntMax b) = toCIntMax (xor a b)
+  complement (MkCIntMax a) = toCIntMax (complement a)
+  shiftL (MkCIntMax a) n = toCIntMax (shiftL a n)
+  shiftR (MkCIntMax a) n = toCIntMax (shiftR a n)
+  bit n = toCIntMax (bit n)
+  testBit (MkCIntMax a) n = testBit a n
+  rotate (MkCIntMax a) n = let k = mod n 64; u = mod a 18446744073709551616 in toCIntMax (u * 2 ^ k + div u (2 ^ (64 - k)))
+  bitSize _ = 64
+  isSigned _ = True
+  popCount (MkCIntMax a) = popCount (if a < 0 then a + 18446744073709551616 else a)
+
+instance Bits CUIntMax where
+  MkCUIntMax a .&. MkCUIntMax b = toCUIntMax (a .&. b)
+  MkCUIntMax a .|. MkCUIntMax b = toCUIntMax (a .|. b)
+  xor (MkCUIntMax a) (MkCUIntMax b) = toCUIntMax (xor a b)
+  complement (MkCUIntMax a) = toCUIntMax (complement a)
+  shiftL (MkCUIntMax a) n = toCUIntMax (shiftL a n)
+  shiftR (MkCUIntMax a) n = toCUIntMax (shiftR a n)
+  bit n = toCUIntMax (bit n)
+  testBit (MkCUIntMax a) n = testBit a n
+  rotate (MkCUIntMax a) n = let k = mod n 64; u = mod a 18446744073709551616 in toCUIntMax (u * 2 ^ k + div u (2 ^ (64 - k)))
+  bitSize _ = 64
+  isSigned _ = False
+  popCount (MkCUIntMax a) = popCount a

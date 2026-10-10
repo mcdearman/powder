@@ -1,0 +1,7 @@
+("address is not null",True,True)
+("an address is the same each time",True,False)
+("call through the address",7,7)
+("in IO",123456789012)
+("doubles",1.5,1024.0)
+("through a Ptr and back",3)
+("as a value",[2,1,0,1,2])

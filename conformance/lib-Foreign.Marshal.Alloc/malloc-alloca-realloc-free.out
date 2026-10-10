@@ -1,0 +1,9 @@
+("malloc",123456789012345,True)
+("reallocBytes keeps what was there",[0,10,20,30],255)
+("realloc keeps what was there",123456789012345)
+("alloca gives the action's result",42)
+("allocaBytes",[0,5,11])
+("nested alloca",(1,2,True))
+("an error passes through alloca","inside")
+("reallocBytes to nothing frees",True)
+freed

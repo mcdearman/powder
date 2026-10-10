@@ -26,7 +26,8 @@ import Powder.Core (ConInfo (..), Name, Prim (..), primName)
 import Powder.Files (Files, newFiles)
 import qualified Powder.Files as Files
 import Powder.SKI.Eval (Hooks (..), RuntimeError (..))
-import Powder.SKI.Foreign (callForeign)
+import Powder.Foreign (callForeign)
+import qualified Powder.Foreign as Foreign
 import System.Exit
 
 data Value
@@ -68,6 +69,7 @@ broken message = failure ("the AxCut program is malformed: " ++ message)
 -- 'RuntimeError', or 'ExitCode' if the program exits.
 run :: Hooks -> Program -> IO Int
 run h (Program defs entry) = do
+  Foreign.loadLibraries >>= mapM_ failure . take 1
   made <- forM defs (\(x, k, s) -> (,) x <$> newIORef (Delayed [] (Method Forced [k] s)))
   m <- Machine h (Map.fromList made) <$> newFiles <*> newIORef Map.empty <*> newIORef Nothing <*> newIORef 0
   execute m [] entry
@@ -132,7 +134,7 @@ execute m env statement = do
         ('F', VDouble x) -> pure (Right x)
         (_, VInt n) -> pure (Left (fromInteger n))
         _ -> failure "type error: a C function was given what is not a number"
-      out <- callForeign symbol shape (if result `elem` "DFV" then result else 'L') given >>= either failure pure
+      out <- callForeign symbol shape result given >>= either failure pure
       let value = case (result, out) of
             ('V', _) -> VData 0 []
             (_, Right x) -> VDouble x
@@ -274,6 +276,12 @@ primitive m p given = case (p, given) of
     int n
   (CellRead, [VInt n]) -> readIORef (cells m) >>= maybe (failure "there is no such cell") pure . Map.lookup n
   (CellWrite, [VInt n, x]) -> unit <$ modifyIORef' (cells m) (Map.insert n x)
+  (PeekInt, [VInt kind, VInt address]) -> Foreign.peekWhole kind address >>= int
+  (PeekDouble, [VInt kind, VInt address]) -> Foreign.peekReal kind address >>= double
+  (PokeInt, [VInt kind, VInt address, VInt value]) -> unit <$ Foreign.pokeWhole kind address value
+  (PokeDouble, [VInt kind, VInt address, VDouble value]) -> unit <$ Foreign.pokeReal kind address value
+  (ErrnoGet, []) -> Foreign.getErrno >>= int
+  (ErrnoSet, [VInt value]) -> unit <$ Foreign.setErrno value
   (ArgCount, []) -> int (toInteger (length (arguments (hooks m))))
   (ArgChar, [VInt i, VInt j]) -> do
     let text = if i < 0 then programName (hooks m) else concat (take 1 (drop (fromInteger i) (arguments (hooks m))))

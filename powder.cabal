@@ -12,7 +12,9 @@ data-files:
   lib/Data/*.hs
   lib/Powder/*.hs
   lib/System/*.hs
+  lib/Foreign/*.hs
   lib/Foreign/C/*.hs
+  lib/Foreign/Marshal/*.hs
   lib/System/IO/*.hs
 extra-doc-files: README.md
 
@@ -35,6 +37,7 @@ library
     Powder.Core
     Powder.Diagnostics
     Powder.Files
+    Powder.Foreign
     Powder.Frontend
     Powder.HIR
     Powder.HIR.Id
@@ -55,7 +58,6 @@ library
     Powder.SKI.Comb
     Powder.SKI.Compile
     Powder.SKI.Eval
-    Powder.SKI.Foreign
     Powder.Syntax.AST
     Powder.Syntax.AST.Decl
     Powder.Syntax.AST.Expr
@@ -71,6 +73,8 @@ library
   other-modules:   Paths_powder
   autogen-modules: Paths_powder
   build-tool-depends: alex:alex
+  c-sources:       cbits/powder_foreign.c
+  extra-libraries: ffi
   build-depends:
     , array
     , binary

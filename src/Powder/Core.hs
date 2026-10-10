@@ -12,6 +12,7 @@ module Powder.Core
     Program (..),
     freeVars,
     shake,
+    started,
     prettyDef,
   )
 where
@@ -84,6 +85,18 @@ data Prim
     CellNew
   | CellRead
   | CellWrite
+  | -- | Memory, as C sees it. What is at an address is said by a number:
+    -- 0 to 3 for the signed integers of 8, 16, 32 and 64 bits, 4 to 7
+    -- for the unsigned ones, 8 for a float and 9 for a double. Each takes
+    -- the number, then the address, and a poke then the value.
+    PeekInt
+  | PeekDouble
+  | PokeInt
+  | PokeDouble
+  | -- | What C's @errno@ was after the last call of a C function, and
+    -- setting what the next one starts with.
+    ErrnoGet
+  | ErrnoSet
   | -- | A character's code, and the character with a code. Both are the
     -- identity when a program runs: a character is its code.
     CharToInt
@@ -193,6 +206,26 @@ freeVars = \case
   Case scrut alts -> freeVars scrut <> mconcat [freeVars e Set.\\ Set.fromList xs | Alt _ xs e <- alts]
 
 -- | Drop the definitions the given root does not reach.
+-- | A program whose root is run by way of another definition, which is
+-- given it: the root is the other applied to what the root was. Nothing
+-- is changed if either is not there.
+started :: Name -> Name -> Program -> Program
+started root by (Program cons defs)
+  | all (`elem` map fst defs) [root, by] = Program cons ((root, App (Var by) (Var inner)) : [(if x == root then inner else x, renamed e) | (x, e) <- defs])
+  | otherwise = Program cons defs
+  where
+    inner = root ++ "#"
+    -- What a program defines at the top is never the name of anything
+    -- inside a definition, so nothing can be in the way.
+    renamed = \case
+      Var x -> Var (if x == root then inner else x)
+      App f a -> App (renamed f) (renamed a)
+      Lam x e -> Lam x (renamed e)
+      Let (NonRec x e) body -> Let (NonRec x (renamed e)) (renamed body)
+      Let (Rec bs) body -> Let (Rec [(x, renamed e) | (x, e) <- bs]) (renamed body)
+      Case e alts -> Case (renamed e) [Alt c xs (renamed body) | Alt c xs body <- alts]
+      e -> e
+
 shake :: Name -> Program -> Program
 shake root (Program cons defs) = Program cons [d | d@(x, _) <- defs, x `Set.member` live]
   where

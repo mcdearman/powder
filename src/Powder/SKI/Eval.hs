@@ -17,7 +17,8 @@ import Data.IORef
 import Data.Ratio ((%))
 import Data.Int (Int16, Int32, Int64, Int8)
 import Data.Word (Word16, Word32, Word64, Word8)
-import Powder.SKI.Foreign (callForeign)
+import Powder.Foreign (callForeign)
+import qualified Powder.Foreign as Foreign
 import qualified Data.Map as Map
 import Data.Maybe (isNothing)
 import Powder.Core (Name, Prim (..))
@@ -126,10 +127,11 @@ eval h defs root = do
     else maybe VOther VInt <$> asInt r
   where
     asInt r = readIORef r <&> \case NInt n -> Just n; _ -> Nothing
-    ioArity = [(Return, 1), (Bind, 2), (PutChar, 2), (GetChar, 0), (Exit, 1), (PathChar, 1), (Throw, 2), (Catch, 2), (FileOpen, 1), (HGetChar, 1), (FileClose, 1), (HIsEOF, 1), (ArgCount, 0), (ArgChar, 2), (FileSeek, 3), (FileTruncate, 2), (FileFlush, 1), (IsTerminal, 1), (EnvChar, 2), (CellNew, 1), (CellRead, 1), (CellWrite, 2)]
+    ioArity = [(Return, 1), (Bind, 2), (PutChar, 2), (GetChar, 0), (Exit, 1), (PathChar, 1), (Throw, 2), (Catch, 2), (FileOpen, 1), (HGetChar, 1), (FileClose, 1), (HIsEOF, 1), (ArgCount, 0), (ArgChar, 2), (FileSeek, 3), (FileTruncate, 2), (FileFlush, 1), (IsTerminal, 1), (EnvChar, 2), (CellNew, 1), (CellRead, 1), (CellWrite, 2), (PeekInt, 2), (PeekDouble, 2), (PokeInt, 3), (PokeDouble, 3), (ErrnoGet, 0), (ErrnoSet, 1)]
 
 start :: Hooks -> [(Name, Comb)] -> Name -> IO (Machine, Ref)
 start h defs root = do
+  Foreign.loadLibraries >>= mapM_ failure . take 1
   globals <- link defs
   entry <- maybe (failure ("no definition of " ++ root)) pure (Map.lookup root globals)
   m <- Machine h <$> newIORef 0 <*> newFiles <*> newIORef Map.empty <*> newIORef Nothing
@@ -181,7 +183,7 @@ whnf m root = do
               let (mine, rest) = splitAt (length shape) stk
               given' <- forM (zip shape mine) $ \(k, (_, a)) ->
                 if k `elem` "DF" then Right <$> double m a else Left . fromInteger <$> int m a
-              out <- callForeign symbol shape (if result `elem` "DFV" then result else 'L') given' >>= either failure pure
+              out <- callForeign symbol shape result given' >>= either failure pure
               let node = case (result, out) of
                     ('V', _) -> NComb I
                     (_, Right x) -> NDbl x
@@ -413,6 +415,22 @@ runIO m r = do
       n' <- int m n
       modifyIORef' (cells m) (Map.insert n' x)
       unit
+    (NPrim PeekInt, [kind, address]) -> do
+      kind' <- int m kind
+      int m address >>= Foreign.peekWhole kind' >>= number
+    (NPrim PeekDouble, [kind, address]) -> do
+      kind' <- int m kind
+      int m address >>= Foreign.peekReal kind' >>= newIORef . NDbl
+    (NPrim PokeInt, [kind, address, value]) -> do
+      kind' <- int m kind
+      address' <- int m address
+      int m value >>= Foreign.pokeWhole kind' address' >> unit
+    (NPrim PokeDouble, [kind, address, value]) -> do
+      kind' <- int m kind
+      address' <- int m address
+      double m value >>= Foreign.pokeReal kind' address' >> unit
+    (NPrim ErrnoGet, []) -> Foreign.getErrno >>= number
+    (NPrim ErrnoSet, [value]) -> int m value >>= Foreign.setErrno >> unit
     (NPrim ArgCount, []) -> newIORef (NInt (toInteger (length (arguments (hooks m)))))
     (NPrim ArgChar, [i, j]) -> do
       i' <- int m i

@@ -618,6 +618,12 @@ primitive p = do
     CellNew -> Fun a (App io integer)
     CellRead -> Fun integer (App io a)
     CellWrite -> Fun integer (Fun a (App io unit))
+    PeekInt -> Fun integer (Fun integer (App io integer))
+    PeekDouble -> Fun integer (Fun integer (App io double))
+    PokeInt -> Fun integer (Fun integer (Fun integer (App io unit)))
+    PokeDouble -> Fun integer (Fun integer (Fun double (App io unit)))
+    ErrnoGet -> App io integer
+    ErrnoSet -> Fun integer (App io unit)
     CharToInt -> Fun char integer
     IntToChar -> Fun integer char
     Coerce -> Fun a b

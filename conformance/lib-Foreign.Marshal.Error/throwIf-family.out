@@ -1,0 +1,11 @@
+throwIf passes: 5
+throwIf raises: raised (True,"too big: 50")
+throwIf_ passes: ()
+throwIf_ raises: raised (True,"empty")
+throwIfNeg passes: 0
+throwIfNeg raises: raised (True,"negative: -3")
+throwIfNeg_ raises: raised (True,"negative double")
+throwIfNull passes: True
+throwIfNull raises: raised (True,"it was null")
+  effect
+the action runs once: 'x'
