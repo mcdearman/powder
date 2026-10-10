@@ -5,7 +5,6 @@ module Powder.Build.Fingerprint (Fingerprint, fingerprint, shown) where
 
 import Data.Bits (xor)
 import Data.Char (intToDigit, ord)
-import Data.List (foldl')
 import Data.Word (Word64)
 
 type Fingerprint = Word64
