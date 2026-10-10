@@ -500,6 +500,8 @@ data Pattern
   | Named Name Pattern
   | -- | Matched only when one of its variables is wanted.
     Lazily Pattern
+  | -- | Matched after what it is matched against is worked out.
+    Forced Pattern
 
 dsPat :: Pat.Pat -> M Pattern
 dsPat p = case Pat.patKind p of
@@ -537,6 +539,7 @@ dsPat p = case Pat.patKind p of
       _ -> Built (conName con) <$> mapM dsPat ps
   Pat.As x q -> Named <$> name x <*> dsPat q
   Pat.Lazy q -> Lazily <$> dsPat q
+  Pat.Bang q -> Forced <$> dsPat q
   Pat.Ordered order q ->
     dsPat q <&> \case
       built@(Built _ _) -> Ordered order built
@@ -548,6 +551,7 @@ patVars = \case
   Variable x -> [x]
   Named x p -> x : patVars p
   Lazily p -> patVars p
+  Forced p -> patVars p
   Built _ ps -> concatMap patVars ps
   Ordered _ p -> patVars p
   Anything -> []
@@ -572,7 +576,7 @@ dsClauses n clauses = case clauses of
 
 -- | What a clause's first pattern is. A constructor's has the places of
 -- the fields to match first, where that is not the order they are in.
-data Head = HVar | HCon Name [Int] [Pattern] | HLit Rational (Maybe Core)
+data Head = HVar | HCon Name [Int] [Pattern] | HLit Rational (Maybe Core) | HForce
 
 -- | Wadler's match algorithm ("Efficient compilation of pattern matching",
 -- in Peyton Jones 1987). @match us clauses failE@ matches the variables
@@ -590,7 +594,7 @@ match (u : us) clauses failE = go (NE.groupBy ((==) `on` (kind . fst)) (map (hea
     -- Constructor patterns that take their fields in different orders
     -- are of different kinds: each order is a run of its own.
     kind :: Head -> (Int, [Int])
-    kind = \case HVar -> (0, []); HCon _ order _ -> (1, order); HLit {} -> (2, [])
+    kind = \case HVar -> (0, []); HCon _ order _ -> (1, order); HLit {} -> (2, []); HForce -> (3, [])
 
     -- The mixture rule: each run of clauses whose first patterns are of one
     -- kind falls through to the runs after it.
@@ -617,6 +621,9 @@ match (u : us) clauses failE = go (NE.groupBy ((==) `on` (kind . fst)) (map (hea
             mkIf (maybe (App (App (Prim IntEq) (Var u)) (Lit (numerator n))) (`App` Var u) how)
               <$> match us [clause | (HLit n' _, clause) <- run, n' == n] f
               <*> rest
+      -- The value is worked out, and then matched as the patterns under
+      -- the bangs say.
+      (HForce, _) : _ -> App (App (Prim Seq) (Var u)) <$> match (u : us) (map snd run) f
       _ -> match us (map snd run) f
 
 -- | Take the first pattern off a clause, binding the variables it names to
@@ -630,6 +637,7 @@ headOf u (pats, body) = case pats of
   Ordered order (Built c qs) : ps -> (HCon c order qs, (ps, body))
   Ordered _ p : ps -> headOf u (p : ps, body)
   -- Each variable is what matching would bind it to, if it comes to that.
+  Forced p : ps -> (HForce, (p : ps, body))
   Lazily p : ps ->
     ( HVar,
       ( ps,

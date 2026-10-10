@@ -3,7 +3,7 @@
 
 -- | The forms of a pattern. Import qualified.
 module Powder.Syntax.AST.Pat
-  ( Pat (Var, Wild, Lit, NegLit, Con, Infix, As, Paren, Tuple, List, Lazy, Record),
+  ( Pat (Var, Wild, Lit, NegLit, Con, Infix, As, Paren, Tuple, List, Lazy, Record, Bang),
   )
 where
 
@@ -44,10 +44,10 @@ infixPat r = case children r of
   _ -> Nothing
 
 -- | A constructor and patterns for the fields named.
-pattern Record :: Name -> [(Name, Pat)] -> Pat
+pattern Record :: Name -> [(Name, Maybe Pat)] -> Pat
 pattern Record name fields <- (kindIs K.RecordPat -> Just (recordPat -> (name, fields)))
 
-recordPat :: Red.Red -> (Name, [(Name, Pat)])
+recordPat :: Red.Red -> (Name, [(Name, Maybe Pat)])
 recordPat r = (nameOf r, fieldBinds r)
 
 -- | @name\@pattern@
@@ -72,4 +72,8 @@ pattern List elements <- (kindIs K.ListPat -> Just (children -> elements))
 pattern Lazy :: Pat -> Pat
 pattern Lazy inner <- (kindIs K.LazyPat -> Just (child 0 -> inner))
 
-{-# COMPLETE Var, Wild, Lit, NegLit, Con, Infix, As, Paren, Tuple, List, Lazy, Record #-}
+-- | @!pattern@
+pattern Bang :: Pat -> Pat
+pattern Bang inner <- (kindIs K.BangPat -> Just (child 0 -> inner))
+
+{-# COMPLETE Var, Wild, Lit, NegLit, Con, Infix, As, Paren, Tuple, List, Lazy, Record, Bang #-}

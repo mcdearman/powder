@@ -194,6 +194,8 @@ data SyntaxKind
   | ListPat
   | -- | @~pattern@
     LazyPat
+  | -- | @!pattern@: what is matched is worked out first.
+    BangPat
   | -- | A constructor and patterns for some of its fields, in braces.
     RecordPat
   deriving (Eq, Ord, Show, Enum, Bounded)

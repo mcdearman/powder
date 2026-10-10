@@ -192,6 +192,36 @@ main = do
         out `shouldBe` Right "HELLO\n42\n(Pair 1 2,3,1,7)\n"
         (_, own) <- building home 4 (root </> "util")
         own `shouldBe` Right "util's own\n"
+      it "compiles a package in the edition its manifest says, with the extensions it says" $ do
+        root <- fresh "language"
+        let lambdaCase = ["module Main (main) where", "", "main :: IO ()", "main = mapM_ (\\case { 1 -> putStrLn \"one\"; _ -> putStrLn \"more\" }) [1, 2 :: Int]"]
+            package settings = [("solo/Powder.toml", ["[package]", "name = \"solo\""] ++ settings), ("solo/src/Main.hs", lambdaCase)]
+        -- The default edition has the extension.
+        files root (package [])
+        (_, byDefault) <- building home 4 (root </> "solo")
+        byDefault `shouldBe` Right "one\nmore\n"
+        -- The Report's has not, and changing the manifest compiles the package again.
+        files root (package ["edition = \"Haskell2010\""])
+        (steps, plain) <- building home 4 (root </> "solo")
+        plain `shouldSatisfy` either (const True) (const False)
+        [step | ("solo", step) <- steps] `shouldBe` [Failed]
+        -- Unless the manifest turns it on beside the edition.
+        files root (package ["edition = \"Haskell2010\"", "extensions = [\"LambdaCase\"]"])
+        (_, extended) <- building home 4 (root </> "solo")
+        extended `shouldBe` Right "one\nmore\n"
+        -- And it can be turned off in the default edition.
+        files root (package ["extensions = [\"NoLambdaCase\"]"])
+        (_, off) <- building home 4 (root </> "solo")
+        off `shouldSatisfy` either (const True) (const False)
+      it "lets a file's own pragmas say more than its package does" $ do
+        root <- fresh "pragmas"
+        files
+          root
+          [ ("solo/Powder.toml", ["[package]", "name = \"solo\"", "edition = \"Haskell2010\""]),
+            ("solo/src/Main.hs", ["{-# LANGUAGE TupleSections #-}", "module Main (main) where", "", "main :: IO ()", "main = print (map (,True) \"ab\")"])
+          ]
+        (_, out) <- building home 4 (root </> "solo")
+        out `shouldBe` Right "[('a',True),('b',True)]\n"
       it "needs a module to be in the file named for it" $ do
         root <- fresh "misplaced"
         files root [("text/src/Text/Shout.hs", ["module Text.Loud (shout) where", "", "shout :: String -> String", "shout = id"])]

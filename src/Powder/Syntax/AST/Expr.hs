@@ -96,10 +96,10 @@ range (syntax -> r)
 
 -- | A record built, if what is before the braces is a constructor, or
 -- else a record with some fields changed.
-pattern Record :: Expr -> [(Name, Expr)] -> Expr
+pattern Record :: Expr -> [(Name, Maybe Expr)] -> Expr
 pattern Record subject fields <- (kindIs K.RecordExpr -> Just (record -> (subject, fields)))
 
-record :: Red.Red -> (Expr, [(Name, Expr)])
+record :: Red.Red -> (Expr, [(Name, Maybe Expr)])
 record r = (child 0 r, fieldBinds r)
 
 -- | A list comprehension: what each element is, and the qualifiers, which

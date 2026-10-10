@@ -123,13 +123,18 @@ haskell2010 = Settings Haskell2010 []
 implemented :: Extension -> Bool
 implemented =
   ( `elem`
-      [ BinaryLiterals,
+      [ BangPatterns,
+        BinaryLiterals,
         BlockArguments,
         EmptyCase,
+        EmptyDataDeriving,
+        HexFloatLiterals,
         ImportQualifiedPost,
         LambdaCase,
         MultiWayIf,
+        NamedFieldPuns,
         NumericUnderscores,
+        PostfixOperators,
         TupleSections
       ]
   )
@@ -184,7 +189,21 @@ editionExtensions = \case
   -- To be curated. For now: what is implemented of the extensions that
   -- only add syntax, each of which a program either uses or cannot tell
   -- is on.
-  Powder2026 -> [BinaryLiterals, BlockArguments, EmptyCase, ImportQualifiedPost, LambdaCase, MultiWayIf, NumericUnderscores, TupleSections]
+  Powder2026 ->
+    [ BangPatterns,
+      BinaryLiterals,
+      BlockArguments,
+      EmptyCase,
+      EmptyDataDeriving,
+      HexFloatLiterals,
+      ImportQualifiedPost,
+      LambdaCase,
+      MultiWayIf,
+      NamedFieldPuns,
+      NumericUnderscores,
+      PostfixOperators,
+      TupleSections
+    ]
 
 editionNamed :: String -> Maybe Edition
 editionNamed = readMaybe

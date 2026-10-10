@@ -33,6 +33,7 @@ import Data.Maybe (catMaybes, fromMaybe, isNothing, listToMaybe, mapMaybe)
 import qualified Data.Set as Set
 import Numeric (readFloat)
 import Powder.Core (ConInfo (..), Name, Prim (MatchFail), primName)
+import Powder.Extensions (Extension (..), Extensions)
 import Powder.Diagnostics (Problem (..))
 import Powder.HIR hiding (mine)
 import qualified Powder.HIR.Pat as Pat
@@ -73,6 +74,12 @@ data Env = Env
     -- that one, whatever else goes by the name.
     envOwnValues :: Map.Map Name NameId,
     envOwnConstructors :: Map.Map Name NameId,
+    -- | What the module has at its top by each name, whatever is bound
+    -- nearer: a field's name is looked up here, where a variable of the
+    -- same name does not hide it.
+    envTop :: Map.Map Name NameId,
+    -- | The extensions each file is written with.
+    envLanguages :: Map.Map FilePath Extensions,
     -- | Whether what is being resolved was made up here, so that it is
     -- all placed where what it was made up for is.
     envPinned :: Bool
@@ -122,8 +129,8 @@ type M = ReaderT Env (State St)
 -- In the modules named first, a definition of a name hides an imported
 -- one of the same name, where otherwise a use of it would be ambiguous:
 -- that is for a prompt, where defining again is what one does.
-resolve :: [Name] -> [(FilePath, Name, Module)] -> Maybe (Name, Maybe Name, FilePath, Syntax.Expr) -> Either [Problem] Program
-resolve lenient sources extra = fst <$> resolveAfter Nothing lenient sources extra
+resolve :: Map.Map FilePath Extensions -> [Name] -> [(FilePath, Name, Module)] -> Maybe (Name, Maybe Name, FilePath, Syntax.Expr) -> Either [Problem] Program
+resolve languages lenient sources extra = fst <$> resolveAfter Nothing languages lenient sources extra
 
 -- | What name resolution knows that a program does not say: what each
 -- module lets out, and what the resolving of later modules looks up.
@@ -177,15 +184,15 @@ data Seed = Seed
 -- definitions; no module's names are spelled plainly; and a module of the
 -- others can be imported. With the program comes what a package compiled
 -- after this one will need to be given in its turn.
-resolveAfter :: Maybe Seed -> [Name] -> [(FilePath, Name, Module)] -> Maybe (Name, Maybe Name, FilePath, Syntax.Expr) -> Either [Problem] (Program, Linkage)
-resolveAfter seed lenient sources extra = case reverse (problems final) of
+resolveAfter :: Maybe Seed -> Map.Map FilePath Extensions -> [Name] -> [(FilePath, Name, Module)] -> Maybe (Name, Maybe Name, FilePath, Syntax.Expr) -> Either [Problem] (Program, Linkage)
+resolveAfter seed languages lenient sources extra = case reverse (problems final) of
   [] -> Right (program, linked {linkFields = fields final, linkFixities = fixityTable final, linkStrict = strict final})
   found -> Left found
   where
     program = Program (bindings ++ reverse (generated final)) (names final) (origins final) (signatures final) (reverse (dataTypes final)) (synonyms final) (classes final) (reverse (instances final)) builtins spelled (defaults final) (newtypes final) (maybe [] seedModules seed ++ [(file, n) | (file, n, _) <- sources] ++ [(file, root) | Just (_, _, file, _) <- [extra]]) (maybe [] seedImports seed ++ [(n, [name | (name, _, _, _) <- importsOf n]) | n <- moduleNames]) (maybe (-1) seedFloor seed)
     ((linked, (bindings, builtins)), final) =
       runState
-        (runReaderT run (Env Map.empty Map.empty Map.empty Map.empty Map.empty Map.empty "" Nothing "" spelled Set.empty Map.empty Map.empty False))
+        (runReaderT run (Env Map.empty Map.empty Map.empty Map.empty Map.empty Map.empty "" Nothing "" spelled Set.empty Map.empty Map.empty Map.empty languages False))
         initial
     initial = case seed of
       Nothing -> St 0 IntMap.empty IntMap.empty IntMap.empty IntMap.empty [] IntMap.empty [] IntMap.empty [] [] IntMap.empty [] IntMap.empty []
@@ -312,6 +319,7 @@ resolveAfter seed lenient sources extra = case reverse (problems final) of
             local $ \env ->
               env
                 { envValues = one (scopeValues (scopeOf n)),
+                  envTop = one (scopeValues (scopeOf n)),
                   envGlobals = one (scopeValues (basis n)),
                   envConstructors = one (scopeConstructors (scopeOf n)),
                   envTypes = one (scopeTypes (scopeOf n)),
@@ -698,7 +706,7 @@ placed c given = do
 
 placedOnce :: NameId -> [(Name, a)] -> M [(Int, a)]
 placedOnce c given = fmap catMaybes . forM given $ \(f, a) -> do
-  field <- asks (Map.lookup f . envValues)
+  field <- asks (Map.lookup f . envTop)
   places <- gets (\st -> maybe [] (\x -> IntMap.findWithDefault [] (nameKey x) (fields st)) field)
   case lookup c places of
     Just i -> pure (Just (i, a))
@@ -1007,6 +1015,10 @@ instanceDecl d = within d $ case d of
       Type.Fun a b | null arguments -> (Type.Con (NameId (-1)), [a, b])
       form -> (form, arguments)
 
+-- | Whether the file being resolved is written with an extension.
+enabled :: Extension -> M Bool
+enabled extension = asks (\env -> maybe False (Set.member extension) (Map.lookup (envFile env) (envLanguages env)))
+
 -- | The instances a data declaration asks to have derived, given the
 -- names this module's types were given.
 deriving' :: Map.Map Name NameId -> Syntax.Decl -> M ()
@@ -1026,7 +1038,15 @@ deriving' own d = within d $ case d of
         -- Only a parameter that a field mentions is asked to be an instance.
         let mentioned = concat [concatMap typeVariables tys | Syntax.Constructor _ tys <- cs]
             constrained = filter (`elem` mentioned) (nub parameters)
+        allowed <- enabled EmptyDataDeriving
         methods <- case unqualified c of
+          -- A type with no constructors has no values to tell apart, to
+          -- show or to read.
+          _ | null cs, not allowed -> Nothing <$ complain "an instance can be derived for a type with no constructors only with EmptyDataDeriving"
+          "Eq" | null cs -> Nothing <$ written (instanceHead c t (nub parameters) constrained ++ "{ _ == _ = True }")
+          "Ord" | null cs -> Nothing <$ written (instanceHead c t (nub parameters) constrained ++ "{ compare _ _ = EQ }")
+          "Show" | null cs -> Nothing <$ written (instanceHead c t (nub parameters) constrained ++ "{ showsPrec _ v = seq v id }")
+          "Read" | null cs -> Nothing <$ written (instanceHead c t (nub parameters) constrained ++ "{ readsPrec _ _ = [] }")
           "Eq" -> Just . pure <$> derivedEq constructors
           "Ord" -> Just . pure <$> derivedOrd constructors
           "Show" -> Just . pure <$> derivedShow (zip3 constructors (map Syntax.constructorFields cs) (map Syntax.constructorInfix cs))
@@ -1372,7 +1392,8 @@ patternNames = \case
   SPat.As x p -> x : patternNames p
   SPat.Con _ ps -> concatMap patternNames ps
   SPat.Infix a _ b -> patternNames a ++ patternNames b
-  SPat.Record _ fs -> concatMap (patternNames . snd) fs
+  SPat.Record _ fs -> concat [maybe [unqualified f] patternNames p | (f, p) <- fs]
+  SPat.Bang p -> patternNames p
   SPat.Paren p -> patternNames p
   SPat.Lazy p -> patternNames p
   SPat.Tuple ps -> concatMap patternNames ps
@@ -1517,8 +1538,10 @@ patternOf p = within p $ case p of
       Nothing -> mkPat Pat.Error
       Just k -> do
         arity <- arityOf k
-        given <- placed k fs
-        ps <- forM [0 .. arity - 1] (\i -> maybe (mkPat Pat.Wild) patternOf (lookup i given))
+        given <- placed k [(f, (f, p)) | (f, p) <- fs]
+        -- A field with no pattern is the variable of its name.
+        let field (f, p) = maybe (binder (unqualified f) >>= mkPat . Pat.Var) patternOf p
+        ps <- forM [0 .. arity - 1] (\i -> maybe (mkPat Pat.Wild) field (lookup i given))
         whole <- mkPat (Pat.Con k ps)
         -- Fields are matched in the order they are written.
         let order = map fst given
@@ -1528,6 +1551,7 @@ patternOf p = within p $ case p of
     patternOf q >>= mkPat . Pat.As name
   SPat.Paren q -> patternOf q
   SPat.Lazy q -> patternOf q >>= mkPat . Pat.Lazy
+  SPat.Bang q -> patternOf q >>= mkPat . Pat.Bang
   SPat.Tuple [] -> con "()" []
   SPat.Tuple ps -> con (tupleName (length ps)) ps
   SPat.List ps -> do
@@ -1621,18 +1645,18 @@ expr e = within e $ case e of
       Nothing -> mk Error
       Just k -> do
         arity <- arityOf k
-        given <- placed k fs
+        given <- placed k [(f, (f, e)) | (f, e) <- fs]
         musts <- gets (IntMap.findWithDefault [] (nameKey k) . strict)
         when (or [must | (i, must) <- zip [0 ..] musts, i `notElem` map fst given]) $
           complain ("a strict field of " ++ c ++ " is not given")
-        arguments <- forM [0 .. arity - 1] (\i -> maybe (mk (Prim MatchFail)) expr (lookup i given))
+        arguments <- forM [0 .. arity - 1] (\i -> maybe (mk (Prim MatchFail)) fieldValue (lookup i given))
         mk (Con k) >>= (`apply` arguments)
   -- A record changed: for each constructor that has all the fields, the
   -- same constructor with those fields replaced.
   Expr.Record subject fs -> do
     subject' <- expr subject
     known <- forM fs $ \(f, _) -> do
-      field <- asks (Map.lookup f . envValues)
+      field <- asks (Map.lookup f . envTop)
       gets (\st -> maybe [] (\x -> IntMap.findWithDefault [] (nameKey x) (fields st)) field)
     let candidates = case known of
           first : rest -> [c | (c, _) <- first, all (any ((== c) . fst)) rest]
@@ -1640,10 +1664,10 @@ expr e = within e $ case e of
     when (null candidates) (complain "no constructor has all of these fields")
     alts <- forM candidates $ \c -> do
       arity <- arityOf c
-      given <- placed c fs
+      given <- placed c [(f, (f, e)) | (f, e) <- fs]
       xs <- replicateM arity (newName "x" Local)
       p <- mapM (mkPat . Pat.Var) xs >>= mkPat . Pat.Con c
-      arguments <- forM (zip [0 ..] xs) (\(i, x) -> maybe (mk (Var x)) expr (lookup i given))
+      arguments <- forM (zip [0 ..] xs) (\(i, x) -> maybe (mk (Var x)) fieldValue (lookup i given))
       body <- mk (Con c) >>= (`apply` arguments)
       Alt <$> node <*> pure p <*> plain body
     mk (Case subject' alts)
@@ -1662,6 +1686,9 @@ expr e = within e $ case e of
     parameter <- mkPat (Pat.Var x)
     apply f [argument, operand'] >>= mk . Lam [parameter]
   where
+    -- A field's value: what is given, or for a field by itself the
+    -- variable of its name.
+    fieldValue (f, given) = maybe (variable (unqualified f) >>= mk) expr given
     head' ps = case ps of
       p : _ -> p
       [] -> error "Powder.Resolve: a case alternative with no pattern"
@@ -1723,6 +1750,7 @@ failable = \case
   SPat.Var _ -> False
   SPat.Wild -> False
   SPat.Lazy _ -> False
+  SPat.Bang p -> failable p
   SPat.As _ p -> failable p
   SPat.Paren p -> failable p
   SPat.Tuple ps -> any failable ps

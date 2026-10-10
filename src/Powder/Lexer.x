@@ -88,6 +88,9 @@ tokens :-
   @spaced \. @spaced @spacedexp? / { on NumericUnderscores }            { plain FloatLit }
   @spaced @spacedexp / { on NumericUnderscores }                        { plain FloatLit }
   0 [bB] [01]+ / { on BinaryLiterals }                                  { plain IntegerLit }
+  -- Fractions in hexadecimal, with a power of two after a p.
+  0 [xX] $hexit+ (\. $hexit+)? [pP] [\-\+]? @decimal / { on HexFloatLiterals } { plain FloatLit }
+  0 [xX] $hexit+ \. $hexit+ / { on HexFloatLiterals }                    { plain FloatLit }
   0 [bB] \_* [01]+ (\_+ [01]+)* / { on BinaryLiterals `alexAndPred` on NumericUnderscores } { plain IntegerLit }
 
   \' @charbody \'                            { plain CharLit }

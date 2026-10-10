@@ -31,7 +31,8 @@ module Powder.Syntax.AST.Internal
   )
 where
 
-import Data.Maybe (listToMaybe, mapMaybe)
+import Data.Char (digitToInt)
+import Data.Maybe (fromMaybe, listToMaybe, mapMaybe)
 import qualified Data.Text as Text
 import Powder.Syntax.Kind (SyntaxKind)
 import qualified Powder.Syntax.Kind as K
@@ -115,7 +116,7 @@ instance Ast Stmt where
   syntax (StmtNode r) = r
 
 instance Ast Pat where
-  cast = wrap PatNode [K.VarPat, K.WildPat, K.LitPat, K.NegLitPat, K.ConPat, K.InfixPat, K.AsPat, K.ParenPat, K.TuplePat, K.ListPat, K.LazyPat, K.RecordPat]
+  cast = wrap PatNode [K.BangPat, K.VarPat, K.WildPat, K.LitPat, K.NegLitPat, K.ConPat, K.InfixPat, K.AsPat, K.ParenPat, K.TuplePat, K.ListPat, K.LazyPat, K.RecordPat]
   syntax (PatNode r) = r
 
 -- | The children of a node that are of some sort.
@@ -163,9 +164,10 @@ constructorNameOf r = case nameOf r of
   where
     kinds = map fst (spelled r)
 
--- | The @field = value@ bindings directly under a node.
-fieldBinds :: (Ast a) => Red -> [(Name, a)]
-fieldBinds r = [(nameOf f, child 0 f) | f <- Red.nodes r, Red.kind f == K.FieldBind]
+-- | The @field = value@ bindings directly under a node. One with no
+-- value is a pun: the field, as the variable of its name.
+fieldBinds :: (Ast a) => Red -> [(Name, Maybe a)]
+fieldBinds r = [(nameOf f, listToMaybe (children f)) | f <- Red.nodes r, Red.kind f == K.FieldBind]
 
 -- | The tokens of a node that mean something, each with its text.
 spelled :: Red -> [(SyntaxKind, Name)]
@@ -202,6 +204,20 @@ data Literal
     Malformed String
   deriving (Eq, Show)
 
+-- | A fraction written in hexadecimal, as the same number in decimal: it
+-- is a whole number of some power of two, which is one of a power of ten.
+-- Anything else is left as it is.
+hexadecimal :: String -> String
+hexadecimal s = case s of
+  '0' : x : rest | x `elem` "xX" ->
+    let (mantissa, power) = break (`elem` "pP") rest
+        (whole, fraction) = break (== '.') mantissa
+        digits = whole ++ drop 1 fraction
+        n = foldl (\acc d -> 16 * acc + toInteger (digitToInt d)) 0 digits
+        e = fromMaybe 0 (readMaybe (dropWhile (== '+') (drop 1 power))) - 4 * (length fraction - min 1 (length fraction))
+     in if e >= 0 then show (n * 2 ^ e) ++ ".0" else show (n * 5 ^ negate e) ++ "e-" ++ show (negate e :: Int)
+  _ -> s
+
 -- | The value of a node's literal token.
 literalOf :: Red -> Literal
 literalOf r = case [t | t <- Red.tokens r, Red.kind t `elem` [K.IntegerLit, K.FloatLit, K.CharLit, K.StringLit]] of
@@ -219,5 +235,5 @@ literalOf r = case [t | t <- Red.tokens r, Red.kind t `elem` [K.IntegerLit, K.Fl
           K.IntegerLit -> number
           K.CharLit -> reading Character
           K.StringLit -> reading Text
-          _ -> Fraction digits
+          _ -> Fraction (hexadecimal digits)
   [] -> Malformed ""

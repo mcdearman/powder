@@ -50,7 +50,8 @@ import qualified Powder.AxCut as AxCut
 import qualified Powder.AxCut.Lower as AxCut
 import qualified Powder.Sequent as Sequent
 import Powder.Sequent.FromCore (fromCore)
-import Powder.Extensions (Settings (..), defaultSettings, extensionsOf, haskell2010, pragmaWords)
+import qualified Data.Map as Map
+import Powder.Extensions (Extensions, Settings (..), defaultSettings, extensionsOf, haskell2010, pragmaWords)
 import Powder.Lexer (lexer)
 import Powder.Parser
 import Powder.Syntax.Kind (SyntaxKind (Pragma), isTrivia)
@@ -72,7 +73,7 @@ import System.FilePath (takeDirectory, (<.>), (</>))
 -- A piece that is a module's may be made part of another module than the
 -- one its header names: what is typed at a prompt is part of the module
 -- the prompt is in.
-data Unit a = Unit {unitPath :: FilePath, unitSource :: String, unitSyntax :: a, unitJoins :: Maybe Name}
+data Unit a = Unit {unitPath :: FilePath, unitSource :: String, unitSyntax :: a, unitJoins :: Maybe Name, unitExtensions :: Extensions}
 
 -- | The module a piece of source is, or is part of. With no header it is
 -- @Main@.
@@ -109,7 +110,7 @@ parseFileWith settings path src = do
   -- A literate file is its program text, the rest left blank, so that
   -- everything in it is where it was.
   tree <- parsed path src (parseModuleWith extensions (if ".lhs" `isSuffixOf` path then unlit src else src))
-  maybe (Left (Failure [] [Problem "error" (path ++ " is not a module") "" Nothing False])) (Right . (\m -> Unit path src m Nothing)) (cast tree)
+  maybe (Left (Failure [] [Problem "error" (path ++ " is not a module") "" Nothing False])) (Right . (\m -> Unit path src m Nothing extensions)) (cast tree)
 
 -- | The lines of a literate source that are program text hard against
 -- text that is not.
@@ -152,8 +153,8 @@ parseLineWith settings path src = do
   extensions <- first (\wrong -> Failure [(path, src)] [Problem "error" message path Nothing False | message <- wrong]) (extensionsOf settings [])
   tree <- parsed path src (parseInputWith extensions src)
   case (cast tree, [e | n <- Red.nodes tree, Just e <- [cast n]]) of
-    (Just m, _) -> Right (Declarations (Unit path src m Nothing))
-    (Nothing, e : _) -> Right (Expression (Unit path src e Nothing))
+    (Just m, _) -> Right (Declarations (Unit path src m Nothing extensions))
+    (Nothing, e : _) -> Right (Expression (Unit path src e Nothing extensions))
     _ -> Left (Failure [] [Problem "error" "nothing to evaluate" "" Nothing False])
 
 -- | An expression to go with some modules: what a prompt was asked. It
@@ -167,7 +168,7 @@ resolved :: [Unit Module] -> Maybe Asked -> Either Failure HIR.Program
 resolved units extra =
   first (Failure (sourcesOf units extra)) $
     -- What is typed at a prompt may define again what its module imports.
-    resolve (mapMaybe unitJoins units) [(unitPath u, unitModule u, unitSyntax u) | u <- units] ((\(Asked name printer u) -> (name, printer, unitPath u, unitSyntax u)) <$> extra)
+    resolve (Map.fromList [(unitPath u, unitExtensions u) | u <- units]) (mapMaybe unitJoins units) [(unitPath u, unitModule u, unitSyntax u) | u <- units] ((\(Asked name printer u) -> (name, printer, unitPath u, unitSyntax u)) <$> extra)
 
 sourcesOf :: [Unit Module] -> Maybe Asked -> [(FilePath, String)]
 sourcesOf units extra = [(unitPath u, unitSource u) | u <- units] ++ [(unitPath u, unitSource u) | Just (Asked _ _ u) <- [extra]]
