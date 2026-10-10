@@ -609,7 +609,7 @@ asTypeOf :: a -> a -> a
 asTypeOf = const
 
 error :: String -> a
-error msg = primPerformIO (mapM_ (primPutChar 2) ("error: " ++ msg ++ "\n") >> primExit 1)
+error msg = primPerformIO (mapM_ (primPutChar 2) ("error: " ++ msg ++ "\n") >> leave 1)
 
 undefined :: a
 undefined = error "undefined"
@@ -1361,6 +1361,27 @@ fixIO f = do
   writeRef r x
   return x
 
+-- Leaving -------------------------------------------------------------------
+
+-- What is to be done before the program ends, the last asked first.
+exits :: Ref [IO ()]
+exits = primPerformIO (newRef [])
+
+atExit :: IO () -> IO ()
+atExit act = readRef exits >>= \acts -> writeRef exits (act : acts)
+
+-- Do what was left to be done at the end, once.
+finish :: IO ()
+finish = readRef exits >>= \acts -> writeRef exits [] >> sequence_ acts
+
+-- End the program, with a status.
+leave :: Integer -> IO a
+leave n = finish >> primExit n
+
+-- A program: its main, and then what was left to be done at the end.
+top :: IO a -> IO a
+top m = m >>= \x -> finish >> return x
+
 -- I/O errors ----------------------------------------------------------------
 
 type FilePath = String
@@ -1412,7 +1433,7 @@ userError s = IOError UserError "" s Nothing Nothing
 
 -- One that nothing catches ends the program, saying what it was.
 ioError :: IOError -> IO a
-ioError e = primThrow (mapM_ (primPutChar 2) (show e ++ "\n") >> primExit 1) e
+ioError e = primThrow (mapM_ (primPutChar 2) (show e ++ "\n") >> leave 1) e
 
 catchIOError :: IO a -> (IOError -> IO a) -> IO a
 catchIOError = primCatch
@@ -1734,7 +1755,7 @@ interact :: (String -> String) -> IO ()
 interact f = getContents >>= \s -> putStr (f s)
 
 exitWith :: Int -> IO a
-exitWith n = primExit (toInteger n)
+exitWith n = leave (toInteger n)
 
 -- The file is read as the string is looked at, and closed at its end.
 readFile :: FilePath -> IO String

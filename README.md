@@ -189,28 +189,32 @@ Haskell 2010, less what is listed under it:
 - lists, tuples, strings, ranges, list comprehensions, operator sections
 - user-defined operators with `infixl`/`infixr` declarations
 - the layout rule
-- `foreign import ccall`, for C functions of numbers
+- `foreign import ccall`, of C functions and addresses
 - the Prelude, and beside it `Data.List`, `Data.Char`, `Data.Maybe`,
   `Data.Ratio`, `Data.Ix`, `Data.Array`, `Data.Bits`, `Data.Int`,
   `Data.Word`, `Data.Complex`, `Control.Monad`, `Numeric`, `System.IO`,
-  `System.IO.Error`, `System.Exit`, `System.Environment` and
-  `Foreign.C.Types`, in [lib](lib)
+  `System.IO.Error`, `System.Exit`, `System.Environment`, and `Foreign`
+  and the libraries under it, in [lib](lib)
 
 A program is kind and type checked before it is compiled (see
 [Types](#types)), and one that is not well typed does not run.
 
 What is not as the Report has it:
 
-- **Calling C** goes as far as numbers. A foreign import may take up to
-  three arguments, each a `Double`, an `Int`, a `Char` or one of the
-  numeric types of `Foreign.C.Types`, `Data.Int` and `Data.Word`, and give
-  one of those, or nothing, purely or as an action. The function is
-  looked up by name in what the interpreter is linked with when it is
-  first called. There are no pointers, so the `Foreign` libraries that
-  are about memory are not there (`Foreign.Ptr`, `Foreign.Storable`,
-  `Foreign.Marshal`, `Foreign.C.String` and the rest), and there is no
-  `foreign export` or `"wrapper"`: nothing here is compiled to what C
-  could call.
+- **Calling C** is the Report's, but for C calling back. A foreign import
+  takes and gives the basic foreign types: the numbers, `Char`, `Bool`,
+  `Ptr`, `FunPtr`, `StablePtr`, the types of `Foreign.C.Types`, and
+  newtypes and synonyms of those; any number of them, purely or as an
+  action. `"&name"` is the address of something of C's, and `"dynamic"`
+  calls a function by its address. Calls are made with libffi, of a
+  function looked up by name in the C library and in whatever libraries
+  `POWDER_FOREIGN_LIBS` names, between colons. The `Foreign` libraries
+  are all there. Three things to know of them: sizes are those of a
+  64-bit system whose `long` is 64 bits, and `errno`'s numbers are
+  Linux's; a `ForeignPtr`'s finalizers run when it is finalized or when
+  the program ends, and not sooner, since nothing finds out when the last
+  use of one has been made; and `"wrapper"` and `foreign export` are not
+  there yet, so C cannot call a function of the program's.
 - **Handles** are the Report's: open, semi-closed after `hGetContents`
   and closed; many readers or one writer of a file; `hLookAhead`,
   seeking, sizes, and I/O errors that say what kind they are and what
@@ -494,9 +498,8 @@ of the same spelling, since defining again is what a prompt is for.
 The target is Haskell 2010, and after that extensions, up to GHC2024.
 Next:
 
-1. **The rest of the Report**: pointers and the `Foreign` libraries
-   about memory, and `foreign export`.
-   These wait on a backend that compiles to something C can call.
+1. **The rest of the Report**: C calling back, by `"wrapper"` imports
+   and `foreign export`.
 2. **More of [the build tool](#the-build-tool)**: dependencies from git
    with a lockfile, workspaces, tests, and keeping what is compiled within
    a package, by the groups of modules that import each other.

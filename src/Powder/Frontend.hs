@@ -177,7 +177,11 @@ compiled (Typed hir found problems) = do
 
 -- | The program that computes one name, keeping only what it reaches.
 program :: Name -> Maybe Asked -> [Unit Module] -> Either Failure Program
-program root asked units = check units asked >>= rooted root
+program root asked units = check units asked >>= rooted root . begun
+  where
+    -- A program's main is run by what the library has to run one, which
+    -- sees to what is to be done when it ends.
+    begun = if root == "main" then started root "Powder.Base.top" else id
 
 -- | Only what one name reaches.
 rooted :: Name -> Program -> Either Failure Program

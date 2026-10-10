@@ -192,7 +192,7 @@ link :: [Core.Program] -> Core.Program
 link programs =
   Core.Program
     (Map.elems (Map.fromList [(conName c, c) | p <- programs, c <- Core.progCons p]))
-    ((entry, Var "Main.main") : concatMap Core.progDefs programs)
+    ((entry, App (Var "Powder.Base.top") (Var "Main.main")) : concatMap Core.progDefs programs)
 
 -- What is kept in a file --------------------------------------------------
 

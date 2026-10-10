@@ -171,7 +171,10 @@ arity = \case
   GetChar -> 0
   ArgCount -> 0
   FileSeek -> 3
-  p | p `elem` [Seq, Bind, PutChar, Throw, Catch, ArgChar, FileTruncate, EnvChar, CellWrite, DoubleShowAt, FloatShowAt, DoubleFun, DoubleEncode, DoubleFromRatio] -> 2
+  PokeInt -> 3
+  PokeDouble -> 3
+  ErrnoGet -> 0
+  p | p `elem` [Seq, Bind, PutChar, Throw, Catch, ArgChar, FileTruncate, EnvChar, CellWrite, PeekInt, PeekDouble, DoubleShowAt, FloatShowAt, DoubleFun, DoubleEncode, DoubleFromRatio] -> 2
   p | p `elem` [IntAdd, IntSub, IntMul, IntQuot, IntRem, IntEq, IntLt, IntLe] -> 2
   p | p `elem` [DoubleAdd, DoubleSub, DoubleMul, DoubleDiv, DoublePow, DoubleAtan2, DoubleEq, DoubleLt, DoubleLe] -> 2
   _ -> 1
@@ -210,7 +213,7 @@ action p = case p of
       err <- fresh "err"
       Action ok err <$> body ok err
     wrong = error "Powder.Sequent.FromCore: an action given the wrong number of arguments"
-    effects = [PutChar, GetChar, Exit, PathChar, FileOpen, HGetChar, FileClose, HIsEOF, ArgCount, ArgChar, FileSeek, FileTruncate, FileFlush, IsTerminal, EnvChar, CellNew, CellRead, CellWrite]
+    effects = [PutChar, GetChar, Exit, PathChar, FileOpen, HGetChar, FileClose, HIsEOF, ArgCount, ArgChar, FileSeek, FileTruncate, FileFlush, IsTerminal, EnvChar, CellNew, CellRead, CellWrite, PeekInt, PeekDouble, PokeInt, PokeDouble, ErrnoGet, ErrnoSet]
 
 -- | A primitive given all its arguments, with where its result goes.
 primitive :: Prim -> [Core] -> Consumer -> M Statement

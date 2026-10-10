@@ -1,0 +1,16 @@
+("close of a bad descriptor",-1,True,False,True)
+("fopen of a missing file",True,True)
+("resetErrno",True)
+("isValidErrno",True,True,False)
+("errors are told apart",True,False,True,True)
+("errnoToIOError","does not exist","already exists","permission","full","in use")
+("the file name is kept",Just "/some/file")
+throwErrnoIfMinus1 passes: 4
+throwErrnoIfMinus1 raises: raised, other
+throwErrnoIfMinus1_ raises: raised, other
+throwErrnoIfNull raises: raised, does not exist
+throwErrnoIf with its own test: raised, other
+throwErrnoIf_ passes: ()
+throwErrnoIfMinus1Retry raises what is not an interruption: raised, other
+throwErrnoIfNullRetry raises: raised, does not exist
+throwErrno: raised, does not exist

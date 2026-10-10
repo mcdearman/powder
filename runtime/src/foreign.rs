@@ -1,17 +1,15 @@
 //! Calling C: a function found by name in what the machine is linked
-//! with, called with numbers and giving a number.
+//! with, or one whose address the program has, called at the type the
+//! program says.
 //!
-//! Every type a call can have is written out: up to three arguments, each
-//! a double, a float or a 64-bit integer, and a result that is one of
-//! those or nothing. A narrower integer is passed in the wider one, as the
-//! calling conventions have it, and the caller narrows what comes back. A
-//! float is a double to the machine, and is made one on the way in and
-//! back.
-//!
-//! This file is written by tools/foreign-tables.py. It is not to be
-//! edited.
+//! A type is said by a letter for each argument and one for the result:
+//! `c C s S I U L Q` for the integers, signed and not, of 8, 16, 32 and 64
+//! bits, `F` and `D` for float and double, `P` for a pointer, and `V` for
+//! no result. The call is made by libffi.
 
-use std::ffi::CString;
+use libffi::middle::{Arg, Cif, CodePtr, Type};
+use std::cell::Cell;
+use std::ffi::{c_void, CString};
 
 /// An argument or a result: an integer or a double.
 #[derive(Clone, Copy)]
@@ -20,184 +18,158 @@ pub enum Number {
     Double(f64),
 }
 
-/// Call the function of a name, given what its arguments are, each a double
-/// (`D`), a float (`F`) or an integer (`L`), and whether it gives one of
-/// those or nothing (`V`).
-#[rustfmt::skip]
-pub fn call(symbol: &str, shape: &str, result: char, arguments: &[Number]) -> Result<Number, String> {
+thread_local! {
+    /// What errno was after the last call: nothing the machine does
+    /// between two calls of the program's is to change what the program
+    /// sees.
+    static KEPT: Cell<i32> = const { Cell::new(0) };
+}
+
+fn errno_place() -> *mut i32 {
+    // SAFETY: the C library's own way to its errno.
+    unsafe {
+        #[cfg(target_os = "macos")]
+        return libc::__error();
+        #[cfg(not(target_os = "macos"))]
+        return libc::__errno_location();
+    }
+}
+
+pub fn errno() -> i32 {
+    KEPT.with(Cell::get)
+}
+
+pub fn set_errno(value: i32) {
+    KEPT.with(|kept| kept.set(value));
+}
+
+/// Load the libraries the environment names in `POWDER_FOREIGN_LIBS`,
+/// between colons, so that what is in them can be called by name.
+pub fn load_libraries() -> Result<(), String> {
+    let Some(named) = std::env::var_os("POWDER_FOREIGN_LIBS") else { return Ok(()) };
+    for file in named.to_string_lossy().split(':').filter(|f| !f.is_empty()) {
+        let path = CString::new(file).map_err(|_| format!("the library {file} could not be loaded"))?;
+        // SAFETY: loading a library the user named.
+        if unsafe { libc::dlopen(path.as_ptr(), libc::RTLD_NOW | libc::RTLD_GLOBAL) }.is_null() {
+            return Err(format!("the library {file} could not be loaded"));
+        }
+    }
+    Ok(())
+}
+
+fn type_of(kind: char) -> Option<Type> {
+    Some(match kind {
+        'c' => Type::i8(),
+        'C' => Type::u8(),
+        's' => Type::i16(),
+        'S' => Type::u16(),
+        'I' => Type::i32(),
+        'U' => Type::u32(),
+        'L' => Type::i64(),
+        'Q' => Type::u64(),
+        'F' => Type::f32(),
+        'D' => Type::f64(),
+        'P' => Type::pointer(),
+        'V' => Type::void(),
+        _ => return None,
+    })
+}
+
+/// An argument as C is given it.
+enum Slot {
+    I8(i8),
+    U8(u8),
+    I16(i16),
+    U16(u16),
+    I32(i32),
+    U32(u32),
+    I64(i64),
+    U64(u64),
+    F32(f32),
+    F64(f64),
+    Pointer(*mut c_void),
+}
+
+fn find(symbol: &str) -> Result<*mut c_void, String> {
     let name = CString::new(symbol).map_err(|_| format!("there is no C function called {symbol}"))?;
     // SAFETY: looking a name up in what is already loaded.
     let found = unsafe { libc::dlsym(libc::RTLD_DEFAULT, name.as_ptr()) };
     if found.is_null() {
-        return Err(format!("there is no C function called {symbol}"));
+        Err(format!("there is no C function called {symbol}"))
+    } else {
+        Ok(found)
     }
-    use Number::{Double, Long};
-    type Found = *mut libc::c_void;
-    // SAFETY: the program declared the function to have this type, which is
-    // all that can be known of it.
+}
+
+/// Call a C function, given what its arguments are and what it gives. The
+/// function is the one of a name; or for `&name`, nothing is called and
+/// the address of the name is given; or for `dynamic`, the function is
+/// the one whose address is the first argument.
+pub fn call(symbol: &str, shape: &str, result: char, arguments: &[Number]) -> Result<Number, String> {
+    let unfit = || format!("a C function of this type cannot be called: {symbol}");
+    if let Some(name) = symbol.strip_prefix('&') {
+        return Ok(Number::Long(find(name)? as i64));
+    }
+    let (function, shape, arguments) = match (symbol, arguments) {
+        ("dynamic", [Number::Long(address), rest @ ..]) if shape.starts_with('P') => (*address as usize as *mut c_void, &shape[1..], rest),
+        ("dynamic", _) => return Err("a C function called by its address needs the address first".into()),
+        _ => (find(symbol)?, shape, arguments),
+    };
+    let mut types = Vec::with_capacity(arguments.len());
+    let mut slots = Vec::with_capacity(arguments.len());
+    for (kind, argument) in shape.chars().zip(arguments) {
+        types.push(type_of(kind).filter(|_| kind != 'V').ok_or_else(unfit)?);
+        slots.push(match (kind, *argument) {
+            ('c', Number::Long(n)) => Slot::I8(n as i8),
+            ('C', Number::Long(n)) => Slot::U8(n as u8),
+            ('s', Number::Long(n)) => Slot::I16(n as i16),
+            ('S', Number::Long(n)) => Slot::U16(n as u16),
+            ('I', Number::Long(n)) => Slot::I32(n as i32),
+            ('U', Number::Long(n)) => Slot::U32(n as u32),
+            ('L', Number::Long(n)) => Slot::I64(n),
+            ('Q', Number::Long(n)) => Slot::U64(n as u64),
+            ('P', Number::Long(n)) => Slot::Pointer(n as usize as *mut c_void),
+            ('F', Number::Double(x)) => Slot::F32(x as f32),
+            ('D', Number::Double(x)) => Slot::F64(x),
+            _ => return Err(unfit()),
+        });
+    }
+    if slots.len() != shape.chars().count() {
+        return Err(unfit());
+    }
+    let given: Vec<Arg> = slots
+        .iter()
+        .map(|slot| match slot {
+            Slot::I8(v) => Arg::new(v),
+            Slot::U8(v) => Arg::new(v),
+            Slot::I16(v) => Arg::new(v),
+            Slot::U16(v) => Arg::new(v),
+            Slot::I32(v) => Arg::new(v),
+            Slot::U32(v) => Arg::new(v),
+            Slot::I64(v) => Arg::new(v),
+            Slot::U64(v) => Arg::new(v),
+            Slot::F32(v) => Arg::new(v),
+            Slot::F64(v) => Arg::new(v),
+            Slot::Pointer(v) => Arg::new(v),
+        })
+        .collect();
+    let cif = Cif::new(types, type_of(result).ok_or_else(unfit)?);
+    let code = CodePtr::from_ptr(function);
+    // SAFETY: the program declared the function to have this type, which
+    // is all that can be known of it. A result narrower than a word comes
+    // back widened to one, so every integer is read as a whole word.
     unsafe {
-        match (shape, result, arguments) {
-            ("", 'D', []) => Ok(Double(std::mem::transmute::<Found, unsafe extern "C" fn() -> f64>(found)())),
-            ("", 'L', []) => Ok(Long(std::mem::transmute::<Found, unsafe extern "C" fn() -> i64>(found)())),
-            ("", 'F', []) => Ok(Double(std::mem::transmute::<Found, unsafe extern "C" fn() -> f32>(found)() as f64)),
-            ("", 'V', []) => { std::mem::transmute::<Found, unsafe extern "C" fn()>(found)(); Ok(Long(0)) },
-            ("D", 'D', [Double(a0)]) => Ok(Double(std::mem::transmute::<Found, unsafe extern "C" fn(f64) -> f64>(found)(*a0))),
-            ("D", 'L', [Double(a0)]) => Ok(Long(std::mem::transmute::<Found, unsafe extern "C" fn(f64) -> i64>(found)(*a0))),
-            ("D", 'F', [Double(a0)]) => Ok(Double(std::mem::transmute::<Found, unsafe extern "C" fn(f64) -> f32>(found)(*a0) as f64)),
-            ("D", 'V', [Double(a0)]) => { std::mem::transmute::<Found, unsafe extern "C" fn(f64)>(found)(*a0); Ok(Long(0)) },
-            ("L", 'D', [Long(a0)]) => Ok(Double(std::mem::transmute::<Found, unsafe extern "C" fn(i64) -> f64>(found)(*a0))),
-            ("L", 'L', [Long(a0)]) => Ok(Long(std::mem::transmute::<Found, unsafe extern "C" fn(i64) -> i64>(found)(*a0))),
-            ("L", 'F', [Long(a0)]) => Ok(Double(std::mem::transmute::<Found, unsafe extern "C" fn(i64) -> f32>(found)(*a0) as f64)),
-            ("L", 'V', [Long(a0)]) => { std::mem::transmute::<Found, unsafe extern "C" fn(i64)>(found)(*a0); Ok(Long(0)) },
-            ("F", 'D', [Double(a0)]) => Ok(Double(std::mem::transmute::<Found, unsafe extern "C" fn(f32) -> f64>(found)(*a0 as f32))),
-            ("F", 'L', [Double(a0)]) => Ok(Long(std::mem::transmute::<Found, unsafe extern "C" fn(f32) -> i64>(found)(*a0 as f32))),
-            ("F", 'F', [Double(a0)]) => Ok(Double(std::mem::transmute::<Found, unsafe extern "C" fn(f32) -> f32>(found)(*a0 as f32) as f64)),
-            ("F", 'V', [Double(a0)]) => { std::mem::transmute::<Found, unsafe extern "C" fn(f32)>(found)(*a0 as f32); Ok(Long(0)) },
-            ("DD", 'D', [Double(a0), Double(a1)]) => Ok(Double(std::mem::transmute::<Found, unsafe extern "C" fn(f64, f64) -> f64>(found)(*a0, *a1))),
-            ("DD", 'L', [Double(a0), Double(a1)]) => Ok(Long(std::mem::transmute::<Found, unsafe extern "C" fn(f64, f64) -> i64>(found)(*a0, *a1))),
-            ("DD", 'F', [Double(a0), Double(a1)]) => Ok(Double(std::mem::transmute::<Found, unsafe extern "C" fn(f64, f64) -> f32>(found)(*a0, *a1) as f64)),
-            ("DD", 'V', [Double(a0), Double(a1)]) => { std::mem::transmute::<Found, unsafe extern "C" fn(f64, f64)>(found)(*a0, *a1); Ok(Long(0)) },
-            ("DL", 'D', [Double(a0), Long(a1)]) => Ok(Double(std::mem::transmute::<Found, unsafe extern "C" fn(f64, i64) -> f64>(found)(*a0, *a1))),
-            ("DL", 'L', [Double(a0), Long(a1)]) => Ok(Long(std::mem::transmute::<Found, unsafe extern "C" fn(f64, i64) -> i64>(found)(*a0, *a1))),
-            ("DL", 'F', [Double(a0), Long(a1)]) => Ok(Double(std::mem::transmute::<Found, unsafe extern "C" fn(f64, i64) -> f32>(found)(*a0, *a1) as f64)),
-            ("DL", 'V', [Double(a0), Long(a1)]) => { std::mem::transmute::<Found, unsafe extern "C" fn(f64, i64)>(found)(*a0, *a1); Ok(Long(0)) },
-            ("DF", 'D', [Double(a0), Double(a1)]) => Ok(Double(std::mem::transmute::<Found, unsafe extern "C" fn(f64, f32) -> f64>(found)(*a0, *a1 as f32))),
-            ("DF", 'L', [Double(a0), Double(a1)]) => Ok(Long(std::mem::transmute::<Found, unsafe extern "C" fn(f64, f32) -> i64>(found)(*a0, *a1 as f32))),
-            ("DF", 'F', [Double(a0), Double(a1)]) => Ok(Double(std::mem::transmute::<Found, unsafe extern "C" fn(f64, f32) -> f32>(found)(*a0, *a1 as f32) as f64)),
-            ("DF", 'V', [Double(a0), Double(a1)]) => { std::mem::transmute::<Found, unsafe extern "C" fn(f64, f32)>(found)(*a0, *a1 as f32); Ok(Long(0)) },
-            ("LD", 'D', [Long(a0), Double(a1)]) => Ok(Double(std::mem::transmute::<Found, unsafe extern "C" fn(i64, f64) -> f64>(found)(*a0, *a1))),
-            ("LD", 'L', [Long(a0), Double(a1)]) => Ok(Long(std::mem::transmute::<Found, unsafe extern "C" fn(i64, f64) -> i64>(found)(*a0, *a1))),
-            ("LD", 'F', [Long(a0), Double(a1)]) => Ok(Double(std::mem::transmute::<Found, unsafe extern "C" fn(i64, f64) -> f32>(found)(*a0, *a1) as f64)),
-            ("LD", 'V', [Long(a0), Double(a1)]) => { std::mem::transmute::<Found, unsafe extern "C" fn(i64, f64)>(found)(*a0, *a1); Ok(Long(0)) },
-            ("LL", 'D', [Long(a0), Long(a1)]) => Ok(Double(std::mem::transmute::<Found, unsafe extern "C" fn(i64, i64) -> f64>(found)(*a0, *a1))),
-            ("LL", 'L', [Long(a0), Long(a1)]) => Ok(Long(std::mem::transmute::<Found, unsafe extern "C" fn(i64, i64) -> i64>(found)(*a0, *a1))),
-            ("LL", 'F', [Long(a0), Long(a1)]) => Ok(Double(std::mem::transmute::<Found, unsafe extern "C" fn(i64, i64) -> f32>(found)(*a0, *a1) as f64)),
-            ("LL", 'V', [Long(a0), Long(a1)]) => { std::mem::transmute::<Found, unsafe extern "C" fn(i64, i64)>(found)(*a0, *a1); Ok(Long(0)) },
-            ("LF", 'D', [Long(a0), Double(a1)]) => Ok(Double(std::mem::transmute::<Found, unsafe extern "C" fn(i64, f32) -> f64>(found)(*a0, *a1 as f32))),
-            ("LF", 'L', [Long(a0), Double(a1)]) => Ok(Long(std::mem::transmute::<Found, unsafe extern "C" fn(i64, f32) -> i64>(found)(*a0, *a1 as f32))),
-            ("LF", 'F', [Long(a0), Double(a1)]) => Ok(Double(std::mem::transmute::<Found, unsafe extern "C" fn(i64, f32) -> f32>(found)(*a0, *a1 as f32) as f64)),
-            ("LF", 'V', [Long(a0), Double(a1)]) => { std::mem::transmute::<Found, unsafe extern "C" fn(i64, f32)>(found)(*a0, *a1 as f32); Ok(Long(0)) },
-            ("FD", 'D', [Double(a0), Double(a1)]) => Ok(Double(std::mem::transmute::<Found, unsafe extern "C" fn(f32, f64) -> f64>(found)(*a0 as f32, *a1))),
-            ("FD", 'L', [Double(a0), Double(a1)]) => Ok(Long(std::mem::transmute::<Found, unsafe extern "C" fn(f32, f64) -> i64>(found)(*a0 as f32, *a1))),
-            ("FD", 'F', [Double(a0), Double(a1)]) => Ok(Double(std::mem::transmute::<Found, unsafe extern "C" fn(f32, f64) -> f32>(found)(*a0 as f32, *a1) as f64)),
-            ("FD", 'V', [Double(a0), Double(a1)]) => { std::mem::transmute::<Found, unsafe extern "C" fn(f32, f64)>(found)(*a0 as f32, *a1); Ok(Long(0)) },
-            ("FL", 'D', [Double(a0), Long(a1)]) => Ok(Double(std::mem::transmute::<Found, unsafe extern "C" fn(f32, i64) -> f64>(found)(*a0 as f32, *a1))),
-            ("FL", 'L', [Double(a0), Long(a1)]) => Ok(Long(std::mem::transmute::<Found, unsafe extern "C" fn(f32, i64) -> i64>(found)(*a0 as f32, *a1))),
-            ("FL", 'F', [Double(a0), Long(a1)]) => Ok(Double(std::mem::transmute::<Found, unsafe extern "C" fn(f32, i64) -> f32>(found)(*a0 as f32, *a1) as f64)),
-            ("FL", 'V', [Double(a0), Long(a1)]) => { std::mem::transmute::<Found, unsafe extern "C" fn(f32, i64)>(found)(*a0 as f32, *a1); Ok(Long(0)) },
-            ("FF", 'D', [Double(a0), Double(a1)]) => Ok(Double(std::mem::transmute::<Found, unsafe extern "C" fn(f32, f32) -> f64>(found)(*a0 as f32, *a1 as f32))),
-            ("FF", 'L', [Double(a0), Double(a1)]) => Ok(Long(std::mem::transmute::<Found, unsafe extern "C" fn(f32, f32) -> i64>(found)(*a0 as f32, *a1 as f32))),
-            ("FF", 'F', [Double(a0), Double(a1)]) => Ok(Double(std::mem::transmute::<Found, unsafe extern "C" fn(f32, f32) -> f32>(found)(*a0 as f32, *a1 as f32) as f64)),
-            ("FF", 'V', [Double(a0), Double(a1)]) => { std::mem::transmute::<Found, unsafe extern "C" fn(f32, f32)>(found)(*a0 as f32, *a1 as f32); Ok(Long(0)) },
-            ("DDD", 'D', [Double(a0), Double(a1), Double(a2)]) => Ok(Double(std::mem::transmute::<Found, unsafe extern "C" fn(f64, f64, f64) -> f64>(found)(*a0, *a1, *a2))),
-            ("DDD", 'L', [Double(a0), Double(a1), Double(a2)]) => Ok(Long(std::mem::transmute::<Found, unsafe extern "C" fn(f64, f64, f64) -> i64>(found)(*a0, *a1, *a2))),
-            ("DDD", 'F', [Double(a0), Double(a1), Double(a2)]) => Ok(Double(std::mem::transmute::<Found, unsafe extern "C" fn(f64, f64, f64) -> f32>(found)(*a0, *a1, *a2) as f64)),
-            ("DDD", 'V', [Double(a0), Double(a1), Double(a2)]) => { std::mem::transmute::<Found, unsafe extern "C" fn(f64, f64, f64)>(found)(*a0, *a1, *a2); Ok(Long(0)) },
-            ("DDL", 'D', [Double(a0), Double(a1), Long(a2)]) => Ok(Double(std::mem::transmute::<Found, unsafe extern "C" fn(f64, f64, i64) -> f64>(found)(*a0, *a1, *a2))),
-            ("DDL", 'L', [Double(a0), Double(a1), Long(a2)]) => Ok(Long(std::mem::transmute::<Found, unsafe extern "C" fn(f64, f64, i64) -> i64>(found)(*a0, *a1, *a2))),
-            ("DDL", 'F', [Double(a0), Double(a1), Long(a2)]) => Ok(Double(std::mem::transmute::<Found, unsafe extern "C" fn(f64, f64, i64) -> f32>(found)(*a0, *a1, *a2) as f64)),
-            ("DDL", 'V', [Double(a0), Double(a1), Long(a2)]) => { std::mem::transmute::<Found, unsafe extern "C" fn(f64, f64, i64)>(found)(*a0, *a1, *a2); Ok(Long(0)) },
-            ("DDF", 'D', [Double(a0), Double(a1), Double(a2)]) => Ok(Double(std::mem::transmute::<Found, unsafe extern "C" fn(f64, f64, f32) -> f64>(found)(*a0, *a1, *a2 as f32))),
-            ("DDF", 'L', [Double(a0), Double(a1), Double(a2)]) => Ok(Long(std::mem::transmute::<Found, unsafe extern "C" fn(f64, f64, f32) -> i64>(found)(*a0, *a1, *a2 as f32))),
-            ("DDF", 'F', [Double(a0), Double(a1), Double(a2)]) => Ok(Double(std::mem::transmute::<Found, unsafe extern "C" fn(f64, f64, f32) -> f32>(found)(*a0, *a1, *a2 as f32) as f64)),
-            ("DDF", 'V', [Double(a0), Double(a1), Double(a2)]) => { std::mem::transmute::<Found, unsafe extern "C" fn(f64, f64, f32)>(found)(*a0, *a1, *a2 as f32); Ok(Long(0)) },
-            ("DLD", 'D', [Double(a0), Long(a1), Double(a2)]) => Ok(Double(std::mem::transmute::<Found, unsafe extern "C" fn(f64, i64, f64) -> f64>(found)(*a0, *a1, *a2))),
-            ("DLD", 'L', [Double(a0), Long(a1), Double(a2)]) => Ok(Long(std::mem::transmute::<Found, unsafe extern "C" fn(f64, i64, f64) -> i64>(found)(*a0, *a1, *a2))),
-            ("DLD", 'F', [Double(a0), Long(a1), Double(a2)]) => Ok(Double(std::mem::transmute::<Found, unsafe extern "C" fn(f64, i64, f64) -> f32>(found)(*a0, *a1, *a2) as f64)),
-            ("DLD", 'V', [Double(a0), Long(a1), Double(a2)]) => { std::mem::transmute::<Found, unsafe extern "C" fn(f64, i64, f64)>(found)(*a0, *a1, *a2); Ok(Long(0)) },
-            ("DLL", 'D', [Double(a0), Long(a1), Long(a2)]) => Ok(Double(std::mem::transmute::<Found, unsafe extern "C" fn(f64, i64, i64) -> f64>(found)(*a0, *a1, *a2))),
-            ("DLL", 'L', [Double(a0), Long(a1), Long(a2)]) => Ok(Long(std::mem::transmute::<Found, unsafe extern "C" fn(f64, i64, i64) -> i64>(found)(*a0, *a1, *a2))),
-            ("DLL", 'F', [Double(a0), Long(a1), Long(a2)]) => Ok(Double(std::mem::transmute::<Found, unsafe extern "C" fn(f64, i64, i64) -> f32>(found)(*a0, *a1, *a2) as f64)),
-            ("DLL", 'V', [Double(a0), Long(a1), Long(a2)]) => { std::mem::transmute::<Found, unsafe extern "C" fn(f64, i64, i64)>(found)(*a0, *a1, *a2); Ok(Long(0)) },
-            ("DLF", 'D', [Double(a0), Long(a1), Double(a2)]) => Ok(Double(std::mem::transmute::<Found, unsafe extern "C" fn(f64, i64, f32) -> f64>(found)(*a0, *a1, *a2 as f32))),
-            ("DLF", 'L', [Double(a0), Long(a1), Double(a2)]) => Ok(Long(std::mem::transmute::<Found, unsafe extern "C" fn(f64, i64, f32) -> i64>(found)(*a0, *a1, *a2 as f32))),
-            ("DLF", 'F', [Double(a0), Long(a1), Double(a2)]) => Ok(Double(std::mem::transmute::<Found, unsafe extern "C" fn(f64, i64, f32) -> f32>(found)(*a0, *a1, *a2 as f32) as f64)),
-            ("DLF", 'V', [Double(a0), Long(a1), Double(a2)]) => { std::mem::transmute::<Found, unsafe extern "C" fn(f64, i64, f32)>(found)(*a0, *a1, *a2 as f32); Ok(Long(0)) },
-            ("DFD", 'D', [Double(a0), Double(a1), Double(a2)]) => Ok(Double(std::mem::transmute::<Found, unsafe extern "C" fn(f64, f32, f64) -> f64>(found)(*a0, *a1 as f32, *a2))),
-            ("DFD", 'L', [Double(a0), Double(a1), Double(a2)]) => Ok(Long(std::mem::transmute::<Found, unsafe extern "C" fn(f64, f32, f64) -> i64>(found)(*a0, *a1 as f32, *a2))),
-            ("DFD", 'F', [Double(a0), Double(a1), Double(a2)]) => Ok(Double(std::mem::transmute::<Found, unsafe extern "C" fn(f64, f32, f64) -> f32>(found)(*a0, *a1 as f32, *a2) as f64)),
-            ("DFD", 'V', [Double(a0), Double(a1), Double(a2)]) => { std::mem::transmute::<Found, unsafe extern "C" fn(f64, f32, f64)>(found)(*a0, *a1 as f32, *a2); Ok(Long(0)) },
-            ("DFL", 'D', [Double(a0), Double(a1), Long(a2)]) => Ok(Double(std::mem::transmute::<Found, unsafe extern "C" fn(f64, f32, i64) -> f64>(found)(*a0, *a1 as f32, *a2))),
-            ("DFL", 'L', [Double(a0), Double(a1), Long(a2)]) => Ok(Long(std::mem::transmute::<Found, unsafe extern "C" fn(f64, f32, i64) -> i64>(found)(*a0, *a1 as f32, *a2))),
-            ("DFL", 'F', [Double(a0), Double(a1), Long(a2)]) => Ok(Double(std::mem::transmute::<Found, unsafe extern "C" fn(f64, f32, i64) -> f32>(found)(*a0, *a1 as f32, *a2) as f64)),
-            ("DFL", 'V', [Double(a0), Double(a1), Long(a2)]) => { std::mem::transmute::<Found, unsafe extern "C" fn(f64, f32, i64)>(found)(*a0, *a1 as f32, *a2); Ok(Long(0)) },
-            ("DFF", 'D', [Double(a0), Double(a1), Double(a2)]) => Ok(Double(std::mem::transmute::<Found, unsafe extern "C" fn(f64, f32, f32) -> f64>(found)(*a0, *a1 as f32, *a2 as f32))),
-            ("DFF", 'L', [Double(a0), Double(a1), Double(a2)]) => Ok(Long(std::mem::transmute::<Found, unsafe extern "C" fn(f64, f32, f32) -> i64>(found)(*a0, *a1 as f32, *a2 as f32))),
-            ("DFF", 'F', [Double(a0), Double(a1), Double(a2)]) => Ok(Double(std::mem::transmute::<Found, unsafe extern "C" fn(f64, f32, f32) -> f32>(found)(*a0, *a1 as f32, *a2 as f32) as f64)),
-            ("DFF", 'V', [Double(a0), Double(a1), Double(a2)]) => { std::mem::transmute::<Found, unsafe extern "C" fn(f64, f32, f32)>(found)(*a0, *a1 as f32, *a2 as f32); Ok(Long(0)) },
-            ("LDD", 'D', [Long(a0), Double(a1), Double(a2)]) => Ok(Double(std::mem::transmute::<Found, unsafe extern "C" fn(i64, f64, f64) -> f64>(found)(*a0, *a1, *a2))),
-            ("LDD", 'L', [Long(a0), Double(a1), Double(a2)]) => Ok(Long(std::mem::transmute::<Found, unsafe extern "C" fn(i64, f64, f64) -> i64>(found)(*a0, *a1, *a2))),
-            ("LDD", 'F', [Long(a0), Double(a1), Double(a2)]) => Ok(Double(std::mem::transmute::<Found, unsafe extern "C" fn(i64, f64, f64) -> f32>(found)(*a0, *a1, *a2) as f64)),
-            ("LDD", 'V', [Long(a0), Double(a1), Double(a2)]) => { std::mem::transmute::<Found, unsafe extern "C" fn(i64, f64, f64)>(found)(*a0, *a1, *a2); Ok(Long(0)) },
-            ("LDL", 'D', [Long(a0), Double(a1), Long(a2)]) => Ok(Double(std::mem::transmute::<Found, unsafe extern "C" fn(i64, f64, i64) -> f64>(found)(*a0, *a1, *a2))),
-            ("LDL", 'L', [Long(a0), Double(a1), Long(a2)]) => Ok(Long(std::mem::transmute::<Found, unsafe extern "C" fn(i64, f64, i64) -> i64>(found)(*a0, *a1, *a2))),
-            ("LDL", 'F', [Long(a0), Double(a1), Long(a2)]) => Ok(Double(std::mem::transmute::<Found, unsafe extern "C" fn(i64, f64, i64) -> f32>(found)(*a0, *a1, *a2) as f64)),
-            ("LDL", 'V', [Long(a0), Double(a1), Long(a2)]) => { std::mem::transmute::<Found, unsafe extern "C" fn(i64, f64, i64)>(found)(*a0, *a1, *a2); Ok(Long(0)) },
-            ("LDF", 'D', [Long(a0), Double(a1), Double(a2)]) => Ok(Double(std::mem::transmute::<Found, unsafe extern "C" fn(i64, f64, f32) -> f64>(found)(*a0, *a1, *a2 as f32))),
-            ("LDF", 'L', [Long(a0), Double(a1), Double(a2)]) => Ok(Long(std::mem::transmute::<Found, unsafe extern "C" fn(i64, f64, f32) -> i64>(found)(*a0, *a1, *a2 as f32))),
-            ("LDF", 'F', [Long(a0), Double(a1), Double(a2)]) => Ok(Double(std::mem::transmute::<Found, unsafe extern "C" fn(i64, f64, f32) -> f32>(found)(*a0, *a1, *a2 as f32) as f64)),
-            ("LDF", 'V', [Long(a0), Double(a1), Double(a2)]) => { std::mem::transmute::<Found, unsafe extern "C" fn(i64, f64, f32)>(found)(*a0, *a1, *a2 as f32); Ok(Long(0)) },
-            ("LLD", 'D', [Long(a0), Long(a1), Double(a2)]) => Ok(Double(std::mem::transmute::<Found, unsafe extern "C" fn(i64, i64, f64) -> f64>(found)(*a0, *a1, *a2))),
-            ("LLD", 'L', [Long(a0), Long(a1), Double(a2)]) => Ok(Long(std::mem::transmute::<Found, unsafe extern "C" fn(i64, i64, f64) -> i64>(found)(*a0, *a1, *a2))),
-            ("LLD", 'F', [Long(a0), Long(a1), Double(a2)]) => Ok(Double(std::mem::transmute::<Found, unsafe extern "C" fn(i64, i64, f64) -> f32>(found)(*a0, *a1, *a2) as f64)),
-            ("LLD", 'V', [Long(a0), Long(a1), Double(a2)]) => { std::mem::transmute::<Found, unsafe extern "C" fn(i64, i64, f64)>(found)(*a0, *a1, *a2); Ok(Long(0)) },
-            ("LLL", 'D', [Long(a0), Long(a1), Long(a2)]) => Ok(Double(std::mem::transmute::<Found, unsafe extern "C" fn(i64, i64, i64) -> f64>(found)(*a0, *a1, *a2))),
-            ("LLL", 'L', [Long(a0), Long(a1), Long(a2)]) => Ok(Long(std::mem::transmute::<Found, unsafe extern "C" fn(i64, i64, i64) -> i64>(found)(*a0, *a1, *a2))),
-            ("LLL", 'F', [Long(a0), Long(a1), Long(a2)]) => Ok(Double(std::mem::transmute::<Found, unsafe extern "C" fn(i64, i64, i64) -> f32>(found)(*a0, *a1, *a2) as f64)),
-            ("LLL", 'V', [Long(a0), Long(a1), Long(a2)]) => { std::mem::transmute::<Found, unsafe extern "C" fn(i64, i64, i64)>(found)(*a0, *a1, *a2); Ok(Long(0)) },
-            ("LLF", 'D', [Long(a0), Long(a1), Double(a2)]) => Ok(Double(std::mem::transmute::<Found, unsafe extern "C" fn(i64, i64, f32) -> f64>(found)(*a0, *a1, *a2 as f32))),
-            ("LLF", 'L', [Long(a0), Long(a1), Double(a2)]) => Ok(Long(std::mem::transmute::<Found, unsafe extern "C" fn(i64, i64, f32) -> i64>(found)(*a0, *a1, *a2 as f32))),
-            ("LLF", 'F', [Long(a0), Long(a1), Double(a2)]) => Ok(Double(std::mem::transmute::<Found, unsafe extern "C" fn(i64, i64, f32) -> f32>(found)(*a0, *a1, *a2 as f32) as f64)),
-            ("LLF", 'V', [Long(a0), Long(a1), Double(a2)]) => { std::mem::transmute::<Found, unsafe extern "C" fn(i64, i64, f32)>(found)(*a0, *a1, *a2 as f32); Ok(Long(0)) },
-            ("LFD", 'D', [Long(a0), Double(a1), Double(a2)]) => Ok(Double(std::mem::transmute::<Found, unsafe extern "C" fn(i64, f32, f64) -> f64>(found)(*a0, *a1 as f32, *a2))),
-            ("LFD", 'L', [Long(a0), Double(a1), Double(a2)]) => Ok(Long(std::mem::transmute::<Found, unsafe extern "C" fn(i64, f32, f64) -> i64>(found)(*a0, *a1 as f32, *a2))),
-            ("LFD", 'F', [Long(a0), Double(a1), Double(a2)]) => Ok(Double(std::mem::transmute::<Found, unsafe extern "C" fn(i64, f32, f64) -> f32>(found)(*a0, *a1 as f32, *a2) as f64)),
-            ("LFD", 'V', [Long(a0), Double(a1), Double(a2)]) => { std::mem::transmute::<Found, unsafe extern "C" fn(i64, f32, f64)>(found)(*a0, *a1 as f32, *a2); Ok(Long(0)) },
-            ("LFL", 'D', [Long(a0), Double(a1), Long(a2)]) => Ok(Double(std::mem::transmute::<Found, unsafe extern "C" fn(i64, f32, i64) -> f64>(found)(*a0, *a1 as f32, *a2))),
-            ("LFL", 'L', [Long(a0), Double(a1), Long(a2)]) => Ok(Long(std::mem::transmute::<Found, unsafe extern "C" fn(i64, f32, i64) -> i64>(found)(*a0, *a1 as f32, *a2))),
-            ("LFL", 'F', [Long(a0), Double(a1), Long(a2)]) => Ok(Double(std::mem::transmute::<Found, unsafe extern "C" fn(i64, f32, i64) -> f32>(found)(*a0, *a1 as f32, *a2) as f64)),
-            ("LFL", 'V', [Long(a0), Double(a1), Long(a2)]) => { std::mem::transmute::<Found, unsafe extern "C" fn(i64, f32, i64)>(found)(*a0, *a1 as f32, *a2); Ok(Long(0)) },
-            ("LFF", 'D', [Long(a0), Double(a1), Double(a2)]) => Ok(Double(std::mem::transmute::<Found, unsafe extern "C" fn(i64, f32, f32) -> f64>(found)(*a0, *a1 as f32, *a2 as f32))),
-            ("LFF", 'L', [Long(a0), Double(a1), Double(a2)]) => Ok(Long(std::mem::transmute::<Found, unsafe extern "C" fn(i64, f32, f32) -> i64>(found)(*a0, *a1 as f32, *a2 as f32))),
-            ("LFF", 'F', [Long(a0), Double(a1), Double(a2)]) => Ok(Double(std::mem::transmute::<Found, unsafe extern "C" fn(i64, f32, f32) -> f32>(found)(*a0, *a1 as f32, *a2 as f32) as f64)),
-            ("LFF", 'V', [Long(a0), Double(a1), Double(a2)]) => { std::mem::transmute::<Found, unsafe extern "C" fn(i64, f32, f32)>(found)(*a0, *a1 as f32, *a2 as f32); Ok(Long(0)) },
-            ("FDD", 'D', [Double(a0), Double(a1), Double(a2)]) => Ok(Double(std::mem::transmute::<Found, unsafe extern "C" fn(f32, f64, f64) -> f64>(found)(*a0 as f32, *a1, *a2))),
-            ("FDD", 'L', [Double(a0), Double(a1), Double(a2)]) => Ok(Long(std::mem::transmute::<Found, unsafe extern "C" fn(f32, f64, f64) -> i64>(found)(*a0 as f32, *a1, *a2))),
-            ("FDD", 'F', [Double(a0), Double(a1), Double(a2)]) => Ok(Double(std::mem::transmute::<Found, unsafe extern "C" fn(f32, f64, f64) -> f32>(found)(*a0 as f32, *a1, *a2) as f64)),
-            ("FDD", 'V', [Double(a0), Double(a1), Double(a2)]) => { std::mem::transmute::<Found, unsafe extern "C" fn(f32, f64, f64)>(found)(*a0 as f32, *a1, *a2); Ok(Long(0)) },
-            ("FDL", 'D', [Double(a0), Double(a1), Long(a2)]) => Ok(Double(std::mem::transmute::<Found, unsafe extern "C" fn(f32, f64, i64) -> f64>(found)(*a0 as f32, *a1, *a2))),
-            ("FDL", 'L', [Double(a0), Double(a1), Long(a2)]) => Ok(Long(std::mem::transmute::<Found, unsafe extern "C" fn(f32, f64, i64) -> i64>(found)(*a0 as f32, *a1, *a2))),
-            ("FDL", 'F', [Double(a0), Double(a1), Long(a2)]) => Ok(Double(std::mem::transmute::<Found, unsafe extern "C" fn(f32, f64, i64) -> f32>(found)(*a0 as f32, *a1, *a2) as f64)),
-            ("FDL", 'V', [Double(a0), Double(a1), Long(a2)]) => { std::mem::transmute::<Found, unsafe extern "C" fn(f32, f64, i64)>(found)(*a0 as f32, *a1, *a2); Ok(Long(0)) },
-            ("FDF", 'D', [Double(a0), Double(a1), Double(a2)]) => Ok(Double(std::mem::transmute::<Found, unsafe extern "C" fn(f32, f64, f32) -> f64>(found)(*a0 as f32, *a1, *a2 as f32))),
-            ("FDF", 'L', [Double(a0), Double(a1), Double(a2)]) => Ok(Long(std::mem::transmute::<Found, unsafe extern "C" fn(f32, f64, f32) -> i64>(found)(*a0 as f32, *a1, *a2 as f32))),
-            ("FDF", 'F', [Double(a0), Double(a1), Double(a2)]) => Ok(Double(std::mem::transmute::<Found, unsafe extern "C" fn(f32, f64, f32) -> f32>(found)(*a0 as f32, *a1, *a2 as f32) as f64)),
-            ("FDF", 'V', [Double(a0), Double(a1), Double(a2)]) => { std::mem::transmute::<Found, unsafe extern "C" fn(f32, f64, f32)>(found)(*a0 as f32, *a1, *a2 as f32); Ok(Long(0)) },
-            ("FLD", 'D', [Double(a0), Long(a1), Double(a2)]) => Ok(Double(std::mem::transmute::<Found, unsafe extern "C" fn(f32, i64, f64) -> f64>(found)(*a0 as f32, *a1, *a2))),
-            ("FLD", 'L', [Double(a0), Long(a1), Double(a2)]) => Ok(Long(std::mem::transmute::<Found, unsafe extern "C" fn(f32, i64, f64) -> i64>(found)(*a0 as f32, *a1, *a2))),
-            ("FLD", 'F', [Double(a0), Long(a1), Double(a2)]) => Ok(Double(std::mem::transmute::<Found, unsafe extern "C" fn(f32, i64, f64) -> f32>(found)(*a0 as f32, *a1, *a2) as f64)),
-            ("FLD", 'V', [Double(a0), Long(a1), Double(a2)]) => { std::mem::transmute::<Found, unsafe extern "C" fn(f32, i64, f64)>(found)(*a0 as f32, *a1, *a2); Ok(Long(0)) },
-            ("FLL", 'D', [Double(a0), Long(a1), Long(a2)]) => Ok(Double(std::mem::transmute::<Found, unsafe extern "C" fn(f32, i64, i64) -> f64>(found)(*a0 as f32, *a1, *a2))),
-            ("FLL", 'L', [Double(a0), Long(a1), Long(a2)]) => Ok(Long(std::mem::transmute::<Found, unsafe extern "C" fn(f32, i64, i64) -> i64>(found)(*a0 as f32, *a1, *a2))),
-            ("FLL", 'F', [Double(a0), Long(a1), Long(a2)]) => Ok(Double(std::mem::transmute::<Found, unsafe extern "C" fn(f32, i64, i64) -> f32>(found)(*a0 as f32, *a1, *a2) as f64)),
-            ("FLL", 'V', [Double(a0), Long(a1), Long(a2)]) => { std::mem::transmute::<Found, unsafe extern "C" fn(f32, i64, i64)>(found)(*a0 as f32, *a1, *a2); Ok(Long(0)) },
-            ("FLF", 'D', [Double(a0), Long(a1), Double(a2)]) => Ok(Double(std::mem::transmute::<Found, unsafe extern "C" fn(f32, i64, f32) -> f64>(found)(*a0 as f32, *a1, *a2 as f32))),
-            ("FLF", 'L', [Double(a0), Long(a1), Double(a2)]) => Ok(Long(std::mem::transmute::<Found, unsafe extern "C" fn(f32, i64, f32) -> i64>(found)(*a0 as f32, *a1, *a2 as f32))),
-            ("FLF", 'F', [Double(a0), Long(a1), Double(a2)]) => Ok(Double(std::mem::transmute::<Found, unsafe extern "C" fn(f32, i64, f32) -> f32>(found)(*a0 as f32, *a1, *a2 as f32) as f64)),
-            ("FLF", 'V', [Double(a0), Long(a1), Double(a2)]) => { std::mem::transmute::<Found, unsafe extern "C" fn(f32, i64, f32)>(found)(*a0 as f32, *a1, *a2 as f32); Ok(Long(0)) },
-            ("FFD", 'D', [Double(a0), Double(a1), Double(a2)]) => Ok(Double(std::mem::transmute::<Found, unsafe extern "C" fn(f32, f32, f64) -> f64>(found)(*a0 as f32, *a1 as f32, *a2))),
-            ("FFD", 'L', [Double(a0), Double(a1), Double(a2)]) => Ok(Long(std::mem::transmute::<Found, unsafe extern "C" fn(f32, f32, f64) -> i64>(found)(*a0 as f32, *a1 as f32, *a2))),
-            ("FFD", 'F', [Double(a0), Double(a1), Double(a2)]) => Ok(Double(std::mem::transmute::<Found, unsafe extern "C" fn(f32, f32, f64) -> f32>(found)(*a0 as f32, *a1 as f32, *a2) as f64)),
-            ("FFD", 'V', [Double(a0), Double(a1), Double(a2)]) => { std::mem::transmute::<Found, unsafe extern "C" fn(f32, f32, f64)>(found)(*a0 as f32, *a1 as f32, *a2); Ok(Long(0)) },
-            ("FFL", 'D', [Double(a0), Double(a1), Long(a2)]) => Ok(Double(std::mem::transmute::<Found, unsafe extern "C" fn(f32, f32, i64) -> f64>(found)(*a0 as f32, *a1 as f32, *a2))),
-            ("FFL", 'L', [Double(a0), Double(a1), Long(a2)]) => Ok(Long(std::mem::transmute::<Found, unsafe extern "C" fn(f32, f32, i64) -> i64>(found)(*a0 as f32, *a1 as f32, *a2))),
-            ("FFL", 'F', [Double(a0), Double(a1), Long(a2)]) => Ok(Double(std::mem::transmute::<Found, unsafe extern "C" fn(f32, f32, i64) -> f32>(found)(*a0 as f32, *a1 as f32, *a2) as f64)),
-            ("FFL", 'V', [Double(a0), Double(a1), Long(a2)]) => { std::mem::transmute::<Found, unsafe extern "C" fn(f32, f32, i64)>(found)(*a0 as f32, *a1 as f32, *a2); Ok(Long(0)) },
-            ("FFF", 'D', [Double(a0), Double(a1), Double(a2)]) => Ok(Double(std::mem::transmute::<Found, unsafe extern "C" fn(f32, f32, f32) -> f64>(found)(*a0 as f32, *a1 as f32, *a2 as f32))),
-            ("FFF", 'L', [Double(a0), Double(a1), Double(a2)]) => Ok(Long(std::mem::transmute::<Found, unsafe extern "C" fn(f32, f32, f32) -> i64>(found)(*a0 as f32, *a1 as f32, *a2 as f32))),
-            ("FFF", 'F', [Double(a0), Double(a1), Double(a2)]) => Ok(Double(std::mem::transmute::<Found, unsafe extern "C" fn(f32, f32, f32) -> f32>(found)(*a0 as f32, *a1 as f32, *a2 as f32) as f64)),
-            ("FFF", 'V', [Double(a0), Double(a1), Double(a2)]) => { std::mem::transmute::<Found, unsafe extern "C" fn(f32, f32, f32)>(found)(*a0 as f32, *a1 as f32, *a2 as f32); Ok(Long(0)) },
-            _ => Err(format!("a C function of this type cannot be called: {symbol}")),
-        }
+        *errno_place() = errno();
+        let gave = match result {
+            'D' => Number::Double(cif.call::<f64>(code, &given)),
+            'F' => Number::Double(cif.call::<f32>(code, &given) as f64),
+            'V' => {
+                cif.call::<()>(code, &given);
+                Number::Long(0)
+            }
+            _ => Number::Long(cif.call::<i64>(code, &given)),
+        };
+        set_errno(*errno_place());
+        Ok(gave)
     }
 }

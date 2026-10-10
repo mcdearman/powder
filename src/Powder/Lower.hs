@@ -15,7 +15,7 @@ import Data.Graph (flattenSCC, stronglyConnComp)
 import qualified Data.IntMap.Strict as IntMap
 import Control.Applicative ((<|>))
 import Data.Functor ((<&>))
-import Data.List (nub, nubBy)
+import Data.List (isPrefixOf, nub, nubBy)
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map as Map
 import Data.Ratio (denominator, numerator)
@@ -324,28 +324,53 @@ function b = case HIR.bindingKind b of
 
 -- | A C function as a function here: one that calls it once it has all
 -- its arguments, or if it is an action, when the action is run.
+--
+-- What crosses is numbers: integers of C's sizes, floats and doubles, and
+-- addresses. Each type of the function's is one of those, by a letter the
+-- machines know: a type the libraries have for the purpose, or a newtype
+-- of one. A 'Bool' crosses as 0 or 1, and a 'Char' as its code.
 foreign' :: NodeId -> NameId -> String -> M Core
 foreign' at f symbol = do
   program <- asks envProgram
-  let named t = case HIR.Type.typeForm t of
-        HIR.Type.Con c -> Just (maybe "" nameText (HIR.nameInfo program c))
-        _ -> Nothing
-      unwound t = case HIR.Type.typeForm t of
+  let unwound t = case HIR.Type.typeForm t of
         HIR.Type.Fun a r -> let (as, result) = unwound r in (a : as, result)
         _ -> ([], t)
-      floating n
-        | n `elem` ["Double", "CDouble"] = Just 'D'
-        | n `elem` ["Float", "CFloat"] = Just 'F'
-        | otherwise = Nothing
-      argument t = named t >>= \n -> floating n <|> (if n `elem` map fst integers then Just 'L' else Nothing)
-      resulting t = named t >>= \n -> floating n <|> (if n == "()" then Just 'V' else lookup n integers)
-      -- The integers C has, each with how one is read when it comes back.
-      integers =
-        [ ("Int", 'L'), ("CLong", 'L'), ("CLLong", 'L'), ("Int64", 'L'), ("CULong", 'Q'), ("CULLong", 'Q'), ("CSize", 'Q'),
-          ("Word", 'Q'), ("Word64", 'Q'), ("CInt", 'I'), ("Int32", 'I'), ("CUInt", 'U'), ("Word32", 'U'), ("CShort", 's'),
-          ("Int16", 's'), ("CUShort", 'S'), ("Word16", 'S'), ("CChar", 'c'), ("CSChar", 'c'), ("Int8", 'c'), ("CUChar", 'C'),
-          ("Word8", 'C'), ("Char", 'U')
+      headOf t = case HIR.Type.typeForm t of
+        HIR.Type.Con c -> Just c
+        HIR.Type.App g _ -> headOf g
+        _ -> Nothing
+      -- The language's own types and the libraries' are known by name.
+      -- Any other is a newtype of something that is.
+      ours c = case HIR.nameInfo program c of
+        Just info | null (nameModule info) || any (`isPrefixOf` nameModule info) ["Powder.", "Data.", "Foreign."] -> lookup (nameText info) kinds
+        _ -> Nothing
+      kindOf :: Int -> HIR.Type.Type -> Maybe Char
+      kindOf depth t = do
+        c <- headOf t
+        ours c <|> case [field | depth > 0, d <- HIR.programDataTypes program, HIR.dataName d == c, [(k, [field])] <- [HIR.dataConstructors d], k `elem` HIR.programNewtypes program] of
+          field : _ -> kindOf (depth - 1) field
+          -- A synonym is what it stands for.
+          [] | depth > 0 -> IntMap.lookup (nameKey c) (HIR.programSynonyms program) >>= kindOf (depth - 1) . HIR.synonymType
+          [] -> Nothing
+      isUnit t = fmap (\c -> c == HIR.builtinUnit (HIR.programBuiltins program)) (headOf t) == Just True
+      isBool t = fmap (\c -> c == HIR.builtinBool (HIR.programBuiltins program)) (headOf t) == Just True
+      kinds =
+        [ ("Int", 'L'), ("Word", 'Q'), ("Int8", 'c'), ("Int16", 's'), ("Int32", 'I'), ("Int64", 'L'), ("Word8", 'C'), ("Word16", 'S'),
+          ("Word32", 'U'), ("Word64", 'Q'), ("Char", 'U'), ("Bool", 'C'), ("Double", 'D'), ("Float", 'F'), ("Ptr", 'P'), ("FunPtr", 'P'),
+          ("StablePtr", 'P'), ("IntPtr", 'L'), ("WordPtr", 'Q'), ("CChar", 'c'), ("CSChar", 'c'), ("CUChar", 'C'), ("CShort", 's'),
+          ("CUShort", 'S'), ("CInt", 'I'), ("CUInt", 'U'), ("CLong", 'L'), ("CULong", 'Q'), ("CLLong", 'L'), ("CULLong", 'Q'),
+          ("CSize", 'Q'), ("CPtrdiff", 'L'), ("CWchar", 'I'), ("CSigAtomic", 'I'), ("CClock", 'L'), ("CTime", 'L'), ("CFloat", 'F'),
+          ("CDouble", 'D'), ("CIntPtr", 'L'), ("CUIntPtr", 'Q'), ("CIntMax", 'L'), ("CUIntMax", 'Q')
         ]
+      -- A value as the number that crosses, and the number that comes
+      -- back as a value.
+      out t kind e
+        | isBool t = Case e [Alt falseCon [] (Lit 0), Alt trueCon [] (Lit 1)]
+        | kind `elem` "DF" = e
+        | otherwise = App (Prim IntNarrow) e
+      back t e
+        | isBool t = Case (App (App (Prim IntEq) e) (Lit 0)) [Alt falseCon [] (Con trueCon), Alt trueCon [] (Con falseCon)]
+        | otherwise = e
   case HIR.signature program f of
     Nothing -> err at "a C function needs its type said"
     Just (HIR.Signature _ _ t) -> do
@@ -354,14 +379,19 @@ foreign' at f symbol = do
           (action, result) = case HIR.Type.typeForm final of
             HIR.Type.App g x | HIR.Type.Con c <- HIR.Type.typeForm g, c == io -> (True, x)
             _ -> (False, final)
-      case (mapM argument arguments, resulting result) of
-        (Just shape, Just gives) | length shape <= 3 -> do
+          gives = if isUnit result then Just 'V' else kindOf 8 result
+      case (symbol, mapM (kindOf 8) arguments, gives) of
+        ("wrapper", _, _) -> err at "a C function made from a function here is not supported yet"
+        ('&' : _, Just [], Just 'P') | not action -> pure (Foreign symbol "" 'P')
+        ('&' : _, _, _) -> err at "the address of something of C's is a Ptr or a FunPtr, and nothing else"
+        ("dynamic", Just shape, _) | take 1 shape /= "P" -> err at "a C function called by its address takes the address, a FunPtr, first"
+        (_, Just shape, Just kind) -> do
           xs <- replicateM (length shape) fresh
-          let call = foldl App (Foreign symbol shape gives) (map Var xs)
+          let call = back result (foldl App (Foreign symbol shape kind) (zipWith3 out arguments shape (map Var xs)))
               -- Running the action is what makes the call, once.
               run' = App (App (Prim Bind) (App (Prim Return) (Lit 0))) (Lam "_" (Let (NonRec "$result" call) (App (App (Prim Seq) (Var "$result")) (App (Prim Return) (Var "$result")))))
           pure (foldr Lam (if action then run' else call) xs)
-        _ -> err at "a C function can be called with up to three numbers, and give a number or nothing; this type asks more"
+        _ -> err at "a C function takes and gives numbers and addresses: the types the Foreign libraries have for them, or newtypes of those"
 
 -- Patterns ----------------------------------------------------------------
 

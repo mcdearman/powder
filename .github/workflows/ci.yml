@@ -50,6 +50,10 @@ jobs:
           key: cargo-${{ runner.os }}-${{ hashFiles('powder/runtime/Cargo.toml', 'powder/runtime/src/**') }}
           restore-keys: cargo-${{ runner.os }}-
 
+      # Calls of C are made with libffi.
+      - name: Install libffi
+        run: sudo apt-get update && sudo apt-get install -y libffi-dev
+
       - name: Build the compiler
         working-directory: powder
         run: |
