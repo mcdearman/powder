@@ -1,85 +1,32 @@
--- Handles: the three a program starts with, and files.
+-- Handles: the three a program starts with, and files. They are made in
+-- Powder.Base, where the prelude's own input and output are made of them.
 module System.IO
-  ( Handle, IOMode (..), BufferMode (..), FilePath, stdin, stdout, stderr, openFile, withFile, hClose, hFlush,
-    hIsEOF, isEOF, hSetBuffering, hGetBuffering,
-    hGetChar, hGetLine, hGetContents, hPutChar, hPutStr, hPutStrLn, hPrint,
-    readFile, writeFile, appendFile, putChar, putStr, putStrLn, print, getChar, getLine, getContents, interact
+  ( fixIO, FilePath, Handle, stdin, stdout, stderr,
+    withFile, openFile, IOMode (..), hClose, readFile, writeFile, appendFile,
+    hFileSize, hSetFileSize, hIsEOF, isEOF, BufferMode (..), hSetBuffering, hGetBuffering, hFlush,
+    hGetPosn, hSetPosn, HandlePosn, hSeek, SeekMode (..), hTell,
+    hIsOpen, hIsClosed, hIsReadable, hIsWritable, hIsSeekable, hIsTerminalDevice, hSetEcho, hGetEcho, hShow,
+    hWaitForInput, hReady, hGetChar, hGetLine, hLookAhead, hGetContents,
+    hPutChar, hPutStr, hPutStrLn, hPrint,
+    interact, putChar, putStr, putStrLn, print, getChar, getLine, getContents, readIO, readLn
   )
 where
 
-import Powder.Base (IOError (..), lazily, opened)
+import Data.Ix
+import Powder.Base
+  ( BufferMode (..), Handle, HandlePosn, IOMode (..), SeekMode (..),
+    fixIO, hClose, hFileSize, hFlush, hGetBuffering, hGetChar, hGetContents, hGetEcho, hGetLine, hGetPosn,
+    hIsClosed, hIsEOF, hIsOpen, hIsReadable, hIsSeekable, hIsTerminalDevice, hIsWritable, hLookAhead,
+    hPrint, hPutChar, hPutStr, hPutStrLn, hReady, hSeek, hSetBuffering, hSetEcho, hSetFileSize, hSetPosn,
+    hShow, hTell, hWaitForInput, isEOF, openFile, stderr, stdin, stdout, withFile
+  )
 
--- A handle is a number: 0, 1 and 2 are the standard ones.
-data Handle = Handle Integer
+instance Ix IOMode where
+  range (a, b) = map toEnum [fromEnum a .. fromEnum b]
+  index (a, b) x = if inRange (a, b) x then fromEnum x - fromEnum a else error "Ix.index: index out of range"
+  inRange (a, b) x = a <= x && x <= b
 
-instance Eq Handle where
-  Handle a == Handle b = a == b
-
-instance Show Handle where
-  show (Handle n) = "<handle " ++ show n ++ ">"
-
-data IOMode = ReadMode | WriteMode | AppendMode deriving (Eq, Ord, Show, Enum)
-
-stdin, stdout, stderr :: Handle
-stdin = Handle 0
-stdout = Handle 1
-stderr = Handle 2
-
-openFile :: FilePath -> IOMode -> IO Handle
-openFile path mode = opened path (toInteger (fromEnum mode)) >>= return . Handle
-
-hClose :: Handle -> IO ()
-hClose (Handle n) = if n < 3 then return () else primFileClose n
-
-withFile :: FilePath -> IOMode -> (Handle -> IO a) -> IO a
-withFile path mode act = do
-  h <- openFile path mode
-  result <- act h
-  hClose h
-  return result
-
-hIsEOF :: Handle -> IO Bool
-hIsEOF (Handle n) = primHIsEOF n
-
-isEOF :: IO Bool
-isEOF = hIsEOF stdin
-
-data BufferMode = NoBuffering | LineBuffering | BlockBuffering (Maybe Int) deriving (Eq, Ord, Show)
-
--- Nothing is held back, whatever is asked.
-hSetBuffering :: Handle -> BufferMode -> IO ()
-hSetBuffering _ _ = return ()
-
-hGetBuffering :: Handle -> IO BufferMode
-hGetBuffering _ = return NoBuffering
-
--- Nothing is held back, so there is nothing to flush.
-hFlush :: Handle -> IO ()
-hFlush _ = return ()
-
--- A character's code, or -1 at the end.
-code :: Handle -> IO Integer
-code (Handle n) = if n == 0 then primGetChar else primHGetChar n
-
-hGetChar :: Handle -> IO Char
-hGetChar h = code h >>= \c -> if c < 0 then ioError (IOError 2 "hGetChar: end of file") else return (primIntToChar c)
-
-hGetLine :: Handle -> IO String
-hGetLine h = code h >>= \c -> if c < 0 then ioError (IOError 2 "hGetLine: end of file") else go [] c
-  where
-    go acc c = if c < 0 || c == 10 then return (reverse acc) else code h >>= go (primIntToChar c : acc)
-
-hGetContents :: Handle -> IO String
-hGetContents h = return (lazily (code h) (hClose h))
-
-hPutChar :: Handle -> Char -> IO ()
-hPutChar (Handle n) = primPutChar n
-
-hPutStr :: Handle -> String -> IO ()
-hPutStr h = mapM_ (hPutChar h)
-
-hPutStrLn :: Handle -> String -> IO ()
-hPutStrLn h s = hPutStr h s >> hPutChar h '\n'
-
-hPrint :: Show a => Handle -> a -> IO ()
-hPrint h x = hPutStrLn h (show x)
+instance Ix SeekMode where
+  range (a, b) = map toEnum [fromEnum a .. fromEnum b]
+  index (a, b) x = if inRange (a, b) x then fromEnum x - fromEnum a else error "Ix.index: index out of range"
+  inRange (a, b) x = a <= x && x <= b

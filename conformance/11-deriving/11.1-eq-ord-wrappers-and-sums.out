@@ -1,0 +1,6 @@
+("point",True,EQ,False,LT,False,LT)
+("special",GT,True,True,True)
+("wrapper",True,EQ,False,LT,GT)
+("newtype",True,EQ,False,LT,True)
+("second field decides",True,True,True)
+("nested",True,True)

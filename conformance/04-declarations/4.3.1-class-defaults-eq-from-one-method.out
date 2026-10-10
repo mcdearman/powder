@@ -1,0 +1,6 @@
+("defined ==",True,False,True)
+("default /=",True,False,False)
+("defined /=",True,False)
+("default ==",True,False,True)
+("in a list",True,True,False)
+("lookup uses ==",Just "odd")

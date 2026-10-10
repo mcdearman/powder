@@ -14,7 +14,7 @@ module Powder.AxCut.Machine (run) where
 
 import Control.Exception
 import Control.Monad
-import Data.Char (chr, ord)
+import Data.Char (chr, generalCategory, ord, toLower, toTitle, toUpper)
 import Data.IORef
 import Data.Ratio ((%))
 import Data.Int (Int16, Int32, Int64, Int8)
@@ -23,10 +23,11 @@ import Data.Maybe (isNothing)
 import Data.Word (Word16, Word32, Word64, Word8)
 import Powder.AxCut
 import Powder.Core (ConInfo (..), Name, Prim (..), primName)
+import Powder.Files (Files, newFiles)
+import qualified Powder.Files as Files
 import Powder.SKI.Eval (Hooks (..), RuntimeError (..))
 import Powder.SKI.Foreign (callForeign)
 import System.Exit
-import System.IO
 
 data Value
   = VInt Integer
@@ -50,8 +51,8 @@ data Cell
 data Machine = Machine
   { hooks :: Hooks,
     globals :: Map.Map Name (IORef Cell),
-    path :: IORef String,
-    files :: IORef (Map.Map Integer Handle),
+    files :: Files,
+    cells :: IORef (Map.Map Integer Value),
     pushed :: IORef (Maybe (Maybe Char)),
     steps :: IORef Int
   }
@@ -67,8 +68,8 @@ broken message = failure ("the AxCut program is malformed: " ++ message)
 -- 'RuntimeError', or 'ExitCode' if the program exits.
 run :: Hooks -> Program -> IO Int
 run h (Program defs entry) = do
-  cells <- forM defs (\(x, k, s) -> (,) x <$> newIORef (Delayed [] (Method Forced [k] s)))
-  m <- Machine h (Map.fromList cells) <$> newIORef "" <*> newIORef Map.empty <*> newIORef Nothing <*> newIORef 0
+  made <- forM defs (\(x, k, s) -> (,) x <$> newIORef (Delayed [] (Method Forced [k] s)))
+  m <- Machine h (Map.fromList made) <$> newFiles <*> newIORef Map.empty <*> newIORef Nothing <*> newIORef 0
   execute m [] entry
   readIORef (steps m)
 
@@ -128,9 +129,10 @@ execute m env statement = do
       (arguments, rest) <- takeLast (length shape) env
       given <- forM (zip shape arguments) $ \case
         ('D', VDouble x) -> pure (Right x)
+        ('F', VDouble x) -> pure (Right x)
         (_, VInt n) -> pure (Left (fromInteger n))
         _ -> failure "type error: a C function was given what is not a number"
-      out <- callForeign symbol shape (if result `elem` "DV" then result else 'L') given >>= either failure pure
+      out <- callForeign symbol shape (if result `elem` "DFV" then result else 'L') given >>= either failure pure
       let value = case (result, out) of
             ('V', _) -> VData 0 []
             (_, Right x) -> VDouble x
@@ -234,6 +236,10 @@ primitive m p given = case (p, given) of
       f : _ | which >= 0 -> double (f a)
       _ -> failure "no such function of a double"
   (DoubleShowAt, [VDouble a, VInt i]) -> int (maybe (-1) (toInteger . ord) (lookup i (zip [0 ..] (show a))))
+  (CharCategory, [VInt c]) -> int (toInteger (fromEnum (generalCategory (chr (fromInteger c)))))
+  (CharUpper, [VInt c]) -> int (toInteger (ord (toUpper (chr (fromInteger c)))))
+  (CharLower, [VInt c]) -> int (toInteger (ord (toLower (chr (fromInteger c)))))
+  (CharTitle, [VInt c]) -> int (toInteger (ord (toTitle (chr (fromInteger c)))))
   (FloatShowAt, [VDouble a, VInt i]) -> int (maybe (-1) (toInteger . ord) (lookup i (zip [0 ..] (show (realToFrac a :: Float)))))
   (FloatNarrow, [VDouble a]) -> double (realToFrac (realToFrac a :: Float))
   (DoubleMantissa, [VDouble a]) -> int (fst (decodeFloat a))
@@ -242,39 +248,32 @@ primitive m p given = case (p, given) of
   (DoubleEncode, [VInt a, VInt e]) -> double (encodeFloat a (fromInteger (max (-100000) (min 100000 e))))
   (MatchFail, []) -> failure "pattern match failure"
   (PutChar, [VInt h, VInt c]) -> do
-    open' <- Map.lookup h <$> readIORef (files m)
-    maybe (putCh (hooks m) (fromInteger h)) hPutChar open' (chr (fromInteger c))
-    pure unit
-  (GetChar, []) -> int . maybe (-1) (toInteger . ord) =<< standardInput
+    written <- Files.put (files m) h (chr (fromInteger c))
+    unit <$ unless written (putCh (hooks m) (fromInteger h) (chr (fromInteger c)))
+  (GetChar, []) -> standardInput >>= code
   (Exit, [VInt n]) -> throwIO (if n == 0 then ExitSuccess else ExitFailure (fromInteger n))
-  (PathChar, [VInt c]) -> unit <$ modifyIORef' (path m) (chr (fromInteger c) :)
-  (FileOpen, [VInt mode]) -> do
-    name <- reverse <$> readIORef (path m)
-    writeIORef (path m) ""
-    opened <- try (openFile name (case mode of 0 -> ReadMode; 1 -> WriteMode; _ -> AppendMode))
-    case opened of
-      Left (_ :: IOException) -> int (-1)
-      Right file -> do
-        n <- (+ 3) . toInteger . Map.size <$> readIORef (files m)
-        modifyIORef' (files m) (Map.insert n file)
-        int n
-  (HGetChar, [VInt h]) -> do
-    open' <- Map.lookup h <$> readIORef (files m)
-    c <- case open' of
-      Just file -> hIsEOF file >>= \done -> if done then pure Nothing else Just <$> hGetChar file
-      Nothing -> pure Nothing
-    int (maybe (-1) (toInteger . ord) c)
-  (FileClose, [VInt h]) -> do
-    open' <- Map.lookup h <$> readIORef (files m)
-    unit <$ mapM_ hClose open'
-  (HIsEOF, [VInt h]) -> do
-    open' <- Map.lookup h <$> readIORef (files m)
-    case open' of
-      Just file -> hIsEOF file >>= bool
+  (PathChar, [VInt c]) -> unit <$ Files.spell (files m) (chr (fromInteger c))
+  (FileOpen, [VInt mode]) -> Files.open (files m) mode >>= int
+  (HGetChar, [VInt h]) -> Files.get (files m) h >>= code
+  (FileClose, [VInt h]) -> unit <$ Files.close (files m) h
+  (HIsEOF, [VInt h]) ->
+    Files.atEnd (files m) h >>= \case
+      Just done -> bool done
       Nothing -> do
         c <- standardInput
         writeIORef (pushed m) (Just c)
         bool (isNothing c)
+  (FileSeek, [VInt h, VInt whence, VInt offset]) -> Files.seek (files m) h whence offset >>= int
+  (FileTruncate, [VInt h, VInt size]) -> Files.resize (files m) h size >>= int
+  (FileFlush, [VInt h]) -> unit <$ Files.flush (files m) h
+  (IsTerminal, [VInt h]) -> Files.terminal (files m) h >>= bool
+  (EnvChar, [VInt i, VInt j]) -> Files.environment i j >>= code
+  (CellNew, [x]) -> do
+    n <- toInteger . Map.size <$> readIORef (cells m)
+    modifyIORef' (cells m) (Map.insert n x)
+    int n
+  (CellRead, [VInt n]) -> readIORef (cells m) >>= maybe (failure "there is no such cell") pure . Map.lookup n
+  (CellWrite, [VInt n, x]) -> unit <$ modifyIORef' (cells m) (Map.insert n x)
   (ArgCount, []) -> int (toInteger (length (arguments (hooks m))))
   (ArgChar, [VInt i, VInt j]) -> do
     let text = if i < 0 then programName (hooks m) else concat (take 1 (drop (fromInteger i) (arguments (hooks m))))
@@ -282,6 +281,7 @@ primitive m p given = case (p, given) of
   _ -> failure ("type error: " ++ primName p ++ " was given what it cannot take")
   where
     int = pure . VInt
+    code = int . maybe (-1) (toInteger . ord)
     double = pure . VDouble
     -- The constructors of Bool, and of the unit.
     bool b = pure (VData (if b then 1 else 0) [])

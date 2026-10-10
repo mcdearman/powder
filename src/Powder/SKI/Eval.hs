@@ -11,7 +11,7 @@ where
 
 import Control.Exception
 import Control.Monad
-import Data.Char (chr, ord)
+import Data.Char (chr, generalCategory, ord, toLower, toTitle, toUpper)
 import Data.Functor ((<&>))
 import Data.IORef
 import Data.Ratio ((%))
@@ -21,6 +21,8 @@ import Powder.SKI.Foreign (callForeign)
 import qualified Data.Map as Map
 import Data.Maybe (isNothing)
 import Powder.Core (Name, Prim (..))
+import Powder.Files (Files, newFiles)
+import qualified Powder.Files as Files
 import Powder.SKI.Comb
 import System.Exit
 import System.IO
@@ -82,9 +84,9 @@ instance Exception Raised
 data Machine = Machine
   { hooks :: Hooks,
     steps :: IORef Int,
-    -- | The path being spelled out, backwards, and the files that are open.
-    path :: IORef String,
-    files :: IORef (Map.Map Integer Handle),
+    files :: Files,
+    -- | The program's cells, each a place for a value that can be changed.
+    cells :: IORef (Map.Map Integer Ref),
     -- | A character read from the standard input to see whether there was
     -- one, and not yet taken.
     pushed :: IORef (Maybe (Maybe Char))
@@ -124,13 +126,13 @@ eval h defs root = do
     else maybe VOther VInt <$> asInt r
   where
     asInt r = readIORef r <&> \case NInt n -> Just n; _ -> Nothing
-    ioArity = [(Return, 1), (Bind, 2), (PutChar, 2), (GetChar, 0), (Exit, 1), (PathChar, 1), (Throw, 2), (Catch, 2), (FileOpen, 1), (HGetChar, 1), (FileClose, 1), (HIsEOF, 1), (ArgCount, 0), (ArgChar, 2)]
+    ioArity = [(Return, 1), (Bind, 2), (PutChar, 2), (GetChar, 0), (Exit, 1), (PathChar, 1), (Throw, 2), (Catch, 2), (FileOpen, 1), (HGetChar, 1), (FileClose, 1), (HIsEOF, 1), (ArgCount, 0), (ArgChar, 2), (FileSeek, 3), (FileTruncate, 2), (FileFlush, 1), (IsTerminal, 1), (EnvChar, 2), (CellNew, 1), (CellRead, 1), (CellWrite, 2)]
 
 start :: Hooks -> [(Name, Comb)] -> Name -> IO (Machine, Ref)
 start h defs root = do
   globals <- link defs
   entry <- maybe (failure ("no definition of " ++ root)) pure (Map.lookup root globals)
-  m <- Machine h <$> newIORef 0 <*> newIORef "" <*> newIORef Map.empty <*> newIORef Nothing
+  m <- Machine h <$> newIORef 0 <*> newFiles <*> newIORef Map.empty <*> newIORef Nothing
   pure (m, entry)
 
 -- | Build the graph. Each definition gets one node, which every reference
@@ -178,8 +180,8 @@ whnf m root = do
           | otherwise -> do
               let (mine, rest) = splitAt (length shape) stk
               given' <- forM (zip shape mine) $ \(k, (_, a)) ->
-                if k == 'D' then Right <$> double m a else Left . fromInteger <$> int m a
-              out <- callForeign symbol shape (if result `elem` "DV" then result else 'L') given' >>= either failure pure
+                if k `elem` "DF" then Right <$> double m a else Left . fromInteger <$> int m a
+              out <- callForeign symbol shape (if result `elem` "DFV" then result else 'L') given' >>= either failure pure
               let node = case (result, out) of
                     ('V', _) -> NComb I
                     (_, Right x) -> NDbl x
@@ -260,6 +262,10 @@ whnf m root = do
       Coerce | (n, a) : s <- stk -> redirect n a s
       IntNarrow | (n, a) : s <- stk -> int m a >>= \x -> update n (NInt (toInteger (fromInteger x :: Int64))) s
       FloatNarrow | (n, a) : s <- stk -> double m a >>= \x -> update n (NDbl (realToFrac (realToFrac x :: Float))) s
+      CharCategory | (n, a) : s <- stk -> int m a >>= \c -> update n (NInt (toInteger (fromEnum (generalCategory (chr (fromInteger c)))))) s
+      CharUpper | (n, a) : s <- stk -> int m a >>= \c -> update n (NInt (toInteger (ord (toUpper (chr (fromInteger c)))))) s
+      CharLower | (n, a) : s <- stk -> int m a >>= \c -> update n (NInt (toInteger (ord (toLower (chr (fromInteger c)))))) s
+      CharTitle | (n, a) : s <- stk -> int m a >>= \c -> update n (NInt (toInteger (ord (toTitle (chr (fromInteger c)))))) s
       FloatShowAt | (_, a) : (n, i) : s <- stk -> do
         x <- double m a
         at <- int m i
@@ -360,54 +366,53 @@ runIO m r = do
       newIORef (NApp k x) >>= runIO m
     (NPrim PutChar, [h, c]) -> do
       h' <- int m h
-      c' <- int m c
-      open' <- Map.lookup h' <$> readIORef (files m)
-      maybe (putCh (hooks m) (fromInteger h')) hPutChar open' (chr (fromInteger c'))
+      c' <- chr . fromInteger <$> int m c
+      written <- Files.put (files m) h' c'
+      unless written (putCh (hooks m) (fromInteger h') c')
       unit
     (NPrim Throw, [uncaught, raised]) -> throwIO (Raised uncaught raised)
     (NPrim Catch, [action', handler]) ->
       runIO m action' `catch` \(Raised _ raised) -> newIORef (NApp handler raised) >>= runIO m
     (NPrim PathChar, [c]) -> do
       c' <- int m c
-      modifyIORef' (path m) (chr (fromInteger c') :)
+      Files.spell (files m) (chr (fromInteger c'))
       unit
-    (NPrim FileOpen, [mode]) -> do
-      mode' <- int m mode
-      name <- reverse <$> readIORef (path m)
-      writeIORef (path m) ""
-      opened <- try (openFile name (case mode' of 0 -> ReadMode; 1 -> WriteMode; _ -> AppendMode))
-      case opened of
-        Left (_ :: IOException) -> newIORef (NInt (-1))
-        Right file -> do
-          n <- (+ 3) . toInteger . Map.size <$> readIORef (files m)
-          modifyIORef' (files m) (Map.insert n file)
-          newIORef (NInt n)
-    (NPrim HGetChar, [h]) -> do
-      h' <- int m h
-      open' <- Map.lookup h' <$> readIORef (files m)
-      c <- case open' of
-        Just file -> hIsEOF file >>= \done -> if done then pure Nothing else Just <$> hGetChar file
-        Nothing -> pure Nothing
-      newIORef (NInt (maybe (-1) (toInteger . ord) c))
-    (NPrim FileClose, [h]) -> do
-      h' <- int m h
-      open' <- Map.lookup h' <$> readIORef (files m)
-      mapM_ hClose open'
-      unit
-    (NPrim GetChar, []) -> do
-      c <- standardInput
-      newIORef (NInt (maybe (-1) (toInteger . ord) c))
+    (NPrim FileOpen, [mode]) -> int m mode >>= Files.open (files m) >>= number
+    (NPrim HGetChar, [h]) -> int m h >>= Files.get (files m) >>= code
+    (NPrim FileClose, [h]) -> int m h >>= Files.close (files m) >> unit
+    (NPrim GetChar, []) -> standardInput >>= code
     (NPrim HIsEOF, [h]) -> do
       h' <- int m h
-      open' <- Map.lookup h' <$> readIORef (files m)
-      done <- case open' of
-        Just file -> hIsEOF file
+      Files.atEnd (files m) h' >>= \case
+        Just done -> truth done
         -- To see whether there is a character is to read it, and keep it.
         Nothing -> do
           c <- standardInput
           writeIORef (pushed m) (Just c)
-          pure (isNothing c)
-      newIORef (NComb (if done then A else K))
+          truth (isNothing c)
+    (NPrim FileSeek, [h, whence, offset]) -> do
+      h' <- int m h
+      whence' <- int m whence
+      int m offset >>= Files.seek (files m) h' whence' >>= number
+    (NPrim FileTruncate, [h, to]) -> do
+      h' <- int m h
+      int m to >>= Files.resize (files m) h' >>= number
+    (NPrim FileFlush, [h]) -> int m h >>= Files.flush (files m) >> unit
+    (NPrim IsTerminal, [h]) -> int m h >>= Files.terminal (files m) >>= truth
+    (NPrim EnvChar, [i, j]) -> do
+      i' <- int m i
+      int m j >>= Files.environment i' >>= code
+    (NPrim CellNew, [x]) -> do
+      n <- toInteger . Map.size <$> readIORef (cells m)
+      modifyIORef' (cells m) (Map.insert n x)
+      number n
+    (NPrim CellRead, [n]) -> do
+      n' <- int m n
+      readIORef (cells m) >>= maybe (failure "there is no such cell") pure . Map.lookup n'
+    (NPrim CellWrite, [n, x]) -> do
+      n' <- int m n
+      modifyIORef' (cells m) (Map.insert n' x)
+      unit
     (NPrim ArgCount, []) -> newIORef (NInt (toInteger (length (arguments (hooks m)))))
     (NPrim ArgChar, [i, j]) -> do
       i' <- int m i
@@ -421,6 +426,9 @@ runIO m r = do
   where
     -- The Scott encoding of ().
     unit = newIORef (NComb I)
+    number = newIORef . NInt
+    code = number . maybe (-1) (toInteger . ord)
+    truth done = newIORef (NComb (if done then A else K))
     standardInput =
       readIORef (pushed m) >>= \case
         Just c -> c <$ writeIORef (pushed m) Nothing

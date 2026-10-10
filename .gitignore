@@ -4,3 +4,4 @@ dist-newstyle/
 *.pbc
 .repos
 .vscode/
+.scratch/

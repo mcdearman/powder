@@ -5,6 +5,7 @@ import qualified ConformanceSpec
 import qualified DiagnosticsSpec
 import qualified EntrySpec
 import qualified ExamplesSpec
+import qualified HazySpec
 import qualified ResolveSpec
 import qualified SyntaxSpec
 import Test.Hspec
@@ -19,3 +20,4 @@ main = hspec $ do
   describe "diagnostics" DiagnosticsSpec.spec
   describe "the examples" ExamplesSpec.spec
   describe "Haskell 2010 conformance" ConformanceSpec.spec
+  describe "Hazy's tests" HazySpec.spec

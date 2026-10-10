@@ -21,7 +21,7 @@ use num_traits::{FromPrimitive, One, ToPrimitive, Zero};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{BufRead, BufReader, BufWriter, Write};
+use std::io::{BufRead, BufReader, BufWriter, IsTerminal as _, Seek, SeekFrom, Write};
 use std::rc::Rc;
 
 // Values ---------------------------------------------------------------------
@@ -64,8 +64,8 @@ enum Prim {
     IntAdd, IntSub, IntMul, IntQuot, IntRem, IntEq, IntLt, IntLe, IntNarrow, IntToDouble,
     DoubleAdd, DoubleSub, DoubleMul, DoubleDiv, DoublePow, DoubleAtan2, DoubleEq, DoubleLt, DoubleLe,
     DoubleTruncate, DoubleFun, DoubleShowAt, FloatShowAt, FloatNarrow, DoubleMantissa, DoubleExponent,
-    DoubleEncode, DoubleFromRatio, MatchFail, PutChar, GetChar, Exit, PathChar, FileOpen, HGetChar, FileClose, HIsEOF,
-    ArgCount, ArgChar,
+    DoubleEncode, DoubleFromRatio, CharCategory, CharUpper, CharLower, CharTitle, MatchFail, PutChar, GetChar, Exit, PathChar, FileOpen, HGetChar, FileClose, HIsEOF,
+    ArgCount, ArgChar, FileSeek, FileTruncate, FileFlush, IsTerminal, EnvChar, CellNew, CellRead, CellWrite,
 }
 
 fn prim_named(name: &str) -> Result<Prim, String> {
@@ -79,10 +79,14 @@ fn prim_named(name: &str) -> Result<Prim, String> {
         "primDoubleLt" => DoubleLt, "primDoubleLe" => DoubleLe, "primDoubleTruncate" => DoubleTruncate,
         "primDoubleFun" => DoubleFun, "primDoubleShowAt" => DoubleShowAt, "primFloatShowAt" => FloatShowAt,
         "primFloatNarrow" => FloatNarrow, "primDoubleMantissa" => DoubleMantissa,
-        "primDoubleExponent" => DoubleExponent, "primDoubleEncode" => DoubleEncode, "primDoubleFromRatio" => DoubleFromRatio, "primMatchFail" => MatchFail,
+        "primDoubleExponent" => DoubleExponent, "primDoubleEncode" => DoubleEncode, "primDoubleFromRatio" => DoubleFromRatio, "primCharCategory" => CharCategory, "primCharUpper" => CharUpper,
+        "primCharLower" => CharLower, "primCharTitle" => CharTitle, "primMatchFail" => MatchFail,
         "primPutChar" => PutChar, "primGetChar" => GetChar, "primExit" => Exit, "primPathChar" => PathChar,
         "primFileOpen" => FileOpen, "primHGetChar" => HGetChar, "primFileClose" => FileClose,
         "primHIsEOF" => HIsEOF, "primArgCount" => ArgCount, "primArgChar" => ArgChar,
+        "primFileSeek" => FileSeek, "primFileTruncate" => FileTruncate, "primFileFlush" => FileFlush,
+        "primIsTerminal" => IsTerminal, "primEnvChar" => EnvChar, "primCellNew" => CellNew,
+        "primCellRead" => CellRead, "primCellWrite" => CellWrite,
         other => return Err(format!("the image uses a primitive this machine has not got: {other}")),
     })
 }
@@ -344,6 +348,35 @@ fn encode(m: &BigInt, e: i64) -> f64 {
     x
 }
 
+fn character(v: &Value) -> Result<char, String> {
+    Ok(char::from_u32(small(v)? as u32).unwrap_or(char::REPLACEMENT_CHARACTER))
+}
+
+/// A character's other case, where that is one character; itself where it
+/// is several, as Haskell's simple case mapping has it.
+fn single(c: char, map: impl Fn(char) -> Vec<char>) -> i64 {
+    match map(c).as_slice() {
+        [one] => *one as i64,
+        _ => c as i64,
+    }
+}
+
+/// Which of Unicode's general categories a character is in, in the order
+/// Haskell's `GeneralCategory` lists them.
+fn category(c: char) -> i64 {
+    use unicode_general_category::GeneralCategory::*;
+    match unicode_general_category::get_general_category(c) {
+        UppercaseLetter => 0, LowercaseLetter => 1, TitlecaseLetter => 2, ModifierLetter => 3, OtherLetter => 4,
+        NonspacingMark => 5, SpacingMark => 6, EnclosingMark => 7, DecimalNumber => 8, LetterNumber => 9,
+        OtherNumber => 10, ConnectorPunctuation => 11, DashPunctuation => 12, OpenPunctuation => 13,
+        ClosePunctuation => 14, InitialPunctuation => 15, FinalPunctuation => 16, OtherPunctuation => 17,
+        MathSymbol => 18, CurrencySymbol => 19, ModifierSymbol => 20, OtherSymbol => 21, SpaceSeparator => 22,
+        LineSeparator => 23, ParagraphSeparator => 24, Control => 25, Format => 26, Surrogate => 27,
+        PrivateUse => 28, Unassigned => 29,
+        _ => 29,
+    }
+}
+
 /// The double nearest the ratio of two integers.
 fn ratio(n: &BigInt, d: &BigInt) -> f64 {
     if d.is_zero() {
@@ -368,18 +401,21 @@ fn ratio(n: &BigInt, d: &BigInt) -> f64 {
 
 // The machine ----------------------------------------------------------------
 
-enum Open {
-    Reading(BufReader<File>),
-    Writing(File),
-}
-
 struct Machine {
     image: Image,
     globals: Vec<Rc<RefCell<Cell>>>,
     out: BufWriter<std::io::Stdout>,
     input: BufReader<std::io::Stdin>,
     path: String,
-    files: HashMap<i64, Open>,
+    // The files that are open, by number, and how many ever were: a number
+    // is not used twice. What is read is read ahead; what is written is not
+    // held back.
+    files: HashMap<i64, BufReader<File>>,
+    opened: i64,
+    // The program's cells, each a place for a value that can be changed.
+    cells: Vec<Value>,
+    // The environment, each entry written NAME=value.
+    environment: Vec<String>,
     arguments: Vec<String>,
     name: String,
 }
@@ -404,6 +440,15 @@ fn read_char(from: &mut dyn BufRead) -> Option<char> {
     let mut bytes = vec![first[0]];
     bytes.extend_from_slice(&rest[..n]);
     Some(std::str::from_utf8(&bytes).ok().and_then(|s| s.chars().next()).unwrap_or(char::REPLACEMENT_CHARACTER))
+}
+
+/// Give back what was read ahead of where the program has read to, so that
+/// what is done to the file next is done there.
+#[allow(clippy::seek_from_current)]
+fn settle(file: &mut BufReader<File>) {
+    if !file.buffer().is_empty() {
+        let _ = file.seek(SeekFrom::Current(0));
+    }
 }
 
 fn code_of(c: Option<char>) -> Value {
@@ -481,6 +526,24 @@ impl Machine {
             (DoubleExponent, [x]) => Value::Int(decode(double(x)?).1),
             (DoubleEncode, [m, e]) => Value::Double(encode(&big(m)?, small(e).unwrap_or(0).clamp(-100000, 100000))),
             (DoubleFromRatio, [n, d]) => Value::Double(ratio(&big(n)?, &big(d)?)),
+            (CharCategory, [c]) => Value::Int(match small(c)? {
+                // Half a pair is no character to Rust, and is one to Unicode.
+                0xD800..=0xDFFF => 27,
+                code => char::from_u32(code as u32).map_or(29, category),
+            }),
+            (CharUpper, [c]) => Value::Int(single(character(c)?, |x| x.to_uppercase().collect())),
+            (CharLower, [c]) => Value::Int(single(character(c)?, |x| x.to_lowercase().collect())),
+            (CharTitle, [c]) => {
+                // The few characters that are two letters in one have a title case of their own.
+                let c = character(c)?;
+                Value::Int(match c as u32 {
+                    0x01C4..=0x01C6 => 0x01C5,
+                    0x01C7..=0x01C9 => 0x01C8,
+                    0x01CA..=0x01CC => 0x01CB,
+                    0x01F1..=0x01F3 => 0x01F2,
+                    _ => single(c, |x| x.to_uppercase().collect()),
+                })
+            }
             (MatchFail, []) => return Err("pattern match failure".into()),
             (PutChar, [h, c]) => {
                 let c = char::from_u32(small(c)? as u32).unwrap_or(char::REPLACEMENT_CHARACTER);
@@ -492,10 +555,11 @@ impl Machine {
                         let _ = std::io::stderr().write_all(text);
                     }
                     h => match self.files.get_mut(&h) {
-                        Some(Open::Writing(file)) => {
-                            let _ = file.write_all(text);
+                        Some(file) => {
+                            settle(file);
+                            let _ = file.get_mut().write_all(text);
                         }
-                        _ => {
+                        None => {
                             let _ = self.out.write_all(text);
                         }
                     },
@@ -514,42 +578,93 @@ impl Machine {
             }
             (FileOpen, [mode]) => {
                 let path = std::mem::take(&mut self.path);
+                let mut options = std::fs::OpenOptions::new();
                 let opened = match small(mode)? {
-                    0 => File::open(&path).map(|f| Open::Reading(BufReader::new(f))),
-                    1 => File::create(&path).map(Open::Writing),
-                    _ => std::fs::OpenOptions::new().append(true).create(true).open(&path).map(Open::Writing),
-                };
+                    0 => options.read(true),
+                    1 => options.write(true).create(true).truncate(true),
+                    2 => options.append(true).create(true),
+                    _ => options.read(true).write(true).create(true),
+                }
+                .open(&path)
+                .and_then(|file| if file.metadata()?.is_dir() { Err(std::io::ErrorKind::Other.into()) } else { Ok(file) });
                 match opened {
                     Ok(file) => {
-                        let handle = 3 + self.files.len() as i64;
-                        self.files.insert(handle, file);
+                        let handle = 3 + self.opened;
+                        self.opened += 1;
+                        self.files.insert(handle, BufReader::new(file));
                         Value::Int(handle)
                     }
-                    Err(_) => Value::Int(-1),
+                    Err(e) => Value::Int(match e.kind() {
+                        std::io::ErrorKind::NotFound => -1,
+                        std::io::ErrorKind::PermissionDenied => -2,
+                        _ => -4,
+                    }),
                 }
             }
             (HGetChar, [h]) => match self.files.get_mut(&small(h)?) {
-                Some(Open::Reading(file)) => code_of(read_char(file)),
-                _ => Value::Int(-1),
+                Some(file) => code_of(read_char(file)),
+                None => Value::Int(-1),
             },
             (FileClose, [h]) => {
-                // The entry stays, so that no later file is given its number.
-                if let Some(file) = self.files.get_mut(&small(h)?) {
-                    if let Open::Writing(f) = file {
-                        let _ = f.flush();
-                    }
-                    *file = Open::Reading(BufReader::new(File::open("/dev/null").map_err(|e| e.to_string())?));
-                }
+                self.files.remove(&small(h)?);
                 UNIT
             }
             (HIsEOF, [h]) => match self.files.get_mut(&small(h)?) {
-                Some(Open::Reading(file)) => truth(file.fill_buf().map_or(true, |b| b.is_empty())),
-                Some(Open::Writing(_)) => truth(true),
+                Some(file) => truth(file.fill_buf().map_or(true, |b| b.is_empty())),
                 None => {
                     let _ = self.out.flush();
                     truth(self.input.fill_buf().map_or(true, |b| b.is_empty()))
                 }
             },
+            (FileSeek, [h, whence, offset]) => {
+                let (whence, offset) = (small(whence)?, small(offset)?);
+                Value::Int(match self.files.get_mut(&small(h)?) {
+                    Some(file) => match whence {
+                        0 if offset < 0 => -1,
+                        0 => file.seek(SeekFrom::Start(offset as u64)).map_or(-1, |p| p as i64),
+                        1 => file.seek(SeekFrom::Current(offset)).map_or(-1, |p| p as i64),
+                        2 => file.seek(SeekFrom::End(offset)).map_or(-1, |p| p as i64),
+                        _ => file.get_ref().metadata().map_or(-1, |m| m.len() as i64),
+                    },
+                    None => -1,
+                })
+            }
+            (FileTruncate, [h, size]) => {
+                let size = small(size)?;
+                Value::Int(match self.files.get_mut(&small(h)?) {
+                    Some(file) if size >= 0 => {
+                        settle(file);
+                        file.get_ref().set_len(size as u64).map_or(-1, |()| 0)
+                    }
+                    _ => -1,
+                })
+            }
+            (FileFlush, [h]) => {
+                if small(h)? == 1 {
+                    let _ = self.out.flush();
+                }
+                UNIT
+            }
+            (IsTerminal, [h]) => truth(match small(h)? {
+                0 => std::io::stdin().is_terminal(),
+                1 => std::io::stdout().is_terminal(),
+                2 => std::io::stderr().is_terminal(),
+                h => self.files.get(&h).is_some_and(|file| file.get_ref().is_terminal()),
+            }),
+            (EnvChar, [i, j]) => {
+                let (i, j) = (small(i)?, small(j)?.max(0) as usize);
+                code_of(usize::try_from(i).ok().and_then(|i| self.environment.get(i)).and_then(|entry| entry.chars().nth(j)))
+            }
+            (CellNew, [x]) => {
+                self.cells.push(x.clone());
+                Value::Int(self.cells.len() as i64 - 1)
+            }
+            (CellRead, [n]) => usize::try_from(small(n)?).ok().and_then(|n| self.cells.get(n)).cloned().ok_or("there is no such cell")?,
+            (CellWrite, [n, x]) => {
+                let cell = usize::try_from(small(n)?).ok().and_then(|n| self.cells.get_mut(n)).ok_or("there is no such cell")?;
+                *cell = x.clone();
+                UNIT
+            }
             (ArgCount, []) => Value::Int(self.arguments.len() as i64),
             (ArgChar, [i, j]) => {
                 let (i, j) = (small(i)?, small(j)?.max(0) as usize);
@@ -634,9 +749,9 @@ impl Machine {
                     let given = shape
                         .chars()
                         .zip(&arguments)
-                        .map(|(kind, v)| if kind == 'D' { double(v).map(foreign::Number::Double) } else { small(v).map(foreign::Number::Long) })
+                        .map(|(kind, v)| if kind == 'D' || kind == 'F' { double(v).map(foreign::Number::Double) } else { small(v).map(foreign::Number::Long) })
                         .collect::<Result<Vec<_>, _>>()?;
-                    let class = if *result == 'D' || *result == 'V' { *result } else { 'L' };
+                    let class = if matches!(*result, 'D' | 'F' | 'V') { *result } else { 'L' };
                     env.push(match (result, foreign::call(symbol, shape, class, &given)?) {
                         ('V', _) => UNIT,
                         (_, foreign::Number::Double(x)) => Value::Double(x),
@@ -772,6 +887,9 @@ fn main() {
             input: BufReader::new(std::io::stdin()),
             path: String::new(),
             files: HashMap::new(),
+            opened: 0,
+            cells: Vec::new(),
+            environment: std::env::vars_os().map(|(name, value)| format!("{}={}", name.to_string_lossy(), value.to_string_lossy())).collect(),
             arguments: rest,
             name: path,
         };

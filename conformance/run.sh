@@ -35,7 +35,7 @@ one() {
   case "$t" in
     conformance/reject/*)
       if [ ! -f "$key.ghc" ]; then
-        if (cd "$dir" && ghc -XHaskell2010 -fno-code -w -outputdir "$work" "$(basename "$main")" >/dev/null 2>&1); then echo accepts > "$key.ghc"; else echo refuses > "$key.ghc"; fi
+        if (cd "$dir" && ghc -XHaskell2010 -fno-code -outputdir "$work" "$(basename "$main")" >/dev/null 2>&1); then echo accepts > "$key.ghc"; else echo refuses > "$key.ghc"; fi
       fi
       # As far as Core, which is as far as anything is refused.
       if timeout 60 $POWDER --dump-core "$main" >/dev/null 2>&1; then powder=accepts; else powder=refuses; fi
@@ -46,10 +46,13 @@ one() {
     *)
       want=0; case "$name" in *-exit[0-9]*) want=${name##*-exit};; esac
       if [ -d "$t" ] && [ -f "$t/expected-output.txt" ]; then cp "$t/expected-output.txt" "$key.out"; echo $want > "$key.status"
+      # A file named for GHC differing from the Report has beside it what the
+      # Report says it prints, written by hand.
+      elif [ "${name%-ghc-differs}" != "$name" ] && [ -f "$name.out" ]; then cp "$name.out" "$key.out"; echo $want > "$key.status"
       elif [ ! -f "$key.out" ]; then
-        (cd "$dir" && timeout 120 runghc -XHaskell2010 -w "$(basename "$main")" one "two words" < "$input" > "$key.out" 2> "$key.err"; echo $? > "$key.status")
+        (cd "$dir" && timeout 120 runghc -XHaskell2010 "$(basename "$main")" one "two words" < "$input" > "$key.out" 2> "$key.err"; echo $? > "$key.status")
       fi
-      if [ -n "$WRITE" ] && [ "$(cat "$key.status")" = "$want" ] && [ ! -f "$t/expected-output.txt" ]; then
+      if [ -n "$WRITE" ] && [ "$(cat "$key.status")" = "$want" ] && [ ! -f "$t/expected-output.txt" ] && [ "${name%-ghc-differs}" = "$name" ]; then
         if [ -d "$t" ]; then cp "$key.out" "$t/Main.out"; else cp "$key.out" "$name.out"; fi
       fi
       if [ "$(cat "$key.status")" != "$want" ]; then echo "TESTBAD $t :: under GHC it leaves with $(cat "$key.status"): $(grep -m1 -E 'error|rror:' "$key.err" 2>/dev/null | cut -c1-140)"; rm -rf "$work"; return; fi

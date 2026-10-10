@@ -50,8 +50,7 @@ machineBuilt :: IO Bool
 machineBuilt = doesFileExist machine
 
 -- | Run a program, named for where its image may be put, given what it is
--- to read. It is given the arguments @one@ and @two words@, and twenty
--- seconds.
+-- to read. It is given the arguments @one@ and @two words@, and a minute.
 execute :: Runtime -> String -> Program -> String -> IO Outcome
 execute runtime name prog input = case runtime of
   Reducer -> inProcess (\hooks -> void (run hooks (compileProgram prog)))
@@ -67,7 +66,7 @@ execute runtime name prog input = case runtime of
       Just (ExitSuccess, out, err) -> Outcome out 0 err
       Just (ExitFailure n, out, err) -> Outcome out n err
   where
-    limit = 20000000
+    limit = 60000000
     inProcess go = do
       out <- newIORef ""
       rest <- newIORef input

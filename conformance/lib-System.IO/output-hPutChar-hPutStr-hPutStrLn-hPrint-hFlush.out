@@ -1,0 +1,23 @@
+("size after hFlush",129)
+a
+no newline, continued
+with newline
+
+42
+"a string is shown with quotes"
+(1.5,'c',[True,False])
+Just (-3)
+chars one by one
+1
+2
+3
+after flush
+("line count",13)
+("as lines",["a","no newline, continued","with newline","","42","\"a string is shown with quotes\"","(1.5,'c',[True,False])","Just (-3)","chars one by one","1","2","3","after flush"])
+x
+to stdout, explicitly
+Just "printed"
+putStrLn and hPutStrLn stdout interleave in order:
+1
+2
+345

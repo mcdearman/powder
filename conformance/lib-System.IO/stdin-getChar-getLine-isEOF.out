@@ -4,7 +4,7 @@
 ("getLine","second")
 ("getLine on an empty line","")
 ("getChar reads the newline too",'x','\n')
-("getLine keeps inner and trailing spaces","  spaced  out")
+("getLine keeps leading and inner spaces","  spaced  out")
 ("isEOF before the last line",False)
 ("getLine at end of input without newline","tail without newline")
 ("isEOF at end",True)

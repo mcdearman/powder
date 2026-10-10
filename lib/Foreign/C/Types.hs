@@ -1,6 +1,6 @@
 -- The types of C's numbers. Each whole number is an Integer kept within
--- its size, and a CDouble is a Double.
-module Foreign.C.Types (CChar, CSChar, CUChar, CShort, CUShort, CInt, CUInt, CLong, CULong, CLLong, CULLong, CSize, CDouble) where
+-- its size, a CDouble is a Double and a CFloat a Float.
+module Foreign.C.Types (CChar, CSChar, CUChar, CShort, CUShort, CInt, CUInt, CLong, CULong, CLLong, CULLong, CSize, CDouble, CFloat) where
 
 newtype CChar = MkCChar Integer
 
@@ -710,3 +710,64 @@ instance Enum CDouble where
   enumFromThen (MkCDouble a) (MkCDouble b) = map MkCDouble (enumFromThen a b)
   enumFromTo (MkCDouble a) (MkCDouble b) = map MkCDouble (enumFromTo a b)
   enumFromThenTo (MkCDouble a) (MkCDouble b) (MkCDouble c) = map MkCDouble (enumFromThenTo a b c)
+
+newtype CFloat = MkCFloat Float
+
+instance Eq CFloat where
+  MkCFloat a == MkCFloat b = a == b
+
+instance Ord CFloat where
+  MkCFloat a <= MkCFloat b = a <= b
+  MkCFloat a < MkCFloat b = a < b
+
+instance Show CFloat where
+  showsPrec p (MkCFloat a) = showsPrec p a
+
+instance Read CFloat where
+  readsPrec p s = [(MkCFloat x, t) | (x, t) <- readsPrec p s]
+
+instance Num CFloat where
+  MkCFloat a + MkCFloat b = MkCFloat (a + b)
+  MkCFloat a - MkCFloat b = MkCFloat (a - b)
+  MkCFloat a * MkCFloat b = MkCFloat (a * b)
+  negate (MkCFloat a) = MkCFloat (negate a)
+  abs (MkCFloat a) = MkCFloat (abs a)
+  signum (MkCFloat a) = MkCFloat (signum a)
+  fromInteger n = MkCFloat (fromInteger n)
+
+instance Real CFloat where
+  toRational (MkCFloat a) = toRational a
+
+instance Fractional CFloat where
+  MkCFloat a / MkCFloat b = MkCFloat (a / b)
+  fromRational q = MkCFloat (fromRational q)
+
+instance Floating CFloat where
+  pi = MkCFloat pi
+  exp (MkCFloat a) = MkCFloat (exp a)
+  log (MkCFloat a) = MkCFloat (log a)
+  sqrt (MkCFloat a) = MkCFloat (sqrt a)
+  sin (MkCFloat a) = MkCFloat (sin a)
+  cos (MkCFloat a) = MkCFloat (cos a)
+  asin (MkCFloat a) = MkCFloat (asin a)
+  acos (MkCFloat a) = MkCFloat (acos a)
+  atan (MkCFloat a) = MkCFloat (atan a)
+  sinh (MkCFloat a) = MkCFloat (sinh a)
+  cosh (MkCFloat a) = MkCFloat (cosh a)
+  asinh (MkCFloat a) = MkCFloat (asinh a)
+  acosh (MkCFloat a) = MkCFloat (acosh a)
+  atanh (MkCFloat a) = MkCFloat (atanh a)
+  MkCFloat a ** MkCFloat b = MkCFloat (a ** b)
+
+instance RealFrac CFloat where
+  properFraction (MkCFloat a) = let (n, r) = properFraction a in (n, MkCFloat r)
+
+instance Enum CFloat where
+  succ x = x + 1
+  pred x = x - 1
+  toEnum n = MkCFloat (toEnum n)
+  fromEnum (MkCFloat a) = fromEnum a
+  enumFrom (MkCFloat a) = map MkCFloat (enumFrom a)
+  enumFromThen (MkCFloat a) (MkCFloat b) = map MkCFloat (enumFromThen a b)
+  enumFromTo (MkCFloat a) (MkCFloat b) = map MkCFloat (enumFromTo a b)
+  enumFromThenTo (MkCFloat a) (MkCFloat b) (MkCFloat c) = map MkCFloat (enumFromThenTo a b c)

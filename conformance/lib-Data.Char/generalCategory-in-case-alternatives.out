@@ -1,0 +1,6 @@
+LowercaseLetter
+MathSymbol
+["lower","upper","digit","math","space","control","other"]
+(True,False)
+(CurrencySymbol,ConnectorPunctuation,OpenPunctuation,ClosePunctuation)
+(OtherLetter,18,LineSeparator)

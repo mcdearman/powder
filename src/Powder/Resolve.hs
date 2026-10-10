@@ -18,7 +18,7 @@
 -- noted under it. A mistake does not stop the pass. It is reported, an
 -- error node stands in for what was wrong, and the rest is still resolved,
 -- so that everything wrong with a program is found at once.
-module Powder.Resolve (resolve) where
+module Powder.Resolve (resolve, resolveAfter, Seed (..), Linkage (..), Scope (..)) where
 
 import Control.Applicative ((<|>))
 import Control.Monad
@@ -34,7 +34,7 @@ import qualified Data.Set as Set
 import Numeric (readFloat)
 import Powder.Core (ConInfo (..), Name, Prim (MatchFail), primName)
 import Powder.Diagnostics (Problem (..))
-import Powder.HIR
+import Powder.HIR hiding (mine)
 import qualified Powder.HIR.Pat as Pat
 import qualified Powder.HIR.Type as Type
 import Powder.Parser (Parsed (..), parseModule)
@@ -97,6 +97,8 @@ data St = St
     -- | The fixity each operator was declared to have, by 'NameId'.
     fixityTable :: Table (Assoc, Int),
     newtypes :: [NameId],
+    -- | Which of each constructor's fields are strict, by 'NameId'.
+    strict :: Table [Bool],
     problems :: [Problem]
   }
 
@@ -121,28 +123,109 @@ type M = ReaderT Env (State St)
 -- one of the same name, where otherwise a use of it would be ambiguous:
 -- that is for a prompt, where defining again is what one does.
 resolve :: [Name] -> [(FilePath, Name, Module)] -> Maybe (Name, Maybe Name, FilePath, Syntax.Expr) -> Either [Problem] Program
-resolve lenient sources extra = case reverse (problems final) of
-  [] -> Right (Program (bindings ++ reverse (generated final)) (names final) (origins final) (signatures final) (reverse (dataTypes final)) (synonyms final) (classes final) (reverse (instances final)) builtins root (defaults final) (newtypes final) ([(file, n) | (file, n, _) <- sources] ++ [(file, root) | Just (_, _, file, _) <- [extra]]) [(n, [name | (name, _, _, _) <- importsOf n]) | n <- moduleNames])
+resolve lenient sources extra = fst <$> resolveAfter Nothing lenient sources extra
+
+-- | What name resolution knows that a program does not say: what each
+-- module lets out, and what the resolving of later modules looks up.
+-- With a program's tables it is all a package compiled later needs of
+-- one compiled before.
+data Linkage = Linkage
+  { -- | What each module exports.
+    linkExports :: Map.Map Name Scope,
+    -- | Everything the module the prelude is made from defines, which is
+    -- what the desugaring refers to.
+    linkBase :: Maybe Scope,
+    -- | What belongs to each type and class: constructors, and fields or
+    -- methods.
+    linkBelongings :: Table ([(Name, NameId)], [(Name, NameId)]),
+    -- | The types and constructors the language has, and what it refers
+    -- to itself.
+    linkWired :: Maybe ([(Name, NameId)], [(Name, NameId)], Builtins),
+    linkFields :: Table [(NameId, Int)],
+    linkFixities :: Table (Assoc, Int),
+    linkStrict :: Table [Bool]
+  }
+
+instance Semigroup Linkage where
+  Linkage a b c d e f g <> Linkage a' b' c' d' e' f' g' =
+    Linkage (Map.union a a') (b <|> b') (IntMap.union c c') (d <|> d') (IntMap.union e e') (IntMap.union f f') (IntMap.union g g')
+
+instance Monoid Linkage where
+  mempty = Linkage Map.empty Nothing IntMap.empty Nothing IntMap.empty IntMap.empty IntMap.empty
+
+-- | The packages a package is compiled after: where its identities start,
+-- and what is known of the others. The lists are in the order of a
+-- program's.
+data Seed = Seed
+  { seedFloor :: Int,
+    seedLinkage :: Linkage,
+    seedNames :: Table NameInfo,
+    seedOrigins :: Table Origin,
+    seedSignatures :: Table Signature,
+    seedSynonyms :: Table Synonym,
+    seedDataTypes :: [DataType],
+    seedClasses :: Table Class,
+    seedInstances :: [Instance],
+    seedNewtypes :: [NameId],
+    seedModules :: [(FilePath, String)],
+    seedImports :: [(String, [String])]
+  }
+
+-- | Resolve modules as 'resolve' does, as a package compiled after
+-- others if a seed is given. Then the program has the others' types,
+-- classes and instances in it beside its own, but only its own
+-- definitions; no module's names are spelled plainly; and a module of the
+-- others can be imported. With the program comes what a package compiled
+-- after this one will need to be given in its turn.
+resolveAfter :: Maybe Seed -> [Name] -> [(FilePath, Name, Module)] -> Maybe (Name, Maybe Name, FilePath, Syntax.Expr) -> Either [Problem] (Program, Linkage)
+resolveAfter seed lenient sources extra = case reverse (problems final) of
+  [] -> Right (program, linked {linkFields = fields final, linkFixities = fixityTable final, linkStrict = strict final})
   found -> Left found
   where
-    ((bindings, builtins), final) =
+    program = Program (bindings ++ reverse (generated final)) (names final) (origins final) (signatures final) (reverse (dataTypes final)) (synonyms final) (classes final) (reverse (instances final)) builtins spelled (defaults final) (newtypes final) (maybe [] seedModules seed ++ [(file, n) | (file, n, _) <- sources] ++ [(file, root) | Just (_, _, file, _) <- [extra]]) (maybe [] seedImports seed ++ [(n, [name | (name, _, _, _) <- importsOf n]) | n <- moduleNames]) (maybe (-1) seedFloor seed)
+    ((linked, (bindings, builtins)), final) =
       runState
-        (runReaderT run (Env Map.empty Map.empty Map.empty Map.empty Map.empty Map.empty "" Nothing "" root Set.empty Map.empty Map.empty False))
-        (St 0 IntMap.empty IntMap.empty IntMap.empty IntMap.empty [] IntMap.empty [] IntMap.empty [] [] IntMap.empty [] [])
+        (runReaderT run (Env Map.empty Map.empty Map.empty Map.empty Map.empty Map.empty "" Nothing "" spelled Set.empty Map.empty Map.empty False))
+        initial
+    initial = case seed of
+      Nothing -> St 0 IntMap.empty IntMap.empty IntMap.empty IntMap.empty [] IntMap.empty [] IntMap.empty [] [] IntMap.empty [] IntMap.empty []
+      Just s ->
+        St
+          (seedFloor s)
+          (seedNames s)
+          (seedOrigins s)
+          (seedSignatures s)
+          (seedSynonyms s)
+          (reverse (seedDataTypes s))
+          (seedClasses s)
+          (reverse (seedInstances s))
+          (linkFields before)
+          []
+          []
+          (linkFixities before)
+          (seedNewtypes s)
+          (linkStrict before)
+          []
+    -- What the packages before this one let be known.
+    before = maybe mempty seedLinkage seed
+    -- In a package every name is spelled with its module's: no module is
+    -- the one a program starts in until packages are put together.
+    spelled = maybe root (const "") seed
     moduleNames = nub [n | (_, n, _) <- sources]
     -- The module a prompt's expression is in, and whose names are spelled
     -- plainly in what is compiled: the last.
     root = case reverse moduleNames of
       n : _ -> n
       [] -> "Main"
-    hasPrelude = "Prelude" `elem` moduleNames
+    hasPrelude = "Prelude" `elem` moduleNames || Map.member "Prelude" (linkExports before)
     sourcesOf n = [(file, m) | (file, n', m) <- sources, n' == n]
     importsOf n =
-      [(name, qualified, alias, items) | (_, m) <- sourcesOf n, Decl.Import name qualified alias items <- moduleDecls m]
+      -- An import of the module itself is an error, and brings in nothing.
+      [(name, qualified, alias, items) | (_, m) <- sourcesOf n, Decl.Import name qualified alias items <- moduleDecls m, name /= n]
         ++ [("Prelude", False, Nothing, Nothing) | hasPrelude, n /= "Prelude", null [() | (_, m) <- sourcesOf n, Decl.Import "Prelude" _ _ _ <- moduleDecls m]]
 
     run = do
-      (wiredTypes, wiredConstructors, wiredBuiltins) <- wiredIn
+      (wiredTypes, wiredConstructors, wiredBuiltins) <- maybe wiredIn pure (linkWired before)
       -- Every name a module declares at its top, before what any of them
       -- is: types and their constructors, classes, and values.
       declaredTypes <- forM sources $ \(file, n, m) -> inPart n file . fmap concat . forM (moduleDecls m) $ \d -> within d $ case d of
@@ -182,10 +265,13 @@ resolve lenient sources extra = case reverse (problems final) of
               }
           -- What belongs to each type and class: constructors, or methods.
           belongings =
-            IntMap.fromList
-              ( [(nameKey t, (cs, [(x, globalsOf n Map.! x) | x <- xs])) | ((_, n, _), ts, _) <- parts, (_, t, cs, xs) <- ts]
-                  ++ [(nameKey c, ([], [(x, globalsOf n Map.! x) | x <- xs])) | ((_, n, _), _, cs) <- parts, (_, c, xs) <- cs]
+            IntMap.union
+              ( IntMap.fromList
+                  ( [(nameKey t, (cs, [(x, globalsOf n Map.! x) | x <- xs])) | ((_, n, _), ts, _) <- parts, (_, t, cs, xs) <- ts]
+                      ++ [(nameKey c, ([], [(x, globalsOf n Map.! x) | x <- xs])) | ((_, n, _), _, cs) <- parts, (_, c, xs) <- cs]
+                  )
               )
+              (linkBelongings before)
           headerOf n = listToMaybe [h | (_, m) <- sourcesOf n, Just (_, Just h) <- [moduleHeader m]]
           imported known (name, qualified, alias, items) =
             let chosen = selected belongings items (Map.findWithDefault mempty name known)
@@ -203,9 +289,9 @@ resolve lenient sources extra = case reverse (problems final) of
                   | otherwise = mconcat [selected belongings items' (Map.findWithDefault mempty name known) | (name, False, alias, items') <- importsOf n, fromMaybe name alias == m]
                 exported _ item = unqualifiedNames (picked belongings scope item)
           settle known (rounds :: Int) =
-            let next = Map.fromList [(n, exportsIn known n) | n <- moduleNames]
+            let next = Map.union (Map.fromList [(n, exportsIn known n) | n <- moduleNames]) (linkExports before)
              in if next == known || rounds == 0 then known else settle next (rounds - 1)
-          exports = settle (Map.fromList [(n, mempty) | n <- moduleNames]) (4 * length moduleNames + 8)
+          exports = settle (Map.union (Map.fromList [(n, mempty) | n <- moduleNames]) (linkExports before)) (4 * length moduleNames + 8)
           wired = Scope Map.empty (Map.fromList [(c, [x]) | (c, x) <- wiredConstructors]) (Map.fromList [(t, [x]) | (t, x) <- wiredTypes]) Map.empty
           -- A module's own type of a name the language has hides that one.
           -- What the language has is the prelude's, to name it by.
@@ -218,6 +304,7 @@ resolve lenient sources extra = case reverse (problems final) of
           -- the prelude lets out.
           basis n
             | "Powder.Base" `elem` moduleNames = own "Powder.Base" <> wired
+            | Just base <- linkBase before = base <> wired
             | hasPrelude && n /= "Prelude" = Map.findWithDefault mempty "Prelude" exports
             | otherwise = scopeOf n
           inModule n file =
@@ -238,13 +325,26 @@ resolve lenient sources extra = case reverse (problems final) of
       forM_ sources $ \(file, n, m) -> inModule n file $ do
         forM_ (moduleDecls m) $ \d -> within d $ case d of
           Decl.Import name _ _ items
-            | name `notElem` moduleNames -> complain ("there is no module " ++ name)
-            | Just (False, wanted) <- items -> forM_ wanted $ \item ->
-                when (picked belongings (Map.findWithDefault mempty name exports) item == mempty) (complain (name ++ " does not export " ++ itemName item))
+            | name `notElem` moduleNames && Map.notMember name (linkExports before) -> complain ("there is no module " ++ name)
+            -- Said once, where what a file may not say is checked.
+            | name == n -> pure ()
+            | Just (False, wanted) <- items -> forM_ wanted $ \item -> do
+                let theirs = Map.findWithDefault mempty name exports
+                when (picked belongings theirs item == mempty) (complain (name ++ " does not export " ++ itemName item))
+                forM_ (lacking belongings theirs item) (\x -> complain (name ++ " does not export " ++ x ++ " with " ++ itemName item))
           _ -> pure ()
-        forM_ (moduleHeader m) $ \(_, listed) -> forM_ (fromMaybe [] listed) $ \item -> case item of
-          Syntax.Reexport _ -> pure ()
-          _ -> when (picked belongings (scopeOf n) item == mempty) (within m (complain (itemName item ++ " is exported, but is not in scope")))
+        forM_ (moduleHeader m) $ \(_, listed) -> within m $ do
+          forM_ (fromMaybe [] listed) $ \item -> case item of
+            Syntax.Reexport other ->
+              unless (other == n || other `elem` [fromMaybe name alias | (name, _, alias, _) <- importsOf n]) $
+                complain ("the module " ++ other ++ " is exported, but is not imported")
+            _ -> do
+              when (picked belongings (scopeOf n) item == mempty) (complain (itemName item ++ " is exported, but is not in scope"))
+              forM_ (lacking belongings (scopeOf n) item) (\x -> complain (x ++ " is exported with " ++ itemName item ++ ", which it does not belong to"))
+          -- One name is one thing to whoever imports it.
+          let mine = Map.findWithDefault mempty n exports
+              twice = concat [Map.keys (Map.filter ((> 1) . length) (f mine)) | f <- [scopeValues, scopeConstructors, scopeTypes, scopeClasses]]
+          forM_ (nub twice) (\x -> complain (x ++ " is exported as two different things"))
       -- The fixities each module declares, before any expression is read.
       forM_ sources $ \(file, n, m) -> inModule n file $ do
         env <- ask
@@ -267,6 +367,11 @@ resolve lenient sources extra = case reverse (problems final) of
         forM_ (nub (types' \\ nub types')) (\t -> complain ("the type " ++ t ++ " is declared more than once"))
         when (length [() | Decl.Default _ <- decls] > 1) (complain "a module has at most one default declaration")
         when (any isImport (dropWhile isImport decls)) (complain "an import comes after a declaration: imports go first")
+        -- Modules may import each other, but what a module has it has
+        -- already: importing itself could only bring in names from nowhere.
+        forM_ decls $ \d -> case d of
+          Decl.Import name _ _ _ | name == n -> within d (complain ("the module " ++ n ++ " imports itself"))
+          _ -> pure ()
       known <- get
       let reaches next = go []
             where
@@ -331,7 +436,7 @@ resolve lenient sources extra = case reverse (problems final) of
             case IntMap.lookup (nameKey c) belongings of
               Just (_, ms) | x `elem` map snd ms -> Just (c, x)
               _ -> Nothing
-      pure (kept ++ asked, wiredBuiltins {builtinNumeric = method "Num" "fromInteger", builtinEquality = method "Eq" "==", builtinFractional = (\(c, x) k -> (c, x, k)) <$> method "Fractional" "fromRational" <*> Map.lookup ":%" (one (scopeConstructors (basis root)))})
+      pure (Linkage exports (if "Powder.Base" `elem` moduleNames then Just (own "Powder.Base") else linkBase before) belongings (Just (wiredTypes, wiredConstructors, wiredBuiltins)) IntMap.empty IntMap.empty IntMap.empty, (kept ++ asked, wiredBuiltins {builtinNumeric = method "Num" "fromInteger", builtinEquality = method "Eq" "==", builtinFractional = (\(c, x) k -> (c, x, k)) <$> method "Fractional" "fromRational" <*> Map.lookup ":%" (one (scopeConstructors (basis root)))}))
 
     overridden redefined b = case bindingKind b of
       Function f _ -> f `elem` redefined
@@ -403,11 +508,22 @@ picked belongings scope = \case
      in mempty
           { scopeTypes = at c (scopeTypes scope),
             scopeClasses = at c (scopeClasses scope),
-            scopeConstructors = Map.fromListWith (++) [(x, [n]) | (cs, _) <- belonging, (x, n) <- cs, wanted x],
-            scopeValues = Map.fromListWith (++) [(x, [n]) | (_, ms) <- belonging, (x, n) <- ms, wanted x]
+            scopeConstructors = Map.fromListWith (++) [(x, [n]) | (cs, _) <- belonging, (x, n) <- cs, wanted x, n `Set.member` constructorsThere],
+            scopeValues = Map.fromListWith (++) [(x, [n]) | (_, ms) <- belonging, (x, n) <- ms, wanted x, n `Set.member` valuesThere]
           }
   where
     at x = Map.filterWithKey (\k _ -> k == x)
+    -- What belongs to a type is picked only if it is there: a type may
+    -- be exported without its constructors.
+    constructorsThere = Set.fromList (concat (Map.elems (scopeConstructors scope)))
+    valuesThere = Set.fromList (concat (Map.elems (scopeValues scope)))
+
+-- | The names an item asks for of what belongs to a type or a class,
+-- that are not to be had.
+lacking :: IntMap.IntMap ([(Name, NameId)], [(Name, NameId)]) -> Scope -> Syntax.Listed -> [Name]
+lacking belongings scope item = case item of
+  Syntax.Thing _ (Syntax.Some xs) -> let got = picked belongings scope item in [x | x <- xs, Map.notMember x (scopeConstructors got), Map.notMember x (scopeValues got)]
+  _ -> []
 
 -- | What an import takes of what a module exports: all of it, the items
 -- it lists, or all but the items it hides.
@@ -643,6 +759,7 @@ typeDecl own d = within d $ case d of
     declared <- withTypeVariables scope . forM cs $ \c@(Syntax.Constructor name tys) -> within c ((,) name <$> mapM type' tys)
     let (name, ids) = own Map.! t
     constructorsAs ids name (map snd scope) declared
+    modify (\st -> st {strict = IntMap.union (IntMap.fromList (zip (map nameKey ids) (map Syntax.constructorStrict cs))) (strict st)})
     when (Decl.isNewtype d) $
       if map (length . snd) declared == [1]
         then modify (\st -> st {newtypes = ids ++ newtypes st})
@@ -871,7 +988,13 @@ instanceDecl d = within d $ case d of
 -- names this module's types were given.
 deriving' :: Map.Map Name NameId -> Syntax.Decl -> M ()
 deriving' own d = within d $ case d of
-  Decl.Data t parameters cs -> forM_ (Decl.derived d) $ \c ->
+  Decl.Data t parameters cs -> forM_ (Decl.derived d) $ \c -> do
+    -- Whether a field's type is the type being declared, as it is declared.
+    let itself = \case
+          SType.Paren inner -> itself inner
+          SType.Con n -> null parameters && n == t
+          SType.App (SType.Con n) arguments -> n == t && map Just parameters == map (\case SType.Var v -> Just v; _ -> Nothing) arguments
+          _ -> False
     asks (Map.lookup c . envClasses) >>= \case
       Nothing -> complain ("unknown class " ++ c)
       Just k -> do
@@ -892,7 +1015,7 @@ deriving' own d = within d $ case d of
             | otherwise -> Nothing <$ complain "Bounded can only be derived for a type with one constructor, or whose constructors have no fields"
           "Read" -> do
             shapes <- forM cs $ \con@(Syntax.Constructor name tys) ->
-              (\(_, prec) -> (name, length tys, Syntax.constructorFields con, if Syntax.constructorInfix con then Just prec else Nothing)) <$> fixityOf name
+              (\(_, prec) -> (name, length tys, Syntax.constructorFields con, if Syntax.constructorInfix con then Just prec else Nothing, map itself tys)) <$> fixityOf name
             Nothing <$ written (readInstance c t (nub parameters) constrained shapes)
           "Ix"
             | all (\(_, _, arity) -> arity == 0) constructors && not (null constructors) || length constructors == 1 ->
@@ -928,34 +1051,66 @@ instanceHead cls t parameters constrained = "instance " ++ context ++ cls ++ " (
 -- its two; a record's fields by name. Each constructor is its name, how
 -- many fields it has, their names if it is a record's, and how tightly
 -- it binds if it is an operator.
-readInstance :: Name -> Name -> [Name] -> [Name] -> [(Name, Int, [Name], Maybe Int)] -> String
-readInstance cls t parameters constrained constructors = instanceHead cls t parameters constrained ++ "{ readsPrec d r = " ++ alternatives ++ " }"
+-- | An instance of Read as the Report's section 11.4 has it, written out.
+--
+-- The Report gives each constructor its own reader, in its own optional
+-- parentheses, and joins them. Done as written that reads what is in
+-- parentheses once for every constructor, and what is to the left of an
+-- operator once for every operator, at every depth: a value nested a few
+-- deep takes minutes. So here the same parses are found with the work
+-- shared. Whatever is in parentheses is read once, as any of the type's
+-- values, which is what each constructor's parentheses come to together;
+-- and an operator's left operand, where it is of the type being read, is
+-- read by this reader and not by starting again. What a constructor's
+-- reader finds does not depend on what is around it, only whether it is
+-- wanted does, so each is found once and kept. (The combinator reducer
+-- would keep them anyway: it shares whatever does not depend on a
+-- function's argument. No other machine does.)
+--
+-- A constructor is its name, how many fields it has, their names if they
+-- have them, its precedence if it is written between its fields, and
+-- which of its fields are of the type itself.
+readInstance :: Name -> Name -> [Name] -> [Name] -> [(Name, Int, [Name], Maybe Int, [Bool])] -> String
+readInstance cls t parameters constrained constructors =
+  instanceHead cls t parameters constrained
+    ++ "{ readsPrec d r = go d where { lexed = lex r; "
+    ++ "wrapped = [(x, s2) | (\"(\", s0) <- lexed, (x, s1) <- readsPrec 0 s0, (\")\", s2) <- lex s1]; "
+    ++ concat [parses i ++ " = " ++ made ++ "; " | (i, (_, made)) <- alternatives]
+    ++ "go k = "
+    ++ intercalate " ++ " ([maybe (parses i) (\prec -> "(if k > " ++ show prec ++ " then [] else " ++ parses i ++ ")") most | (i, (most, _)) <- alternatives] ++ ["wrapped"])
+    ++ " } }"
   where
-    alternatives = if null constructors then "[]" else intercalate " ++ " (map alternative constructors)
+    -- What each constructor's reader finds is found once, whatever is
+    -- around: only whether it is wanted depends on that.
+    alternatives = zip [1 :: Int ..] (map alternative constructors)
+    parses i = "parses" ++ show i
     x i = "x" ++ show (i :: Int)
-    s i = "s" ++ show (i :: Int)
-    alternative (name, arity, fieldNames, infixed)
-      | arity == 0 = reading "False" (name, 1) [token 0 name]
-      -- Written between its fields: an operator is one lexeme, and a name
-      -- in backquotes three.
+    symbolic name = take 1 name == ":" || not (any (`elem` ['a' .. 'z'] ++ ['A' .. 'Z'] ++ "_") (take 1 name))
+    -- A name as lexemes: an operator where a name is wanted is in
+    -- parentheses, and a name where an operator is wanted in backquotes.
+    prefixed name = if symbolic name then [Left "(", Left name, Left ")"] else [Left name]
+    between name = if symbolic name then [Left name] else [Left "`", Left name, Left "`"]
+    alternative (name, arity, fieldNames, infixed, own)
+      | arity == 0 = reading Nothing (written' name) (prefixed name)
       | Just prec <- infixed,
         arity == 2 =
-          let quoted = take 1 name /= ":"
-              between = if quoted then [token 1 "`", token 2 name, token 3 "`"] else [token 1 name]
-              after = length between + 1
-              written' = if quoted then "`" ++ name ++ "`" else name
-           in reading ("(d > " ++ show prec ++ ")") (x 1 ++ " " ++ written' ++ " " ++ x 2, after + 1) ([value (prec + 1) 1 0] ++ between ++ [value (prec + 1) 2 after])
+          reading (Just prec) (x 1 ++ " " ++ (if symbolic name then name else "`" ++ name ++ "`") ++ " " ++ x 2) ([Right (prec + 1, 1, take 1 own == [True])] ++ between name ++ [Right (prec + 1, 2, False)])
       | not (null fieldNames) =
-          let fieldAt i f = [token (4 * i + 1) (if i == 0 then "{" else ","), token (4 * i + 2) f, token (4 * i + 3) "=", value 0 (i + 1) (4 * i + 4)]
-              steps = token 0 name : concat (zipWith fieldAt [0 ..] fieldNames) ++ [token (4 * arity + 1) "}"]
-           in reading "(d > 11)" (unwords (name : map x [1 .. arity]), 4 * arity + 2) steps
-      | otherwise = reading "(d > 10)" (unwords (spelled name : map x [1 .. arity]), arity + 1) (token 0 name : [value 11 i i | i <- [1 .. arity]])
-    spelled name = if take 1 name == ":" then "(" ++ name ++ ")" else name
-    -- A step reads from one state to the next: a token, or a value.
-    token i text = "(" ++ show text ++ ", " ++ s (i + 1) ++ ") <- lex " ++ s i
-    value :: Int -> Int -> Int -> String
-    value prec i from = "(" ++ x i ++ ", " ++ s (from + 1) ++ ") <- readsPrec " ++ show prec ++ " " ++ s from
-    reading needed (made, final) steps = "readParen " ++ needed ++ " (\\s0 -> [(" ++ made ++ ", " ++ s final ++ ") | " ++ intercalate ", " steps ++ "]) r"
+          let field i f = [Left (if i == 1 then "{" else ",")] ++ prefixed f ++ [Left "=", Right (0, i, False)]
+           in reading (Just 11) (unwords (written' name : map x [1 .. arity])) (prefixed name ++ concat (zipWith field [1 ..] fieldNames) ++ [Left "}"])
+      | otherwise = reading (Just 10) (unwords (written' name : map x [1 .. arity])) (prefixed name ++ [Right (11, i, False) | i <- [1 .. arity]])
+    written' name = if symbolic name then "(" ++ name ++ ")" else name
+    -- A reader of lexemes and values in a row: each step reads from where
+    -- the one before it left off, the first from the start. It reads
+    -- nothing where what is around binds tighter than the constructor.
+    reading :: Maybe Int -> String -> [Either String (Int, Int, Bool)] -> (Maybe Int, String)
+    reading most made steps =
+      (most, "[(" ++ made ++ ", s" ++ show (length steps) ++ ") | " ++ intercalate ", " (zipWith step [0 :: Int ..] steps) ++ "]")
+    step i = \case
+      Left lexeme -> "(" ++ show lexeme ++ ", s" ++ show (i + 1) ++ ") <- " ++ (if i == 0 then "lexed" else "lex s" ++ show i)
+      Right (prec, v, mine) ->
+        "(" ++ x v ++ ", s" ++ show (i + 1) ++ ") <- "
+          ++ (if i == 0 then (if mine then "go " ++ show (prec :: Int) else "readsPrec " ++ show prec ++ " r") else "readsPrec " ++ show prec ++ " s" ++ show i)
 
 -- | Indexed in the order the constructors were declared; or for the one
 -- constructor of a type, by its fields, the last counting fastest.
@@ -1340,7 +1495,10 @@ patternOf p = within p $ case p of
         arity <- arityOf k
         given <- placed k fs
         ps <- forM [0 .. arity - 1] (\i -> maybe (mkPat Pat.Wild) patternOf (lookup i given))
-        mkPat (Pat.Con k ps)
+        whole <- mkPat (Pat.Con k ps)
+        -- Fields are matched in the order they are written.
+        let order = map fst given
+        if and (zipWith (<) order (drop 1 order)) then pure whole else mkPat (Pat.Ordered order whole)
   SPat.As x q -> do
     name <- binder x
     patternOf q >>= mkPat . Pat.As name
@@ -1415,6 +1573,9 @@ expr e = within e $ case e of
       Just k -> do
         arity <- arityOf k
         given <- placed k fs
+        musts <- gets (IntMap.findWithDefault [] (nameKey k) . strict)
+        when (or [must | (i, must) <- zip [0 ..] musts, i `notElem` map fst given]) $
+          complain ("a strict field of " ++ c ++ " is not given")
         arguments <- forM [0 .. arity - 1] (\i -> maybe (mk (Prim MatchFail)) expr (lookup i given))
         mk (Con k) >>= (`apply` arguments)
   -- A record changed: for each constructor that has all the fields, the

@@ -33,6 +33,6 @@ main = do
   print ("pattern", let (a, b, c) = (1, 'x', True) in (c, b, a))
   print ("lazy components", fst (1, undefined), case (undefined, 2) of { (_, y) -> y })
   print ("bounds", (minBound, maxBound) :: (Bool, Bool))
-  print ("tuple of functions", fst (succ, pred) 5, snd (succ, pred) 5)
+  print ("tuple of functions", fst (succ, pred :: Int -> Int) 5, snd (succ :: Int -> Int, pred) 5)
   print ("mixed types", (1, 'c', "s", True, 2.5, [1], Just ()))
   print ("spaces", ( , ) 1 2, ( , , ) 1 2 3)

@@ -29,6 +29,7 @@ module Powder.Syntax.AST
     Constructor (Constructor),
     constructorFields,
     constructorInfix,
+    constructorStrict,
     Rhs (Rhs),
     Type,
     Expr,
@@ -44,6 +45,7 @@ where
 
 import Powder.Syntax.AST.Internal
 import qualified Powder.Syntax.Kind as K
+import qualified Data.Text as Text
 import qualified Powder.Syntax.Red as Red
 
 moduleDecls :: Module -> [Decl]
@@ -85,6 +87,21 @@ fieldDecls r = [f | f <- Red.nodes r, Red.kind f == K.FieldDecl]
 
 fieldNames :: Red.Red -> [Name]
 fieldNames f = [x | (k, x) <- takeWhile ((/= K.DoubleColon) . fst) (spelled f), k `elem` [K.VarId, K.VarSym]]
+
+-- | Which of a constructor's fields are marked strict, in order.
+constructorStrict :: Constructor -> [Bool]
+constructorStrict (syntax -> r) = case fieldDecls r of
+  [] -> marked (Red.children r)
+  fs -> concat [replicate (length (fieldNames f)) (or (marked (Red.children f))) | f <- fs]
+  where
+    -- Each type, with whether a mark came just before it.
+    marked = go False
+    go _ [] = []
+    go flag (c : cs)
+      | Red.kind c == K.Bang || (Red.kind c == K.VarSym && Red.text c == Text.pack "!") = go True cs
+      | Red.isToken c = go flag cs
+      | Red.kind c == K.Operator = go False cs
+      | otherwise = flag : go False cs
 
 -- | Whether a constructor was declared between its two fields.
 constructorInfix :: Constructor -> Bool

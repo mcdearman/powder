@@ -1,0 +1,5 @@
+("diagonal",[0,2,4,6,8,10,12,14,16,18,20])
+("total",110)
+("off diagonal count",110)
+("guard between generators",[(2,'a'),(2,'b'),(4,'a'),(4,'b')])
+("later generator depends on earlier",20)

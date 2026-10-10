@@ -89,7 +89,9 @@ accepted known t = do
       passes <- case loaded of
         Left _ -> pure False
         Right prog -> do
-          outcomes <- forM [Reducer, AxCutMachine] (\runtime -> execute runtime (testName t) prog input)
+          -- On the reference, and on the machine in Rust if it is built.
+          built <- machineBuilt
+          outcomes <- forM (Reducer : [RustMachine | built]) (\runtime -> execute runtime (testName t) prog input)
           pure (all (\o -> status o == wanted t && written o == want) outcomes)
       settle known t passes
 

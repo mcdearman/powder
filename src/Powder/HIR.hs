@@ -15,6 +15,8 @@
 module Powder.HIR
   ( module Powder.HIR.Id,
     Program (..),
+    chunk,
+    mine,
     NameInfo (..),
     NameSort (..),
     Origin (..),
@@ -82,8 +84,25 @@ data Program = Program
     -- | The module each file is, or is part of, and the modules each
     -- module imports.
     programModules :: [(FilePath, String)],
-    programImports :: [(String, [String])]
+    programImports :: [(String, [String])],
+    -- | Where the identities made for this program start, when it is a
+    -- package compiled after others: what is below, or a 'chunk' or more
+    -- above, is another package's, here to be known about and not to be
+    -- compiled. Negative when the program is all there is.
+    programFloor :: Int
   }
+
+-- | How many identities a package may make: each package's are in a run
+-- of this many, so that packages compiled apart do not make the same ones.
+chunk :: Int
+chunk = 2 ^ (24 :: Int)
+
+-- | Whether an identity is one this program made, and not one of a
+-- package it was compiled after.
+mine :: Program -> Int -> Bool
+mine program k = floor' < 0 || (k >= floor' && k < floor' + chunk)
+  where
+    floor' = programFloor program
 
 -- | A class asked of a type: one part of a context.
 data Constraint = Constraint {constraintClass :: NameId, constraintType :: Type}
@@ -351,6 +370,7 @@ pretty program = unlines (map (binding 0) (programBindings program))
       Pat.Con c ps -> parens atomic (unwords (name c : map (pat True) ps))
       Pat.As x q -> name x ++ "@" ++ pat True q
       Pat.Lazy q -> "~" ++ pat True q
+      Pat.Ordered _ q -> pat atomic q
       Pat.Error -> "<error>"
 
     literal = \case

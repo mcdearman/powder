@@ -105,6 +105,68 @@ keys.
 A definition replaces any earlier one of the same name, for the code that
 already calls it too.
 
+## The build tool
+
+`powder`, in [buildtools/powder](buildtools/powder), builds packages. A
+package is a directory with a `Powder.toml`:
+
+```toml
+[package]
+name = "app"
+version = "0.1.0"
+
+[dependencies]
+util = { path = "../util" }
+```
+
+Its modules are under `src/`, the module `A.B` in `src/A/B.hs`, and
+`src/Main.hs` is where a program starts. A package with no `Main` is a
+library. A dependency is another package, by where it is; a package can
+import the modules of the packages its manifest names, and of the library
+the language comes with, and no others. No two packages of a build may
+have a module of one name, since an import says nothing of packages; a
+dependency's own `Main` is left out.
+
+```
+$ powder init app            # a manifest, src/Main.hs and a .gitignore
+$ powder run app -- one two  # build, and run Main with arguments
+   Compiling base (lib)
+   Compiling util v0.1.0 (/home/me/util)
+   Compiling app v0.1.0 (/home/me/app)
+    Finished 3 compiled, 0 fresh -> app/target/debug/bytecode/app.pbc
+     Running app/target/debug/bytecode/app.pbc on powder-vm
+$ powder build app -j 4      # compile up to four packages at once
+$ powder clean app
+```
+
+The package is the unit. Each is compiled as one thing, from all its
+modules, after the packages it depends on and from what was kept of them,
+not from their sources. What comes of it is kept in
+`target/debug/incremental/`, with a fingerprint of what went into it: its
+sources, the compiler, and the fingerprints of the packages it depends
+on. A build compiles a package again only if its fingerprint has changed,
+so a change is paid for by the package it is in and those above it.
+Packages that do not depend on each other are compiled at once, one to a
+processor unless `-j` says otherwise. The library the language comes
+with is a package like any other, below all of them, and is kept in
+`~/.powder` (or `$POWDER_HOME`), so it is compiled once for every build
+there is.
+
+`powder run` runs the program on `powder-vm` if it finds it, beside
+itself, on the `PATH` or where `POWDER_VM` says, and otherwise on the
+reducer built in; `--runtime vm` or `--runtime reducer` says which.
+
+It is modelled on Meadow's build tool, with two things Meadow's has not:
+packages are compiled in parallel, and the compiler has no sources of a
+dependency before it. Not there yet: dependencies from git and a
+lockfile, workspaces, profiles and features, and a `test` command.
+
+Its tests ([buildtools/powder/test](buildtools/powder/test)) build a
+small set of packages and check what is compiled again after each kind
+of change; and they run the whole conformance suite the way the tool
+compiles, each test as a package after the library, to know that
+compiling apart comes to what compiling together does.
+
 ## The language
 
 Haskell 2010, less what is listed under it:
@@ -149,7 +211,14 @@ What is not as the Report has it:
   `Foreign.Marshal`, `Foreign.C.String` and the rest), and there is no
   `foreign export` or `"wrapper"`: nothing here is compiled to what C
   could call.
-- **Handles** have no buffering to set: nothing written is held back.
+- **Handles** are the Report's: open, semi-closed after `hGetContents`
+  and closed; many readers or one writer of a file; `hLookAhead`,
+  seeking, sizes, and I/O errors that say what kind they are and what
+  handle and file they are about. Their state is kept by the library in
+  [lib/Powder/Base.hs](lib/Powder/Base.hs), over a few things the
+  machines do. Two things are only kept and given back: how a handle is
+  buffered (`hFlush` does send on what is held), and a file is known to
+  be locked by its name, where GHC knows it by what file it is.
 
 Reading and showing are the Report's own definitions: `lex`, the escapes
 of characters and strings, `Read` and `Show` for the Prelude's types, and
@@ -390,10 +459,21 @@ or `Main`. So the prompt sees all of that module, exported or not, and a
 definition entered again replaces the earlier one for the code that
 already calls it.
 
-The plan from here is a build system of Powder's own, in place of cabal,
-that rebuilds and parallelises by package, with the compiler finding the
-groups of modules that import each other inside a package and compiling
-each as a unit, and in time caching within a package too.
+A package can be compiled after others, without their sources:
+[Powder.Package](src/Powder/Package.hs). What comes of compiling one is
+its code, in Core, and an interface: what its modules export, its types,
+classes and instances without their code, and the type of everything it
+defines. A package is given the interfaces of all the packages below it,
+which are put back into the tables name resolution and the type checker
+start from, and its own interface says only what it adds. Identities
+made by packages compiled apart must not be the same, so each package
+makes its names and nodes in a run of numbers of its own. In a package
+every name is spelled with its module's, and a program is the code of its
+packages put together, started at `Main.main`.
+
+That is what [the build tool](#the-build-tool) is made on. In time the
+compiler will keep what it works out within a package too, by the groups
+of modules that import each other.
 
 Scope is the Report's. A name that a module defines and also imports is
 ambiguous where it is used unqualified, unless the import hides it. A
@@ -417,8 +497,9 @@ Next:
 1. **The rest of the Report**: pointers and the `Foreign` libraries
    about memory, and `foreign export`.
    These wait on a backend that compiles to something C can call.
-2. **A build system of Powder's own**, by package, as under
-   [Modules and packages](#modules-and-packages).
+2. **More of [the build tool](#the-build-tool)**: dependencies from git
+   with a lockfile, workspaces, tests, and keeping what is compiled within
+   a package, by the groups of modules that import each other.
 3. **Lowering to a typed Core** like GHC's, from HIR and the tables, in
    place of the untyped Core here now.
 
@@ -561,15 +642,29 @@ allows and GHC does not compile without help.
 [conformance/KNOWN-FAILURES.txt](conformance/KNOWN-FAILURES.txt) lists the
 tests that do not pass yet. `cabal test` passes those over, and fails if
 one of them starts passing, so the list stays true. As this is written
-about 700 pass and 51 do not: most of those are the formatting functions
-of `Numeric`, Unicode beyond ASCII in `Data.Char`, the rest of
-`System.IO`, single-precision arguments to C, and a handful of checks on
-export lists and on `main`.
+the list is empty: all 800 or so pass, on the combinator reducer and on
+the Rust machine.
 
-[Hazy](https://github.com/Superstar64/Hazy)'s tests are another check,
-run from a clone of it and not kept here: they found, among other things,
-that tabs were not counted as the layout rule counts them and that a
-record's field could not be an operator.
+Some of the tests are on ground that
+[Hazy](https://github.com/Superstar64/Hazy)'s tests cover, where that is
+the Report's and not an extension's: class defaults, derived instances,
+fields shared between constructors, clauses over strings and numbers,
+tabs in layout, a module that imports itself. Those are written anew.
+
+Hazy's own tests that are Haskell 2010 are in [hazy](hazy) as Hazy has
+them, and `cabal test` runs them too: programs that must print what Hazy
+says they print, modules that must be accepted, and modules that must be
+refused. [hazy/README.md](hazy/README.md) says which were left out and
+why. They found, among other things, that tabs were not counted as the
+layout rule counts them and that a record's field could not be an
+operator.
+
+## Licence
+
+Powder is under the BSD 3-Clause licence: see [LICENSE](LICENSE). The
+tests in [hazy](hazy) are not Powder's: they are Hazy's, under the GNU
+General Public License version 3, and are kept apart, with that licence
+beside them.
 
 ## Ideas for what next
 

@@ -1,0 +1,4 @@
+("abc",3,True)
+([Left 1,Right "abc"],[1,0])
+((2,1),("d","abc"))
+(Just "abc","bcd")

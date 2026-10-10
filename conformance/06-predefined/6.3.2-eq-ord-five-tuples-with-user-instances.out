@@ -1,0 +1,6 @@
+("same",True)
+("less in last",True)
+("greater in fourth",True)
+("first decides",LT)
+("unit",True,EQ,False)
+("custom",True,False,True)

@@ -2,6 +2,9 @@ cabal-version:   3.0
 name:            powder
 version:         0.1.0.0
 synopsis:        Toy compilers for a small Haskell
+license:         BSD-3-Clause
+license-file:    LICENSE
+author:          Chris McDearman
 build-type:      Simple
 data-files:
   lib/*.hs
@@ -31,6 +34,7 @@ library
     Powder.Bytecode
     Powder.Core
     Powder.Diagnostics
+    Powder.Files
     Powder.Frontend
     Powder.HIR
     Powder.HIR.Id
@@ -40,6 +44,7 @@ library
     Powder.Layout
     Powder.Lexer
     Powder.Lower
+    Powder.Package
     Powder.Parser
     Powder.Resolve
     Powder.Typecheck
@@ -68,6 +73,7 @@ library
   build-tool-depends: alex:alex
   build-depends:
     , array
+    , binary
     , bytestring
     , containers
     , diagnose >=2.5
@@ -103,6 +109,7 @@ test-suite spec
     EntrySpec
     ExamplesSpec
     Harness
+    HazySpec
     ResolveSpec
     SyntaxSpec
     TypecheckSpec
