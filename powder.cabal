@@ -58,6 +58,7 @@ library
     Powder.SKI.Comb
     Powder.SKI.Compile
     Powder.SKI.Eval
+    Powder.Stubs
     Powder.Syntax.AST
     Powder.Syntax.AST.Decl
     Powder.Syntax.AST.Expr

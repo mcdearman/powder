@@ -8,8 +8,12 @@
 //! no result. The call is made by libffi.
 
 use libffi::middle::{Arg, Cif, CodePtr, Type};
+use libffi::low::ffi_cif;
+use libffi::middle::Closure;
 use std::cell::Cell;
+use std::collections::HashMap;
 use std::ffi::{c_void, CString};
+use std::sync::Mutex;
 
 /// An argument or a result: an integer or a double.
 #[derive(Clone, Copy)]
@@ -90,7 +94,14 @@ enum Slot {
     Pointer(*mut c_void),
 }
 
+/// The functions the program made C's, by name, each with its address.
+static EXPORTED: Mutex<Option<HashMap<String, usize>>> = Mutex::new(None);
+
 fn find(symbol: &str) -> Result<*mut c_void, String> {
+    // A function the program made C's is found before anything of C's.
+    if let Some(made) = EXPORTED.lock().ok().and_then(|known| known.as_ref().and_then(|names| names.get(symbol).copied())) {
+        return Ok(made as *mut c_void);
+    }
     let name = CString::new(symbol).map_err(|_| format!("there is no C function called {symbol}"))?;
     // SAFETY: looking a name up in what is already loaded.
     let found = unsafe { libc::dlsym(libc::RTLD_DEFAULT, name.as_ptr()) };
@@ -171,5 +182,99 @@ pub fn call(symbol: &str, shape: &str, result: char, arguments: &[Number]) -> Re
         };
         set_errno(*errno_place());
         Ok(gave)
+    }
+}
+
+// C calling back --------------------------------------------------------------
+
+/// What a C function made here is: the letters of its type, and the number
+/// of the action that answers it.
+struct Made {
+    shape: String,
+    result: char,
+    which: usize,
+}
+
+/// Where calls from C go: the machine's, given the number of the action and
+/// the arguments. It is set once, before any C function is made.
+type Answerer = fn(usize, Vec<Number>) -> Number;
+
+static ANSWERER: Mutex<Option<Answerer>> = Mutex::new(None);
+
+pub fn answer_with(answerer: Answerer) {
+    if let Ok(mut place) = ANSWERER.lock() {
+        *place = Some(answerer);
+    }
+}
+
+/// What libffi calls when C calls a function made here.
+unsafe extern "C" fn answer(_cif: &ffi_cif, result: &mut u64, arguments: *const *const c_void, made: &Made) {
+    let mut taken = Vec::with_capacity(made.shape.len());
+    for (i, kind) in made.shape.chars().enumerate() {
+        // SAFETY: libffi gives as many places as the type has arguments,
+        // each holding what its letter says.
+        let at = unsafe { *arguments.add(i) };
+        taken.push(unsafe {
+            match kind {
+                'c' => Number::Long(*(at as *const i8) as i64),
+                'C' => Number::Long(*(at as *const u8) as i64),
+                's' => Number::Long(*(at as *const i16) as i64),
+                'S' => Number::Long(*(at as *const u16) as i64),
+                'I' => Number::Long(*(at as *const i32) as i64),
+                'U' => Number::Long(*(at as *const u32) as i64),
+                'F' => Number::Double(*(at as *const f32) as f64),
+                'D' => Number::Double(*(at as *const f64)),
+                _ => Number::Long(*(at as *const i64)),
+            }
+        });
+    }
+    let answerer = ANSWERER.lock().ok().and_then(|place| *place);
+    let kept = errno();
+    let gave = answerer.map_or(Number::Long(0), |answerer| answerer(made.which, taken));
+    set_errno(kept);
+    // A narrow result goes back widened to a whole word.
+    match (made.result, gave) {
+        ('D', Number::Double(x)) => *result = x.to_bits(),
+        // SAFETY: the place for a result is at least a word.
+        ('F', Number::Double(x)) => unsafe { *(result as *mut u64 as *mut f32) = x as f32 },
+        ('c', Number::Long(n)) => *result = n as i8 as i64 as u64,
+        ('s', Number::Long(n)) => *result = n as i16 as i64 as u64,
+        ('I', Number::Long(n)) => *result = n as i32 as i64 as u64,
+        ('C', Number::Long(n)) => *result = n as u8 as u64,
+        ('S', Number::Long(n)) => *result = n as u16 as u64,
+        ('U', Number::Long(n)) => *result = n as u32 as u64,
+        ('V', _) => {}
+        (_, Number::Long(n)) => *result = n as u64,
+        _ => {}
+    }
+}
+
+/// Make a C function of a type, answered by the action of a number, and
+/// give its address. It is never let go of.
+pub fn closure(shape: &str, result: char, which: usize) -> Result<i64, String> {
+    let unfit = || "a C function of this type cannot be made".to_string();
+    let types = shape.chars().map(|kind| type_of(kind).filter(|_| kind != 'V').ok_or_else(unfit)).collect::<Result<Vec<_>, _>>()?;
+    let cif = Cif::new(types, type_of(result).ok_or_else(unfit)?);
+    let made: &'static Made = Box::leak(Box::new(Made { shape: shape.to_string(), result, which }));
+    let closure: &'static Closure<'static> = Box::leak(Box::new(Closure::new(cif, answer, made)));
+    Ok(*closure.code_ptr() as usize as i64)
+}
+
+/// Make a function C's under a name: one the program calls by that name,
+/// or takes the address of, is this one; and if a library that is loaded
+/// has a place for its address, called `powder_export_` and the name, the
+/// address is put there, for the library's own code to call it by.
+pub fn export(name: &str, address: i64) {
+    if let Ok(mut known) = EXPORTED.lock() {
+        known.get_or_insert_with(HashMap::new).insert(name.to_string(), address as usize);
+    }
+    if let Ok(place) = CString::new(format!("powder_export_{name}")) {
+        // SAFETY: a library that has the place has it for this.
+        unsafe {
+            let found = libc::dlsym(libc::RTLD_DEFAULT, place.as_ptr());
+            if !found.is_null() {
+                *(found as *mut usize) = address as usize;
+            }
+        }
     }
 }

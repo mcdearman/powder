@@ -115,6 +115,8 @@ data SyntaxKind
     DefaultDecl
   | -- | @foreign import ccall "entity" name :: type@
     ForeignDecl
+  | -- | @foreign export ccall "entity" name :: type@
+    ForeignExportDecl
   | TypeSig
   | FixityDecl
   | FunClause

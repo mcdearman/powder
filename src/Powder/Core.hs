@@ -10,6 +10,8 @@ module Powder.Core
     Bind (..),
     Alt (..),
     Program (..),
+    Export (..),
+    foreignArity,
     freeVars,
     shake,
     started,
@@ -97,6 +99,14 @@ data Prim
     -- setting what the next one starts with.
     ErrnoGet
   | ErrnoSet
+  | -- | For an action answering a call from C: the argument at a place,
+    -- as an integer or as a double, and giving the result, as one or the
+    -- other. They are of the call being answered, which is the innermost
+    -- if calls are inside each other.
+    CallbackInt
+  | CallbackDouble
+  | CallbackReturnInt
+  | CallbackReturnDouble
   | -- | A character's code, and the character with a code. Both are the
     -- identity when a program runs: a character is its code.
     CharToInt
@@ -189,8 +199,16 @@ data Alt = Alt ConInfo [Name] Core
 -- @main@.
 data Program = Program
   { progCons :: [ConInfo],
-    progDefs :: [(Name, Core)]
+    progDefs :: [(Name, Core)],
+    -- | The functions C may call.
+    progExports :: [Export]
   }
+
+-- | A function C may call: what C calls it; what its arguments are and
+-- what it gives, by the letters of 'Foreign'; and the definition that is
+-- the action answering a call. The action gets the arguments and gives
+-- the result by the primitives for that.
+data Export = Export {exportName :: String, exportShape :: String, exportResult :: Char, exportAction :: Name}
 
 freeVars :: Core -> Set.Set Name
 freeVars = \case
@@ -206,13 +224,19 @@ freeVars = \case
   Case scrut alts -> freeVars scrut <> mconcat [freeVars e Set.\\ Set.fromList xs | Alt _ xs e <- alts]
 
 -- | Drop the definitions the given root does not reach.
+-- | How many arguments a C function is given here. One made from a
+-- function of the program's is given that function, as the action that
+-- answers a call, whatever the function's own arguments are.
+foreignArity :: Name -> String -> Int
+foreignArity symbol shape = if symbol == "wrapper" then 1 else length shape
+
 -- | A program whose root is run by way of another definition, which is
 -- given it: the root is the other applied to what the root was. Nothing
 -- is changed if either is not there.
 started :: Name -> Name -> Program -> Program
-started root by (Program cons defs)
-  | all (`elem` map fst defs) [root, by] = Program cons ((root, App (Var by) (Var inner)) : [(if x == root then inner else x, renamed e) | (x, e) <- defs])
-  | otherwise = Program cons defs
+started root by (Program cons defs exports)
+  | all (`elem` map fst defs) [root, by] = Program cons ((root, App (Var by) (Var inner)) : [(if x == root then inner else x, renamed e) | (x, e) <- defs]) exports
+  | otherwise = Program cons defs exports
   where
     inner = root ++ "#"
     -- What a program defines at the top is never the name of anything
@@ -227,10 +251,11 @@ started root by (Program cons defs)
       e -> e
 
 shake :: Name -> Program -> Program
-shake root (Program cons defs) = Program cons [d | d@(x, _) <- defs, x `Set.member` live]
+shake root (Program cons defs exports) = Program cons [d | d@(x, _) <- defs, x `Set.member` live] exports
   where
     env = Map.fromList defs
-    live = go Set.empty [root]
+    -- What C may call is wanted whatever the program does with it.
+    live = go Set.empty (root : map exportAction exports)
     go seen [] = seen
     go seen (x : xs) = case Map.lookup x env of
       Just e | x `Set.notMember` seen -> go (Set.insert x seen) (Set.toList (freeVars e) ++ xs)

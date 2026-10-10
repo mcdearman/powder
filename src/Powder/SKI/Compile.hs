@@ -10,7 +10,7 @@ import Powder.SKI.Comb
 -- refer to each other by name, so top-level recursion needs no 'Y'.
 -- Constructors that are used become definitions too.
 compileProgram :: Program -> [(Name, Comb)]
-compileProgram (Program cons defs) =
+compileProgram (Program cons defs _) =
   [(conName con, improve (scott con)) | con <- cons, conName con `Set.member` used] ++ compiled
   where
     compiled = [(x, improve (compile e)) | (x, e) <- defs]

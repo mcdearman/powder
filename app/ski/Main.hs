@@ -8,6 +8,7 @@ import Powder.Frontend
 import qualified Powder.HIR as HIR
 import qualified Data.ByteString.Lazy as L
 import qualified Powder.AxCut as AxCut
+import Powder.Stubs (stubs)
 import qualified Powder.Bytecode as Bytecode
 import qualified Powder.AxCut.Machine as AxCut
 import qualified Powder.Sequent as Sequent
@@ -33,6 +34,8 @@ data Options = Options
     dumpAxCut :: Bool,
     -- | Write the program's bytecode image here, and stop.
     emit :: Maybe FilePath,
+    -- | Write C for the functions the program exports here, and stop.
+    stubsTo :: Maybe FilePath,
     stats :: Bool,
     file :: Maybe FilePath,
     -- | What comes after the file is the program's.
@@ -55,6 +58,7 @@ usage =
       "  --dump-sequent  print the program in the sequent calculus and stop",
       "  --dump-axcut    print the program in AxCut and stop",
       "  --emit OUT      write the program's bytecode image, for powder-vm to run",
+      "  --stubs OUT     write C for the functions the program exports, for C to link with",
       "  --stats      report program size and reduction count"
     ]
 
@@ -70,6 +74,7 @@ parseArgs opts = \case
   "--dump-sequent" : rest -> parseArgs opts {dumpSequent = True} rest
   "--dump-axcut" : rest -> parseArgs opts {dumpAxCut = True} rest
   "--emit" : out : rest -> parseArgs opts {emit = Just out} rest
+  "--stubs" : out : rest -> parseArgs opts {stubsTo = Just out} rest
   "--stats" : rest -> parseArgs opts {stats = True} rest
   path : rest | take 1 path /= "-", Nothing <- file opts -> Right opts {file = Just path, programArgs = rest}
   arg : _ -> Left ("unrecognised argument: " ++ arg)
@@ -77,7 +82,7 @@ parseArgs opts = \case
 main :: IO ()
 main = do
   args <- getArgs
-  opts <- either (\msg -> die (msg ++ "\n\n" ++ usage)) pure (parseArgs (Options False False False False False False False False Nothing False Nothing []) args)
+  opts <- either (\msg -> die (msg ++ "\n\n" ++ usage)) pure (parseArgs (Options False False False False False False False False Nothing Nothing False Nothing []) args)
   case file opts of
     Just path | not (interactive opts) -> runFile opts path
     path | typecheckOnly opts || dumpHir opts || dumpCore opts || dumpComb opts || stats opts -> die (maybe usage (const "--repl cannot be combined with other options") path)
@@ -105,12 +110,13 @@ runFile opts path = do
     _ | dumpComb opts -> forM_ combs $ \(x, e) -> putStrLn (x ++ " = " ++ pretty e)
     _ | dumpSequent opts -> putStr (Sequent.pretty (sequent "main" prog))
     _ | dumpAxCut opts -> putStr (AxCut.pretty (axcut "main" prog))
+    _ | Just out <- stubsTo opts -> writeFile out (stubs (progExports prog))
     _ | Just out <- emit opts -> L.writeFile out (Bytecode.image (axcut "main" prog))
     _ | viaAxCut opts -> do
       n <- AxCut.run stdHooks {programName = path, arguments = programArgs opts} (axcut "main" prog) `catch` \(RuntimeError msg) -> hFlush stdout >> die ("runtime error: " ++ msg)
       when (stats opts) (hPutStrLn stderr (show n ++ " statements"))
     _ -> do
-      n <- run stdHooks {programName = path, arguments = programArgs opts} combs `catch` \(RuntimeError msg) -> hFlush stdout >> die ("runtime error: " ++ msg)
+      n <- run stdHooks {programName = path, arguments = programArgs opts, exported = progExports prog} combs `catch` \(RuntimeError msg) -> hFlush stdout >> die ("runtime error: " ++ msg)
       when (stats opts) $
         hPutStrLn stderr $
           show (length combs) ++ " definitions, " ++ show (sum (map (size . snd) combs)) ++ " combinators, " ++ show n ++ " reductions"

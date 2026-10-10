@@ -21,7 +21,7 @@ import Powder.Foreign (callForeign)
 import qualified Powder.Foreign as Foreign
 import qualified Data.Map as Map
 import Data.Maybe (isNothing)
-import Powder.Core (Name, Prim (..))
+import Powder.Core (Export (..), Name, Prim (..), foreignArity)
 import Powder.Files (Files, newFiles)
 import qualified Powder.Files as Files
 import Powder.SKI.Comb
@@ -52,7 +52,9 @@ data Hooks = Hooks
     getCh :: IO (Maybe Char),
     -- | What the program is called, and the arguments it was given.
     programName :: String,
-    arguments :: [String]
+    arguments :: [String],
+    -- | The functions of the program that C may call.
+    exported :: [Export]
   }
 
 -- | The process's own stdin, stdout and stderr.
@@ -65,7 +67,8 @@ stdHooks =
         eof <- isEOF
         if eof then pure Nothing else Just <$> getChar,
       programName = "powder",
-      arguments = []
+      arguments = [],
+      exported = []
     }
 
 newtype RuntimeError = RuntimeError String
@@ -90,7 +93,10 @@ data Machine = Machine
     cells :: IORef (Map.Map Integer Ref),
     -- | A character read from the standard input to see whether there was
     -- one, and not yet taken.
-    pushed :: IORef (Maybe (Maybe Char))
+    pushed :: IORef (Maybe (Maybe Char)),
+    -- | The calls from C being answered, the innermost first: each its
+    -- arguments, and where its result goes.
+    frames :: IORef [([Either Int64 Double], IORef (Either Int64 Double))]
   }
 
 failure :: String -> IO a
@@ -127,14 +133,18 @@ eval h defs root = do
     else maybe VOther VInt <$> asInt r
   where
     asInt r = readIORef r <&> \case NInt n -> Just n; _ -> Nothing
-    ioArity = [(Return, 1), (Bind, 2), (PutChar, 2), (GetChar, 0), (Exit, 1), (PathChar, 1), (Throw, 2), (Catch, 2), (FileOpen, 1), (HGetChar, 1), (FileClose, 1), (HIsEOF, 1), (ArgCount, 0), (ArgChar, 2), (FileSeek, 3), (FileTruncate, 2), (FileFlush, 1), (IsTerminal, 1), (EnvChar, 2), (CellNew, 1), (CellRead, 1), (CellWrite, 2), (PeekInt, 2), (PeekDouble, 2), (PokeInt, 3), (PokeDouble, 3), (ErrnoGet, 0), (ErrnoSet, 1)]
+    ioArity = [(Return, 1), (Bind, 2), (PutChar, 2), (GetChar, 0), (Exit, 1), (PathChar, 1), (Throw, 2), (Catch, 2), (FileOpen, 1), (HGetChar, 1), (FileClose, 1), (HIsEOF, 1), (ArgCount, 0), (ArgChar, 2), (FileSeek, 3), (FileTruncate, 2), (FileFlush, 1), (IsTerminal, 1), (EnvChar, 2), (CellNew, 1), (CellRead, 1), (CellWrite, 2), (PeekInt, 2), (PeekDouble, 2), (PokeInt, 3), (PokeDouble, 3), (ErrnoGet, 0), (ErrnoSet, 1), (CallbackInt, 1), (CallbackDouble, 1), (CallbackReturnInt, 1), (CallbackReturnDouble, 1)]
 
 start :: Hooks -> [(Name, Comb)] -> Name -> IO (Machine, Ref)
 start h defs root = do
   Foreign.loadLibraries >>= mapM_ failure . take 1
   globals <- link defs
   entry <- maybe (failure ("no definition of " ++ root)) pure (Map.lookup root globals)
-  m <- Machine h <$> newIORef 0 <*> newFiles <*> newIORef Map.empty <*> newIORef Nothing
+  m <- Machine h <$> newIORef 0 <*> newFiles <*> newIORef Map.empty <*> newIORef Nothing <*> newIORef []
+  -- What C may call is made C's before anything runs.
+  forM_ (exported h) $ \(Export name shape result action) -> do
+    answer <- maybe (failure ("no definition of " ++ action)) pure (Map.lookup action globals)
+    Foreign.newCallback shape result (answering m answer) >>= either failure (Foreign.export name)
   pure (m, entry)
 
 -- | Build the graph. Each definition gets one node, which every reference
@@ -178,7 +188,11 @@ whnf m root = do
         -- A C function is called when all its arguments are there, each
         -- worked out first.
         NForeign symbol shape result
-          | length stk < length shape -> stuck r stk
+          | length stk < foreignArity symbol shape -> stuck r stk
+          -- A C function made of an action of the program's.
+          | symbol == "wrapper", (redex, answer) : rest <- stk -> do
+              made <- Foreign.newCallback shape result (answering m answer) >>= either failure pure
+              update redex (NInt made) rest
           | otherwise -> do
               let (mine, rest) = splitAt (length shape) stk
               given' <- forM (zip shape mine) $ \(k, (_, a)) ->
@@ -431,6 +445,10 @@ runIO m r = do
       double m value >>= Foreign.pokeReal kind' address' >> unit
     (NPrim ErrnoGet, []) -> Foreign.getErrno >>= number
     (NPrim ErrnoSet, [value]) -> int m value >>= Foreign.setErrno >> unit
+    (NPrim CallbackInt, [i]) -> int m i >>= given >>= either (number . toInteger) (const (failure "an argument from C is a double, and was taken as an integer"))
+    (NPrim CallbackDouble, [i]) -> int m i >>= given >>= either (const (failure "an argument from C is an integer, and was taken as a double")) (newIORef . NDbl)
+    (NPrim CallbackReturnInt, [value]) -> int m value >>= giving . Left . fromInteger >> unit
+    (NPrim CallbackReturnDouble, [value]) -> double m value >>= giving . Right >> unit
     (NPrim ArgCount, []) -> newIORef (NInt (toInteger (length (arguments (hooks m)))))
     (NPrim ArgChar, [i, j]) -> do
       i' <- int m i
@@ -442,6 +460,15 @@ runIO m r = do
       throwIO (if n' == 0 then ExitSuccess else ExitFailure (fromInteger n'))
     _ -> failure "type error: expected an IO action"
   where
+    -- The call from C being answered: an argument of it, and its result.
+    given i =
+      readIORef (frames m) >>= \case
+        (taken, _) : _ | Just a <- lookup i (zip [0 ..] taken) -> pure a
+        _ -> failure "there is no such argument of a call from C"
+    giving value =
+      readIORef (frames m) >>= \case
+        (_, slot) : _ -> writeIORef slot value
+        [] -> failure "there is no call from C to answer"
     -- The Scott encoding of ().
     unit = newIORef (NComb I)
     number = newIORef . NInt
@@ -451,6 +478,15 @@ runIO m r = do
       readIORef (pushed m) >>= \case
         Just c -> c <$ writeIORef (pushed m) Nothing
         Nothing -> getCh (hooks m)
+
+-- | What answers a call from C: an action of the program's, run with the
+-- call's arguments where it can take them, giving what it gave.
+answering :: Machine -> Ref -> [Either Int64 Double] -> IO (Either Int64 Double)
+answering m answer taken = do
+  slot <- newIORef (Left 0)
+  modifyIORef' (frames m) ((taken, slot) :)
+  _ <- (runIO m answer `catch` \(Raised uncaught _) -> runIO m uncaught) `finally` modifyIORef' (frames m) (drop 1)
+  readIORef slot
 
 -- | The head of an application and its arguments.
 spine :: Ref -> [Ref] -> IO (Node, [Ref])

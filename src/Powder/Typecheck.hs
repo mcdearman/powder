@@ -624,6 +624,10 @@ primitive p = do
     PokeDouble -> Fun integer (Fun integer (Fun double (App io unit)))
     ErrnoGet -> App io integer
     ErrnoSet -> Fun integer (App io unit)
+    CallbackInt -> Fun integer (App io integer)
+    CallbackDouble -> Fun integer (App io double)
+    CallbackReturnInt -> Fun integer (App io unit)
+    CallbackReturnDouble -> Fun double (App io unit)
     CharToInt -> Fun char integer
     IntToChar -> Fun integer char
     Coerce -> Fun a b

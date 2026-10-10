@@ -14,6 +14,7 @@ import Data.Function (on)
 import Data.Graph (flattenSCC, stronglyConnComp)
 import qualified Data.IntMap.Strict as IntMap
 import Control.Applicative ((<|>))
+import Data.Bifunctor (second)
 import Data.Functor ((<&>))
 import Data.List (isPrefixOf, nub, nubBy)
 import qualified Data.List.NonEmpty as NE
@@ -43,13 +44,13 @@ data Env = Env
   }
 
 -- | An environment, a supply of fresh names, and errors.
-type M = ReaderT Env (StateT Int (Either Problem))
+type M = ReaderT Env (StateT (Int, [Export]) (Either Problem))
 
 lower :: HIR.Program -> Checked -> Either Problem Program
 lower program checked = do
-  defs <- evalStateT (runReaderT everything env) 0
+  (defs, (_, exports)) <- runStateT (runReaderT everything env) (0, [])
   -- A later definition of a name replaces an earlier one.
-  pure (Program (Map.elems constructors ++ map (dictionary program) classes) (Map.toList (Map.fromList defs)))
+  pure (Program (Map.elems constructors ++ map (dictionary program) classes) (Map.toList (Map.fromList defs)) (reverse exports))
   where
     env = Env (HIR.programNames program) (HIR.programOrigins program) families program checked
     classes = IntMap.elems (HIR.programClasses program)
@@ -76,7 +77,7 @@ err (NodeId n) message = do
 -- | Fresh names start with @$@, so they cannot clash with names from the
 -- source.
 fresh :: M Name
-fresh = state (\n -> ('$' : show n, n + 1))
+fresh = state (\(n, exports) -> ('$' : show n, (n + 1, exports)))
 
 nameInfo :: NameId -> M NameInfo
 nameInfo (NameId n) = asks (IntMap.lookup n . envNames) >>= maybe (error "Powder.Lower: a name with no entry") pure
@@ -311,8 +312,12 @@ dsBinds = fmap concat . mapM binding
 -- | What a function's equations define: a function of the dictionaries
 -- it takes, and then of its arguments.
 function :: HIR.Binding -> M Core
-function b = case HIR.bindingKind b of
+function b = asks envProgram >>= \whole -> case HIR.bindingKind b of
   HIR.Function f [HIR.Clause _ [] (HIR.Rhs _ [HIR.Guarded _ [] (HIR.Expr _ (HIR.Foreign symbol))] [])] -> foreign' (HIR.bindingId b) f symbol
+  -- The definition a foreign export makes, of the function it exports.
+  HIR.Function f [HIR.Clause _ [] rhs] | Just (NameInfo text _ _) <- HIR.nameInfo whole f, "export#" `isPrefixOf` text -> do
+    exported <- dsClauses 0 [([], dsRhs rhs)] >>= taking (HIR.bindingId b)
+    export (HIR.bindingId b) f (drop 7 text) exported
   HIR.Function f equations -> do
     clauses <- forM equations $ \c -> (,dsRhs (HIR.clauseRhs c)) <$> mapM dsPat (HIR.clausePats c)
     case nub (map (length . fst) clauses) of
@@ -322,76 +327,161 @@ function b = case HIR.bindingKind b of
         err (HIR.bindingId b) ("equations for " ++ x ++ " have different numbers of arguments")
   HIR.Destructure _ _ -> pure matchFail
 
--- | A C function as a function here: one that calls it once it has all
--- its arguments, or if it is an action, when the action is run.
---
--- What crosses is numbers: integers of C's sizes, floats and doubles, and
--- addresses. Each type of the function's is one of those, by a letter the
--- machines know: a type the libraries have for the purpose, or a newtype
+-- | What crosses between the program and C is numbers: integers of C's
+-- sizes, floats and doubles, and addresses. Each type of a function that
+-- is C's, or is made C's, is one of those, by a letter the machines know:
+-- a type the libraries have for the purpose, or a newtype or a synonym
 -- of one. A 'Bool' crosses as 0 or 1, and a 'Char' as its code.
-foreign' :: NodeId -> NameId -> String -> M Core
-foreign' at f symbol = do
-  program <- asks envProgram
-  let unwound t = case HIR.Type.typeForm t of
-        HIR.Type.Fun a r -> let (as, result) = unwound r in (a : as, result)
-        _ -> ([], t)
-      headOf t = case HIR.Type.typeForm t of
-        HIR.Type.Con c -> Just c
-        HIR.Type.App g _ -> headOf g
-        _ -> Nothing
-      -- The language's own types and the libraries' are known by name.
-      -- Any other is a newtype of something that is.
-      ours c = case HIR.nameInfo program c of
-        Just info | null (nameModule info) || any (`isPrefixOf` nameModule info) ["Powder.", "Data.", "Foreign."] -> lookup (nameText info) kinds
-        _ -> Nothing
-      kindOf :: Int -> HIR.Type.Type -> Maybe Char
-      kindOf depth t = do
-        c <- headOf t
-        ours c <|> case [field | depth > 0, d <- HIR.programDataTypes program, HIR.dataName d == c, [(k, [field])] <- [HIR.dataConstructors d], k `elem` HIR.programNewtypes program] of
-          field : _ -> kindOf (depth - 1) field
-          -- A synonym is what it stands for.
-          [] | depth > 0 -> IntMap.lookup (nameKey c) (HIR.programSynonyms program) >>= kindOf (depth - 1) . HIR.synonymType
-          [] -> Nothing
-      isUnit t = fmap (\c -> c == HIR.builtinUnit (HIR.programBuiltins program)) (headOf t) == Just True
-      isBool t = fmap (\c -> c == HIR.builtinBool (HIR.programBuiltins program)) (headOf t) == Just True
-      kinds =
-        [ ("Int", 'L'), ("Word", 'Q'), ("Int8", 'c'), ("Int16", 's'), ("Int32", 'I'), ("Int64", 'L'), ("Word8", 'C'), ("Word16", 'S'),
-          ("Word32", 'U'), ("Word64", 'Q'), ("Char", 'U'), ("Bool", 'C'), ("Double", 'D'), ("Float", 'F'), ("Ptr", 'P'), ("FunPtr", 'P'),
-          ("StablePtr", 'P'), ("IntPtr", 'L'), ("WordPtr", 'Q'), ("CChar", 'c'), ("CSChar", 'c'), ("CUChar", 'C'), ("CShort", 's'),
-          ("CUShort", 'S'), ("CInt", 'I'), ("CUInt", 'U'), ("CLong", 'L'), ("CULong", 'Q'), ("CLLong", 'L'), ("CULLong", 'Q'),
-          ("CSize", 'Q'), ("CPtrdiff", 'L'), ("CWchar", 'I'), ("CSigAtomic", 'I'), ("CClock", 'L'), ("CTime", 'L'), ("CFloat", 'F'),
-          ("CDouble", 'D'), ("CIntPtr", 'L'), ("CUIntPtr", 'Q'), ("CIntMax", 'L'), ("CUIntMax", 'Q')
-        ]
-      -- A value as the number that crosses, and the number that comes
-      -- back as a value.
-      out t kind e
-        | isBool t = Case e [Alt falseCon [] (Lit 0), Alt trueCon [] (Lit 1)]
-        | kind `elem` "DF" = e
-        | otherwise = App (Prim IntNarrow) e
-      back t e
-        | isBool t = Case (App (App (Prim IntEq) e) (Lit 0)) [Alt falseCon [] (Con trueCon), Alt trueCon [] (Con falseCon)]
-        | otherwise = e
-  case HIR.signature program f of
-    Nothing -> err at "a C function needs its type said"
-    Just (HIR.Signature _ _ t) -> do
-      let (arguments, final) = unwound t
+data Crossing = Crossing
+  { -- | The letter of a type, if it is one that crosses.
+    crossingKind :: HIR.Type.Type -> Maybe Char,
+    -- | The types of a function's arguments, whether what it gives is an
+    -- action, the type of what that gives, and its letter, which for
+    -- nothing is @V@.
+    crossingSplit :: HIR.Type.Type -> ([HIR.Type.Type], Bool, HIR.Type.Type, Maybe Char),
+    -- | A value as the number that crosses, given its type and letter;
+    -- and the number as the value.
+    crossingOut :: HIR.Type.Type -> Char -> Core -> Core,
+    crossingBack :: HIR.Type.Type -> Core -> Core,
+    -- | What a type is of, if it is a type applied to one other.
+    crossingOf :: HIR.Type.Type -> Maybe HIR.Type.Type
+  }
+
+crossing :: HIR.Program -> Crossing
+crossing program = Crossing (kindOf 8) split out back argumentOf
+  where
+    -- A type with the synonyms that stand for whole types written out,
+    -- so that one for a function's type is seen to be a function's.
+    plain t = case HIR.Type.typeForm t of
+      HIR.Type.Con c | Just (HIR.Synonym [] meant) <- IntMap.lookup (nameKey c) (HIR.programSynonyms program) -> plain meant
+      HIR.Type.App g x -> t {HIR.Type.typeForm = HIR.Type.App (plain g) (plain x)}
+      HIR.Type.Fun a r -> t {HIR.Type.typeForm = HIR.Type.Fun (plain a) (plain r)}
+      _ -> t
+    unwound t = case HIR.Type.typeForm t of
+      HIR.Type.Fun a r -> let (as, result) = unwound r in (a : as, result)
+      _ -> ([], t)
+    constructorOf t = case HIR.Type.typeForm t of
+      HIR.Type.Con c -> Just c
+      HIR.Type.App g _ -> constructorOf g
+      _ -> Nothing
+    argumentOf t = case HIR.Type.typeForm t of
+      HIR.Type.App _ x -> Just x
+      _ -> Nothing
+    -- The language's own types and the libraries' are known by name. Any
+    -- other is a newtype of something that is.
+    ours c = case HIR.nameInfo program c of
+      Just info | null (nameModule info) || any (`isPrefixOf` nameModule info) ["Powder.", "Data.", "Foreign."] -> lookup (nameText info) kinds
+      _ -> Nothing
+    kindOf :: Int -> HIR.Type.Type -> Maybe Char
+    kindOf depth t = do
+      c <- constructorOf t
+      ours c <|> case [inner | depth > 0, d <- HIR.programDataTypes program, HIR.dataName d == c, [(k, [inner])] <- [HIR.dataConstructors d], k `elem` HIR.programNewtypes program] of
+        inner : _ -> kindOf (depth - 1) inner
+        -- A synonym is what it stands for.
+        [] | depth > 0 -> IntMap.lookup (nameKey c) (HIR.programSynonyms program) >>= kindOf (depth - 1) . HIR.synonymType
+        [] -> Nothing
+    isUnit t = fmap (== HIR.builtinUnit (HIR.programBuiltins program)) (constructorOf t) == Just True
+    isBool t = fmap (== HIR.builtinBool (HIR.programBuiltins program)) (constructorOf t) == Just True
+    kinds =
+      [ ("Int", 'L'), ("Word", 'Q'), ("Int8", 'c'), ("Int16", 's'), ("Int32", 'I'), ("Int64", 'L'), ("Word8", 'C'), ("Word16", 'S'),
+        ("Word32", 'U'), ("Word64", 'Q'), ("Char", 'U'), ("Bool", 'C'), ("Double", 'D'), ("Float", 'F'), ("Ptr", 'P'), ("FunPtr", 'P'),
+        ("StablePtr", 'P'), ("IntPtr", 'L'), ("WordPtr", 'Q'), ("CChar", 'c'), ("CSChar", 'c'), ("CUChar", 'C'), ("CShort", 's'),
+        ("CUShort", 'S'), ("CInt", 'I'), ("CUInt", 'U'), ("CLong", 'L'), ("CULong", 'Q'), ("CLLong", 'L'), ("CULLong", 'Q'),
+        ("CSize", 'Q'), ("CPtrdiff", 'L'), ("CWchar", 'I'), ("CSigAtomic", 'I'), ("CClock", 'L'), ("CTime", 'L'), ("CFloat", 'F'),
+        ("CDouble", 'D'), ("CIntPtr", 'L'), ("CUIntPtr", 'Q'), ("CIntMax", 'L'), ("CUIntMax", 'Q')
+      ]
+    split written =
+      let (arguments, final) = unwound (plain written)
           io = HIR.builtinIO (HIR.programBuiltins program)
           (action, result) = case HIR.Type.typeForm final of
             HIR.Type.App g x | HIR.Type.Con c <- HIR.Type.typeForm g, c == io -> (True, x)
             _ -> (False, final)
-          gives = if isUnit result then Just 'V' else kindOf 8 result
-      case (symbol, mapM (kindOf 8) arguments, gives) of
-        ("wrapper", _, _) -> err at "a C function made from a function here is not supported yet"
+       in (arguments, action, result, if isUnit result then Just 'V' else kindOf 8 result)
+    out t kind e
+      | isBool t = Case e [Alt falseCon [] (Lit 0), Alt trueCon [] (Lit 1)]
+      | kind `elem` "DF" = e
+      | otherwise = App (Prim IntNarrow) e
+    back t e
+      | isBool t = Case (App (App (Prim IntEq) e) (Lit 0)) [Alt falseCon [] (Con trueCon), Alt trueCon [] (Con falseCon)]
+      | otherwise = e
+
+unfit :: String
+unfit = "a C function takes and gives numbers and addresses: the types the Foreign libraries have for them, or newtypes of those"
+
+-- | A C function as a function here: one that calls it once it has all
+-- its arguments, or if it is an action, when the action is run.
+foreign' :: NodeId -> NameId -> String -> M Core
+foreign' at f symbol = do
+  program <- asks envProgram
+  let cross = crossing program
+      -- Running the action is what makes the call, once.
+      once call = App (App (Prim Bind) (App (Prim Return) (Lit 0))) (Lam "_" (Let (NonRec "$result" call) (App (App (Prim Seq) (Var "$result")) (App (Prim Return) (Var "$result")))))
+  case HIR.signature program f of
+    Nothing -> err at "a C function needs its type said"
+    Just (HIR.Signature _ _ t) -> do
+      let (arguments, action, result, gives) = crossingSplit cross t
+      case (symbol, mapM (crossingKind cross) arguments, gives) of
+        -- A C function made of one of the program's: the address of
+        -- something that, called, has the action that answers run.
+        ("wrapper", _, _) -> case (arguments, action, crossingOf cross result) of
+          ([taken], True, Just made) | crossingKind cross result == Just 'P' && sameType taken made -> do
+            x <- fresh
+            (shape, kind, answer) <- answering at taken (Var x)
+            pure (Lam x (once (App (Foreign symbol shape kind) answer)))
+          _ -> err at "a C function made from a function has the type `f -> IO (FunPtr f)`, for a function type f"
         ('&' : _, Just [], Just 'P') | not action -> pure (Foreign symbol "" 'P')
         ('&' : _, _, _) -> err at "the address of something of C's is a Ptr or a FunPtr, and nothing else"
         ("dynamic", Just shape, _) | take 1 shape /= "P" -> err at "a C function called by its address takes the address, a FunPtr, first"
         (_, Just shape, Just kind) -> do
           xs <- replicateM (length shape) fresh
-          let call = back result (foldl App (Foreign symbol shape kind) (zipWith3 out arguments shape (map Var xs)))
-              -- Running the action is what makes the call, once.
-              run' = App (App (Prim Bind) (App (Prim Return) (Lit 0))) (Lam "_" (Let (NonRec "$result" call) (App (App (Prim Seq) (Var "$result")) (App (Prim Return) (Var "$result")))))
-          pure (foldr Lam (if action then run' else call) xs)
-        _ -> err at "a C function takes and gives numbers and addresses: the types the Foreign libraries have for them, or newtypes of those"
+          let call = crossingBack cross result (foldl App (Foreign symbol shape kind) (zipWith3 (crossingOut cross) arguments shape (map Var xs)))
+          pure (foldr Lam (if action then once call else call) xs)
+        _ -> err at unfit
+  where
+    -- Whether two types are written the same.
+    sameType a b = case (HIR.Type.typeForm a, HIR.Type.typeForm b) of
+      (HIR.Type.Con c, HIR.Type.Con d) -> c == d
+      (HIR.Type.Var c, HIR.Type.Var d) -> c == d
+      (HIR.Type.App g x, HIR.Type.App h y) -> sameType g h && sameType x y
+      (HIR.Type.Fun x r, HIR.Type.Fun y s) -> sameType x y && sameType r s
+      _ -> False
+
+-- | The action that answers a call from C of a function of the
+-- program's, given the type C sees the function at: it takes the
+-- arguments of the call, gives them to the function, and gives back what
+-- comes of that. With it are the letters of the arguments and of the
+-- result.
+answering :: NodeId -> HIR.Type.Type -> Core -> M (String, Char, Core)
+answering at t called = do
+  cross <- asks (crossing . envProgram)
+  let (arguments, action, result, gives) = crossingSplit cross t
+  case (mapM (crossingKind cross) arguments, gives) of
+    (Just shape, Just kind) -> do
+      xs <- replicateM (length shape) fresh
+      r <- fresh
+      let bind m x k = App (App (Prim Bind) m) (Lam x k)
+          real k = k `elem` "DF"
+          taken i k = App (Prim (if real k then CallbackDouble else CallbackInt)) (Lit i)
+          applied = foldl App called (zipWith (crossingBack cross) arguments (map Var xs))
+          answered v
+            | kind == 'V' = App (Prim Return) (Lit 0)
+            | otherwise = App (Prim (if real kind then CallbackReturnDouble else CallbackReturnInt)) (crossingOut cross result kind v)
+          -- What is not an action is worked out when C asks.
+          body = if action then bind applied r (answered (Var r)) else Let (NonRec r applied) (App (App (Prim Seq) (Var r)) (answered (Var r)))
+      pure (shape, kind, foldr (\(x, i, k) rest -> bind (taken i k) x rest) body (zip3 xs [0 ..] shape))
+    _ -> err at unfit
+
+-- | The definition a foreign export makes: the action that answers C's
+-- call of the function, which is noted as one C may call.
+export :: NodeId -> NameId -> String -> Core -> M Core
+export at f called exported = do
+  program <- asks envProgram
+  case HIR.signature program f of
+    Nothing -> err at "a function made C's needs its type said"
+    Just (HIR.Signature _ _ t) -> do
+      (shape, kind, answer) <- answering at t exported
+      modify (second (Export called shape kind (spelling program f) :))
+      pure answer
 
 -- Patterns ----------------------------------------------------------------
 

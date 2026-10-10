@@ -33,10 +33,10 @@ import qualified Data.Map as Map
 import Data.Maybe (fromMaybe)
 import Data.Word (Word8)
 import Powder.AxCut
-import Powder.Core (ConInfo (..), Name, primName)
+import Powder.Core (ConInfo (..), Export (..), Name, foreignArity, primName)
 
 version :: Int
-version = 1
+version = 2
 
 data Emitted = Emitted
   { -- | Each block's instructions, most recent first, and how many it has.
@@ -49,13 +49,23 @@ type E = State Emitted
 
 -- | A program as an image.
 image :: Program -> L.ByteString
-image (Program defs entry) = B.toLazyByteString (B.string7 "PWDR" <> number version <> table <> code <> definitions <> number start)
+image (Program defs entry (given, callback) exports) = B.toLazyByteString (B.string7 "PWDR" <> number version <> table <> code <> definitions <> number start <> number answer <> exported)
   where
     globals = Map.fromList (zip [x | (x, _, _) <- defs] [0 ..])
-    ((starts, start), final) = runState build (Emitted Map.empty 0 Map.empty)
+    (((starts, start, answer), exported), final) = runState build (Emitted Map.empty 0 Map.empty)
     build = do
       bodies <- forM defs (\(_, k, s) -> block globals [k] s)
-      (,) bodies <$> block globals [] entry
+      begin <- block globals [] entry
+      -- The block that answers a call from C, which starts with the
+      -- action that answers it in the environment.
+      answers <- block globals [given] callback
+      -- What C may call: its name, its arguments and result, and the
+      -- definition that is the action answering it.
+      named <- forM exports $ \(Export name shape result action) -> do
+        name' <- string name
+        shape' <- string shape
+        pure (name' <> shape' <> byte (ord result) <> number (Map.findWithDefault 0 action globals))
+      pure ((bodies, begin, answers), number (length exports) <> mconcat named)
     table = number (Map.size (strings final)) <> mconcat [number (L.length encoded) <> B.lazyByteString encoded | text <- byPlace (strings final), let encoded = B.toLazyByteString (B.stringUtf8 text)]
     code = number (Map.size (blocks final)) <> mconcat [number n <> instructions | (n, instructions) <- Map.elems (blocks final)]
     definitions = number (length starts) <> foldMap number starts
@@ -143,7 +153,7 @@ block globals env0 statement = do
       Foreign v symbol shape result s -> do
         symbol' <- string symbol
         shape' <- string shape
-        (byte 10 <> symbol' <> shape' <> byte (ord result) :) <$> go (without (length shape) env ++ [v]) s
+        (byte 10 <> symbol' <> shape' <> byte (ord result) :) <$> go (without (foreignArity symbol shape) env ++ [v]) s
       Rec objects s -> do
         let names = [v | (v, _, _) <- objects]
         made <- forM objects $ \(_, o@(Object _ captured _), others) -> do

@@ -1,0 +1,10 @@
+("qsort calls back",[-1,0,3,3,4,5,9],[9,5,4,3,3,0,-1])
+("a comparison that closes over nothing but its definition",[40,31,12,23,5])
+("bsearch calls back",(16,True))
+("a function that is not an action",2.5,0.25)
+("arguments of four types, and a closure",1106,94)
+an action with no arguments runs when C calls it
+an action with no arguments runs when C calls it
+("a call back that itself calls C that calls back",5.5)
+("the functions are not null, and differ",True,True)
+freed

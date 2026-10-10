@@ -10,6 +10,7 @@ import Powder.Build
 import Powder.Build.Graph
 import Powder.Build.Manifest
 import Powder.Build.Status
+import qualified Powder.Core as Core
 import Powder.Diagnostics (render)
 import Powder.SKI.Compile (compileProgram)
 import Powder.SKI.Eval (Hooks (..), run)
@@ -56,7 +57,7 @@ building home jobs dir =
       case (builtFailures built, builtProgram built) of
         ([], Just program) -> do
           out <- newIORef ""
-          _ <- run (Hooks (\_ c -> modifyIORef' out (c :)) (pure Nothing) "test" []) (compileProgram program)
+          _ <- run (Hooks (\_ c -> modifyIORef' out (c :)) (pure Nothing) "test" [] (Core.progExports program)) (compileProgram program)
           (,) (builtSteps built) . Right . reverse <$> readIORef out
         ([], Nothing) -> pure (builtSteps built, Right "")
         (failures, _) -> pure (builtSteps built, Left (concatMap render failures))

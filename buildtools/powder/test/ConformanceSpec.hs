@@ -109,7 +109,8 @@ running name input program = do
           { putCh = \h c -> when (h == 1) (modifyIORef' out (c :)),
             getCh = atomicModifyIORef' left (\case [] -> ([], Nothing); c : rest -> (rest, Just c)),
             programName = name,
-            arguments = ["one", "two words"]
+            arguments = ["one", "two words"],
+            exported = Core.progExports program
           }
   status <-
     -- Long enough for the slowest of them on a slow machine with others running.

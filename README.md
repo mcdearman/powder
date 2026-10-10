@@ -201,20 +201,31 @@ A program is kind and type checked before it is compiled (see
 
 What is not as the Report has it:
 
-- **Calling C** is the Report's, but for C calling back. A foreign import
-  takes and gives the basic foreign types: the numbers, `Char`, `Bool`,
-  `Ptr`, `FunPtr`, `StablePtr`, the types of `Foreign.C.Types`, and
-  newtypes and synonyms of those; any number of them, purely or as an
-  action. `"&name"` is the address of something of C's, and `"dynamic"`
-  calls a function by its address. Calls are made with libffi, of a
-  function looked up by name in the C library and in whatever libraries
-  `POWDER_FOREIGN_LIBS` names, between colons. The `Foreign` libraries
-  are all there. Three things to know of them: sizes are those of a
-  64-bit system whose `long` is 64 bits, and `errno`'s numbers are
-  Linux's; a `ForeignPtr`'s finalizers run when it is finalized or when
-  the program ends, and not sooner, since nothing finds out when the last
-  use of one has been made; and `"wrapper"` and `foreign export` are not
-  there yet, so C cannot call a function of the program's.
+- **Calling C** is the Report's. A foreign import takes and gives the
+  basic foreign types: the numbers, `Char`, `Bool`, `Ptr`, `FunPtr`,
+  `StablePtr`, the types of `Foreign.C.Types`, and newtypes and synonyms
+  of those; any number of them, purely or as an action. `"&name"` is the
+  address of something of C's, `"dynamic"` calls a function by its
+  address, and `"wrapper"` makes a C function of a function of the
+  program's, which C can then call. `foreign export` makes a function C's
+  under a name. Calls are made with libffi, of a function looked up by
+  name among the program's own exports, then in the C library and in
+  whatever libraries `POWDER_FOREIGN_LIBS` names, between colons. The
+  `Foreign` libraries are all there. What to know:
+  - Sizes are those of a 64-bit system whose `long` is 64 bits, and
+    `errno`'s numbers are Linux's.
+  - A `ForeignPtr`'s finalizers run when it is finalized or when the
+    program ends, and not sooner, since nothing finds out when the last
+    use of one has been made.
+  - A C function made by `"wrapper"` is kept for as long as the program
+    runs: `freeHaskellFunPtr` does nothing.
+  - An export is made when the program starts, so it has an address then
+    and no name a C library could be linked against. `powder-ski --stubs
+    FILE` writes C that gives each export its name, as a function that
+    calls through a place the machine fills in; `powder build` writes it
+    to `target/debug/stubs/`. Compiled into a shared library and named
+    first in `POWDER_FOREIGN_LIBS`, it is what C that calls the exports
+    links with.
 - **Handles** are the Report's: open, semi-closed after `hGetContents`
   and closed; many readers or one writer of a file; `hLookAhead`,
   seeking, sizes, and I/O errors that say what kind they are and what
@@ -498,12 +509,10 @@ of the same spelling, since defining again is what a prompt is for.
 The target is Haskell 2010, and after that extensions, up to GHC2024.
 Next:
 
-1. **The rest of the Report**: C calling back, by `"wrapper"` imports
-   and `foreign export`.
-2. **More of [the build tool](#the-build-tool)**: dependencies from git
+1. **More of [the build tool](#the-build-tool)**: dependencies from git
    with a lockfile, workspaces, tests, and keeping what is compiled within
    a package, by the groups of modules that import each other.
-3. **Lowering to a typed Core** like GHC's, from HIR and the tables, in
+2. **Lowering to a typed Core** like GHC's, from HIR and the tables, in
    place of the untyped Core here now.
 
 ### Conventions

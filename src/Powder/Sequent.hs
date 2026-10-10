@@ -33,7 +33,7 @@ where
 
 import Data.List (intercalate)
 import qualified Data.Set as Set
-import Powder.Core (ConInfo (..), Name, Prim, primName)
+import Powder.Core (ConInfo (..), Export, Name, Prim, primName)
 
 data Producer
   = -- | A variable: a thunk, or a value.
@@ -89,7 +89,12 @@ data Statement
 -- starts it.
 data Program = Program
   { programDefinitions :: [(Name, Producer)],
-    programEntry :: Statement
+    programEntry :: Statement,
+    -- | How a call from C is answered: given the action that answers it,
+    -- under a name, run it.
+    programCallback :: (Name, Statement),
+    -- | The functions C may call.
+    programExports :: [Export]
   }
 
 -- | What an action raises: what to do if nothing catches it, and what was
@@ -128,7 +133,7 @@ freeNames = statement
 -- Pretty printing -----------------------------------------------------------
 
 pretty :: Program -> String
-pretty (Program defs entry) = unlines ([x ++ " = " ++ producer 1 p | (x, p) <- defs] ++ ["entry = " ++ statement 1 entry])
+pretty (Program defs entry _ _) = unlines ([x ++ " = " ++ producer 1 p | (x, p) <- defs] ++ ["entry = " ++ statement 1 entry])
   where
     indent n = "\n" ++ replicate (2 * n) ' '
     statement :: Int -> Statement -> String
