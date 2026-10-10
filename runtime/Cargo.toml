@@ -8,11 +8,15 @@ license = "BSD-3-Clause"
 [dependencies]
 libc = "0.2"
 libffi = "3.2"
+mimalloc = { version = "0.1", default-features = false }
 num-bigint = "0.4"
 num-integer = "0.1"
 num-traits = "0.2"
+smallvec = { version = "1", features = ["union"] }
 unicode-general-category = "1"
 
 [profile.release]
 opt-level = 3
 debug = false
+lto = true
+codegen-units = 1
