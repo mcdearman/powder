@@ -22,7 +22,7 @@ import qualified Data.Map as Map
 import Data.Maybe (isNothing)
 import Data.Word (Word16, Word32, Word64, Word8)
 import Powder.AxCut
-import Powder.Core (ConInfo (..), Name, Prim (..), primName)
+import Powder.Core (ConInfo (..), Export (..), Name, Prim (..), foreignArity, primName)
 import Powder.Files (Files, newFiles)
 import qualified Powder.Files as Files
 import Powder.SKI.Eval (Hooks (..), RuntimeError (..))
@@ -55,7 +55,13 @@ data Machine = Machine
     files :: Files,
     cells :: IORef (Map.Map Integer Value),
     pushed :: IORef (Maybe (Maybe Char)),
-    steps :: IORef Int
+    steps :: IORef Int,
+    -- | The calls from C being answered, the innermost first: each its
+    -- arguments, and where its result goes.
+    frames :: IORef [([Either Int64 Double], IORef (Either Int64 Double))],
+    -- | How a call from C is answered: with the action that answers it
+    -- under a name, a statement that runs it.
+    callback :: (Name, Statement)
   }
 
 failure :: String -> IO a
@@ -68,10 +74,14 @@ broken message = failure ("the AxCut program is malformed: " ++ message)
 -- | Run a program, giving how many statements it took. Throws
 -- 'RuntimeError', or 'ExitCode' if the program exits.
 run :: Hooks -> Program -> IO Int
-run h (Program defs entry) = do
+run h (Program defs entry answered exports) = do
   Foreign.loadLibraries >>= mapM_ failure . take 1
   made <- forM defs (\(x, k, s) -> (,) x <$> newIORef (Delayed [] (Method Forced [k] s)))
-  m <- Machine h (Map.fromList made) <$> newFiles <*> newIORef Map.empty <*> newIORef Nothing <*> newIORef 0
+  m <- Machine h (Map.fromList made) <$> newFiles <*> newIORef Map.empty <*> newIORef Nothing <*> newIORef 0 <*> newIORef [] <*> pure answered
+  -- What C may call is made C's before anything runs.
+  forM_ exports $ \(Export name shape result action) -> do
+    answer <- maybe (broken ("no definition of " ++ action)) (pure . VObject) (Map.lookup action (globals m))
+    Foreign.newCallback shape result (answering m answer) >>= either failure (Foreign.export name)
   execute m [] entry
   readIORef (steps m)
 
@@ -127,8 +137,15 @@ execute m env statement = do
       (arguments, rest) <- takeLast n env
       result <- primitive m p arguments
       execute m (push rest [(v, result)]) s
+    -- A C function made of an action of the program's.
+    Foreign v "wrapper" shape result s -> do
+      (arguments, rest) <- takeLast 1 env
+      made <- case arguments of
+        [answer] -> Foreign.newCallback shape result (answering m answer) >>= either failure pure
+        _ -> broken "a C function is made of one action"
+      execute m (push rest [(v, VInt made)]) s
     Foreign v symbol shape result s -> do
-      (arguments, rest) <- takeLast (length shape) env
+      (arguments, rest) <- takeLast (foreignArity symbol shape) env
       given <- forM (zip shape arguments) $ \case
         ('D', VDouble x) -> pure (Right x)
         ('F', VDouble x) -> pure (Right x)
@@ -208,6 +225,16 @@ narrowed kind n = case kind of
   'Q' -> toInteger (fromIntegral n :: Word64)
   _ -> toInteger n
 
+-- | What answers a call from C: an action of the program's, run with the
+-- call's arguments where it can take them, giving what it gave.
+answering :: Machine -> Value -> [Either Int64 Double] -> IO (Either Int64 Double)
+answering m answer taken = do
+  slot <- newIORef (Left 0)
+  modifyIORef' (frames m) ((taken, slot) :)
+  let (name, statement) = callback m
+  execute m [(name, answer)] statement `finally` modifyIORef' (frames m) (drop 1)
+  readIORef slot
+
 -- | A primitive, of values already worked out.
 primitive :: Machine -> Prim -> [Value] -> IO Value
 primitive m p given = case (p, given) of
@@ -282,12 +309,24 @@ primitive m p given = case (p, given) of
   (PokeDouble, [VInt kind, VInt address, VDouble value]) -> unit <$ Foreign.pokeReal kind address value
   (ErrnoGet, []) -> Foreign.getErrno >>= int
   (ErrnoSet, [VInt value]) -> unit <$ Foreign.setErrno value
+  (CallbackInt, [VInt i]) -> taken i >>= either (int . toInteger) (const (failure "an argument from C is a double, and was taken as an integer"))
+  (CallbackDouble, [VInt i]) -> taken i >>= either (const (failure "an argument from C is an integer, and was taken as a double")) double
+  (CallbackReturnInt, [VInt value]) -> unit <$ giving (Left (fromInteger value))
+  (CallbackReturnDouble, [VDouble value]) -> unit <$ giving (Right value)
   (ArgCount, []) -> int (toInteger (length (arguments (hooks m))))
   (ArgChar, [VInt i, VInt j]) -> do
     let text = if i < 0 then programName (hooks m) else concat (take 1 (drop (fromInteger i) (arguments (hooks m))))
     int (maybe (-1) (toInteger . ord) (lookup j (zip [0 ..] text)))
   _ -> failure ("type error: " ++ primName p ++ " was given what it cannot take")
   where
+    taken i =
+      readIORef (frames m) >>= \case
+        (theirs, _) : _ | Just a <- lookup i (zip [0 ..] theirs) -> pure a
+        _ -> failure "there is no such argument of a call from C"
+    giving value =
+      readIORef (frames m) >>= \case
+        (_, slot) : _ -> writeIORef slot value
+        [] -> failure "there is no call from C to answer"
     int = pure . VInt
     code = int . maybe (-1) (toInteger . ord)
     double = pure . VDouble

@@ -31,11 +31,23 @@ type M = ReaderT (Map.Map Name Name) (State Int)
 -- | Translate a program, to be started by running the action a
 -- definition is.
 fromCore :: Name -> Core.Program -> Program
-fromCore root (Core.Program _ defs) = evalState (runReaderT build Map.empty) 0
+fromCore root (Core.Program _ defs exports) = evalState (runReaderT build Map.empty) 0
   where
     build = do
       definitions <- forM defs $ \(x, e) -> (,) x <$> delayed e
-      Program definitions <$> entry
+      Program definitions <$> entry <*> callback <*> pure exports
+    -- The same for an action that is given, where the entry's is a
+    -- definition's.
+    callback = do
+      a <- fresh "action"
+      r <- fresh "r"
+      u <- fresh "u"
+      v <- fresh "v"
+      r' <- fresh "r"
+      e <- fresh "e"
+      let finish = MuTilde r Halt
+          uncaught = Case [Alt raised [u, v] (Cut (Var u) (Force (Run (MuTilde r' Halt) (MuTilde e Halt))))]
+      pure (a, Cut (Var a) (Force (Run finish uncaught)))
     -- Run the action; what it raises and nothing catches says what to do.
     entry = do
       r <- fresh "r"
@@ -124,11 +136,13 @@ evaluate e k = case spine e [] of
         applied rest k >>= primitive p mine
     | otherwise -> expanded e (arity p - length arguments) k
   (Core.Foreign symbol shape result, arguments)
-    | length arguments >= length shape -> do
-        let (mine, rest) = splitAt (length shape) arguments
+    | length arguments >= taken -> do
+        let (mine, rest) = splitAt taken arguments
         k' <- applied rest k
         strictly mine (\vs -> pure (Foreign symbol shape result vs k'))
-    | otherwise -> expanded e (length shape - length arguments) k
+    | otherwise -> expanded e (taken - length arguments) k
+    where
+      taken = Core.foreignArity symbol shape
   (f, arguments) -> applied arguments k >>= evaluate' f
   where
     evaluate' f k' = case f of
@@ -213,7 +227,7 @@ action p = case p of
       err <- fresh "err"
       Action ok err <$> body ok err
     wrong = error "Powder.Sequent.FromCore: an action given the wrong number of arguments"
-    effects = [PutChar, GetChar, Exit, PathChar, FileOpen, HGetChar, FileClose, HIsEOF, ArgCount, ArgChar, FileSeek, FileTruncate, FileFlush, IsTerminal, EnvChar, CellNew, CellRead, CellWrite, PeekInt, PeekDouble, PokeInt, PokeDouble, ErrnoGet, ErrnoSet]
+    effects = [PutChar, GetChar, Exit, PathChar, FileOpen, HGetChar, FileClose, HIsEOF, ArgCount, ArgChar, FileSeek, FileTruncate, FileFlush, IsTerminal, EnvChar, CellNew, CellRead, CellWrite, PeekInt, PeekDouble, PokeInt, PokeDouble, ErrnoGet, ErrnoSet, CallbackInt, CallbackDouble, CallbackReturnInt, CallbackReturnDouble]
 
 -- | A primitive given all its arguments, with where its result goes.
 primitive :: Prim -> [Core] -> Consumer -> M Statement

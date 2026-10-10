@@ -26,13 +26,13 @@ fresh :: String -> M Name
 fresh hint = state (\n -> (hint ++ "~" ++ show n, n + 1))
 
 lower :: Program -> AxCut.Program
-lower (Program defs entry) = evalState build 0
+lower (Program defs entry (given, callback) exports) = evalState build 0
   where
     build = do
       definitions <- forM defs $ \(x, p) -> case p of
         Thunk a s -> (,,) x a <$> (focus s >>= linear [a])
         _ -> error ("Powder.AxCut.Lower: the definition of " ++ x ++ " is not a thunk")
-      AxCut.Program definitions <$> (focus entry >>= linear [])
+      AxCut.Program definitions <$> (focus entry >>= linear []) <*> ((,) given <$> (focus callback >>= linear [given])) <*> pure exports
 
 -- Focusing ------------------------------------------------------------------
 
@@ -238,7 +238,7 @@ linearly = \case
                 ]
            in arrange env (same (kept ++ concat [mine | (_, _, _, mine) <- built])) (AxCut.Rec [(x, o, others) | (x, o, others, _) <- built] (continue (kept ++ names)))
       )
-  other -> error ("Powder.AxCut.Lower: a statement that was not focused: " ++ take 200 (pretty (Program [] other)))
+  other -> error ("Powder.AxCut.Lower: a statement that was not focused: " ++ take 200 (pretty (Program [] other ("", Halt) [])))
   where
     variable = \case
       Var x -> x

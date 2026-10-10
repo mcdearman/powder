@@ -41,14 +41,18 @@ module Powder.AxCut
 where
 
 import Data.List (intercalate)
-import Powder.Core (ConInfo (..), Name, Prim, primName)
+import Powder.Core (ConInfo (..), Export, Name, Prim, foreignArity, primName)
 
 -- | A program: its definitions, each the body of a thunk, to be run with
 -- only the consumer of its value in the environment; and the statement
 -- that starts it, with nothing in the environment.
 data Program = Program
   { programDefinitions :: [(Name, Name, Statement)],
-    programEntry :: Statement
+    programEntry :: Statement,
+    -- | How a call from C is answered: with the action that answers it in
+    -- the environment, under a name, run it.
+    programCallback :: (Name, Statement),
+    programExports :: [Export]
   }
 
 data Statement
@@ -108,7 +112,7 @@ data MethodName
 -- Pretty printing -----------------------------------------------------------
 
 pretty :: Program -> String
-pretty (Program defs entry) = unlines (["def " ++ x ++ "(" ++ k ++ ") =" ++ statement 1 s | (x, k, s) <- defs] ++ ["entry =" ++ statement 1 entry])
+pretty (Program defs entry _ _) = unlines (["def " ++ x ++ "(" ++ k ++ ") =" ++ statement 1 s | (x, k, s) <- defs] ++ ["entry =" ++ statement 1 entry])
   where
     indent n = "\n" ++ replicate (2 * n) ' '
     statement :: Int -> Statement -> String
@@ -122,7 +126,7 @@ pretty (Program defs entry) = unlines (["def " ++ x ++ "(" ++ k ++ ") =" ++ stat
       Lit v i s -> indent n ++ "lit " ++ v ++ " = " ++ show i ++ statement n s
       Global v g s -> indent n ++ "global " ++ v ++ " = @" ++ g ++ statement n s
       Prim v p k s -> indent n ++ "prim " ++ v ++ " = " ++ primName p ++ "/" ++ show k ++ statement n s
-      Foreign v symbol shape _ s -> indent n ++ "foreign " ++ v ++ " = " ++ symbol ++ "/" ++ show (length shape) ++ statement n s
+      Foreign v symbol shape _ s -> indent n ++ "foreign " ++ v ++ " = " ++ symbol ++ "/" ++ show (foreignArity symbol shape) ++ statement n s
       Rec os s -> indent n ++ "rec {" ++ concat [indent (n + 1) ++ v ++ " = " ++ object (n + 1) o ++ " with [" ++ unwords others ++ "]" | (v, o, others) <- os] ++ indent n ++ "}" ++ statement n s
       Halt -> indent n ++ "halt"
     object n (Object kind captured (Method m parameters s)) =

@@ -193,6 +193,7 @@ link programs =
   Core.Program
     (Map.elems (Map.fromList [(conName c, c) | p <- programs, c <- Core.progCons p]))
     ((entry, App (Var "Powder.Base.top") (Var "Main.main")) : concatMap Core.progDefs programs)
+    (concatMap Core.progExports programs)
 
 -- What is kept in a file --------------------------------------------------
 
@@ -246,6 +247,8 @@ deriving instance Generic Prim
 
 deriving instance Generic Core.Program
 
+deriving instance Generic Core.Export
+
 instance Binary NameId
 
 instance Binary NodeId
@@ -295,3 +298,5 @@ instance Binary Alt
 instance Binary Prim
 
 instance Binary Core.Program
+
+instance Binary Core.Export

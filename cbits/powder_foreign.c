@@ -95,3 +95,93 @@ int powder_foreign_call(void (*function)(void), const char *shape, char result,
   }
   return 0;
 }
+
+/* C calling back. A C function is made that, called, hands its arguments
+ * to the machine with a number that says which of the program's actions
+ * answers, and gives back what the machine gives it. */
+
+#include <stdlib.h>
+
+typedef void (*powder_dispatch)(int64_t which, const int64_t *whole, const double *real,
+                                int64_t *whole_out, double *real_out);
+
+static powder_dispatch dispatch = 0;
+
+void powder_set_dispatch(powder_dispatch to) { dispatch = to; }
+
+struct made {
+  ffi_cif cif;
+  ffi_type **types;
+  char *shape;
+  char result;
+  int64_t which;
+};
+
+static void answer(ffi_cif *cif, void *ret, void **args, void *user) {
+  struct made *made = user;
+  size_t count = strlen(made->shape);
+  int64_t whole[count + 1];
+  double real[count + 1];
+  (void)cif;
+  for (size_t i = 0; i < count; i++) {
+    whole[i] = 0;
+    real[i] = 0;
+    switch (made->shape[i]) {
+      case 'c': whole[i] = *(int8_t *)args[i]; break;
+      case 'C': whole[i] = *(uint8_t *)args[i]; break;
+      case 's': whole[i] = *(int16_t *)args[i]; break;
+      case 'S': whole[i] = *(uint16_t *)args[i]; break;
+      case 'I': whole[i] = *(int32_t *)args[i]; break;
+      case 'U': whole[i] = *(uint32_t *)args[i]; break;
+      case 'L': whole[i] = *(int64_t *)args[i]; break;
+      case 'Q': whole[i] = (int64_t) * (uint64_t *)args[i]; break;
+      case 'F': real[i] = *(float *)args[i]; break;
+      case 'D': real[i] = *(double *)args[i]; break;
+      default: whole[i] = (int64_t)(intptr_t) * (void **)args[i]; break;
+    }
+  }
+  int64_t whole_out = 0;
+  double real_out = 0;
+  int kept = kept_errno;
+  if (dispatch) dispatch(made->which, whole, real, &whole_out, &real_out);
+  kept_errno = kept;
+  switch (made->result) {
+    case 'D': *(double *)ret = real_out; break;
+    case 'F': *(float *)ret = (float)real_out; break;
+    case 'V': break;
+    case 'L': *(int64_t *)ret = whole_out; break;
+    case 'Q': *(uint64_t *)ret = (uint64_t)whole_out; break;
+    case 'P': *(void **)ret = (void *)(intptr_t)whole_out; break;
+    /* A narrow result goes back widened to a whole word. */
+    case 'c': *(ffi_sarg *)ret = (int8_t)whole_out; break;
+    case 's': *(ffi_sarg *)ret = (int16_t)whole_out; break;
+    case 'I': *(ffi_sarg *)ret = (int32_t)whole_out; break;
+    case 'C': *(ffi_arg *)ret = (uint8_t)whole_out; break;
+    case 'S': *(ffi_arg *)ret = (uint16_t)whole_out; break;
+    default: *(ffi_arg *)ret = (uint32_t)whole_out; break;
+  }
+}
+
+/* Make a C function of a type, answered by the action of a number. Gives
+ * its address, or null if it cannot be made. */
+void *powder_closure_new(const char *shape, char result, int64_t which) {
+  size_t count = strlen(shape);
+  void *code = 0;
+  ffi_closure *closure = ffi_closure_alloc(sizeof(ffi_closure), &code);
+  struct made *made = malloc(sizeof(struct made));
+  if (closure == 0 || made == 0) return 0;
+  made->types = malloc((count + 1) * sizeof(ffi_type *));
+  made->shape = malloc(count + 1);
+  if (made->types == 0 || made->shape == 0) return 0;
+  memcpy(made->shape, shape, count + 1);
+  made->result = result;
+  made->which = which;
+  for (size_t i = 0; i < count; i++) {
+    made->types[i] = type_of(shape[i]);
+    if (made->types[i] == 0 || shape[i] == 'V') return 0;
+  }
+  ffi_type *gives = type_of(result);
+  if (gives == 0 || ffi_prep_cif(&made->cif, FFI_DEFAULT_ABI, (unsigned)count, gives, made->types) != FFI_OK) return 0;
+  if (ffi_prep_closure_loc(closure, &made->cif, answer, made, code) != FFI_OK) return 0;
+  return code;
+}

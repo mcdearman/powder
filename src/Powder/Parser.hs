@@ -496,9 +496,10 @@ topDecl = do
           m <- open
           advance
           imported <- at KwImport
-          if not imported
+          exported <- atText "export"
+          if not (imported || exported)
             then do
-              problem "only foreign imports are supported: there is nothing here C could call"
+              problem "a foreign declaration is an import or an export"
               restOfDecl
               close_ m ErrorNode
             else do
@@ -509,7 +510,7 @@ topDecl = do
               binder
               expect_ DoubleColon
               type_
-              close_ m ForeignDecl
+              close_ m (if imported then ForeignDecl else ForeignExportDecl)
       | otherwise -> localDecl
   where
     wholeDecl kind = do

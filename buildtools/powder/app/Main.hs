@@ -16,6 +16,7 @@ import qualified Powder.Core as Core
 import Powder.Diagnostics (printFailure)
 import Powder.Frontend (axcut)
 import Powder.Package (entry)
+import Powder.Stubs (stubs)
 import Powder.SKI.Compile (compileProgram)
 import Powder.SKI.Eval (Hooks (..), RuntimeError (..), run, stdHooks)
 import System.Directory
@@ -136,6 +137,12 @@ building found = do
     let file = imageOf graph
     createDirectoryIfMissing True (takeDirectory file)
     L.writeFile file (Bytecode.image (axcut entry program))
+    -- C for what the program exports, for C to link with.
+    unless (null (Core.progExports program)) $ do
+      let stub = takeDirectory (takeDirectory file) </> "stubs" </> graphRoot graph ++ "_stub.c"
+      createDirectoryIfMissing True (takeDirectory stub)
+      writeFile stub (stubs (Core.progExports program))
+      note status "Exports" (show (length (Core.progExports program)) ++ " for C to call: " ++ stub)
     pure (file, program)
   let compiled = length [() | (_, Rebuilt) <- builtSteps built]
   say status "Finished" (show compiled ++ " compiled, " ++ show (length [() | (_, Fresh) <- builtSteps built]) ++ " fresh" ++ maybe "" ((" -> " ++) . fst) image)
@@ -157,7 +164,7 @@ running found (graph, image) = case image of
         | flagRuntime found == Just "vm" -> complain "powder-vm was not found: put it on the PATH, or say where it is with POWDER_VM" >> exitFailure
         | otherwise -> do
             say status "Running" (graphRoot graph ++ " on the reducer")
-            void (run stdHooks {programName = graphRoot graph, arguments = flagArguments found} (compileProgram program))
+            void (run stdHooks {programName = graphRoot graph, arguments = flagArguments found, exported = Core.progExports program} (compileProgram program))
               `catch` \(RuntimeError message) -> hFlush stdout >> complain ("runtime error: " ++ message) >> exitFailure
   where
     findMachine =

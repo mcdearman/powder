@@ -15,7 +15,7 @@ import qualified Data.ByteString.Lazy as L
 import Data.IORef
 import qualified Powder.AxCut.Machine as AxCut
 import qualified Powder.Bytecode as Bytecode
-import Powder.Core (Program)
+import Powder.Core (Program (..))
 import Powder.Frontend (axcut)
 import Powder.SKI.Compile (compileProgram)
 import Powder.SKI.Eval (Hooks (..), RuntimeError (..), run)
@@ -75,7 +75,8 @@ execute runtime name prog input = case runtime of
               { putCh = \h c -> when (h == 1) (modifyIORef' out (c :)),
                 getCh = atomicModifyIORef' rest (\s -> (drop 1 s, case s of c : _ -> Just c; [] -> Nothing)),
                 programName = "powder",
-                arguments = ["one", "two words"]
+                arguments = ["one", "two words"],
+                exported = progExports prog
               }
       ended <- timeout limit (try (go hooks))
       text <- reverse <$> readIORef out

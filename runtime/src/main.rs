@@ -66,7 +66,8 @@ enum Prim {
     DoubleTruncate, DoubleFun, DoubleShowAt, FloatShowAt, FloatNarrow, DoubleMantissa, DoubleExponent,
     DoubleEncode, DoubleFromRatio, CharCategory, CharUpper, CharLower, CharTitle, MatchFail, PutChar, GetChar, Exit, PathChar, FileOpen, HGetChar, FileClose, HIsEOF,
     ArgCount, ArgChar, FileSeek, FileTruncate, FileFlush, IsTerminal, EnvChar, CellNew, CellRead, CellWrite,
-    PeekInt, PeekDouble, PokeInt, PokeDouble, ErrnoGet, ErrnoSet,
+    PeekInt, PeekDouble, PokeInt, PokeDouble, ErrnoGet, ErrnoSet, CallbackInt, CallbackDouble, CallbackReturnInt,
+    CallbackReturnDouble,
 }
 
 fn prim_named(name: &str) -> Result<Prim, String> {
@@ -90,6 +91,8 @@ fn prim_named(name: &str) -> Result<Prim, String> {
         "primCellRead" => CellRead, "primCellWrite" => CellWrite,
         "primPeekInt" => PeekInt, "primPeekDouble" => PeekDouble, "primPokeInt" => PokeInt,
         "primPokeDouble" => PokeDouble, "primErrnoGet" => ErrnoGet, "primErrnoSet" => ErrnoSet,
+        "primCallbackInt" => CallbackInt, "primCallbackDouble" => CallbackDouble,
+        "primCallbackReturnInt" => CallbackReturnInt, "primCallbackReturnDouble" => CallbackReturnDouble,
         other => return Err(format!("the image uses a primitive this machine has not got: {other}")),
     })
 }
@@ -122,6 +125,12 @@ struct Image {
     blocks: Vec<Vec<Instruction>>,
     definitions: Vec<usize>,
     entry: usize,
+    /// The block that answers a call from C, which starts with the action
+    /// that answers it in the environment.
+    callback: usize,
+    /// What C may call: its name, the letters of its arguments and of its
+    /// result, and the definition that is the action answering it.
+    exports: Vec<(String, String, char, usize)>,
 }
 
 struct Reader<'a> {
@@ -170,8 +179,8 @@ fn load(bytes: &[u8]) -> Result<Image, String> {
     }
     r.at = 4;
     let version = r.number()?;
-    if version != 1 {
-        return Err(format!("the image is of version {version}, and this machine runs version 1"));
+    if version != 2 {
+        return Err(format!("the image is of version {version}, and this machine runs version 2"));
     }
     let mut strings = Vec::new();
     for _ in 0..r.number()? {
@@ -230,7 +239,13 @@ fn load(bytes: &[u8]) -> Result<Image, String> {
     }
     let n = r.number()?;
     let definitions = (0..n).map(|_| r.number()).collect::<Result<_, _>>()?;
-    Ok(Image { blocks, definitions, entry: r.number()? })
+    let entry = r.number()?;
+    let callback = r.number()?;
+    let mut exports = Vec::new();
+    for _ in 0..r.number()? {
+        exports.push((string(r.number()?)?, string(r.number()?)?, r.byte()? as char, r.number()?));
+    }
+    Ok(Image { blocks, definitions, entry, callback, exports })
 }
 
 // Numbers --------------------------------------------------------------------
@@ -421,6 +436,10 @@ struct Machine {
     environment: Vec<String>,
     arguments: Vec<String>,
     name: String,
+    // The actions that answer calls from C, by number; and the calls being
+    // answered, the innermost last: each its arguments, and its result.
+    answers: Vec<Value>,
+    frames: Vec<(Vec<foreign::Number>, foreign::Number)>,
 }
 
 /// Read one character of UTF-8, or nothing at the end.
@@ -714,6 +733,30 @@ impl Machine {
                 }
                 UNIT
             }
+            (CallbackInt, [i]) => {
+                let i = small(i)? as usize;
+                match self.frames.last().and_then(|(taken, _)| taken.get(i)) {
+                    Some(foreign::Number::Long(n)) => Value::Int(*n),
+                    _ => return Err("there is no such integer argument of a call from C".into()),
+                }
+            }
+            (CallbackDouble, [i]) => {
+                let i = small(i)? as usize;
+                match self.frames.last().and_then(|(taken, _)| taken.get(i)) {
+                    Some(foreign::Number::Double(x)) => Value::Double(*x),
+                    _ => return Err("there is no such double argument of a call from C".into()),
+                }
+            }
+            (CallbackReturnInt, [value]) => {
+                let value = foreign::Number::Long(small(value)?);
+                self.frames.last_mut().ok_or("there is no call from C to answer")?.1 = value;
+                UNIT
+            }
+            (CallbackReturnDouble, [value]) => {
+                let value = foreign::Number::Double(double(value)?);
+                self.frames.last_mut().ok_or("there is no call from C to answer")?.1 = value;
+                UNIT
+            }
             (ErrnoGet, []) => Value::Int(foreign::errno() as i64),
             (ErrnoSet, [value]) => {
                 foreign::set_errno(small(value)? as i32);
@@ -737,11 +780,33 @@ impl Machine {
         }
     }
 
-    /// Run from a block until the program halts.
-    fn run(&mut self) -> Result<(), String> {
+    /// Make what C may call C's, before anything runs.
+    fn export(&mut self) -> Result<(), String> {
+        for (name, shape, result, definition) in self.image.exports.clone() {
+            let action = self.globals.get(definition).ok_or("the image exports a definition it has not got")?.clone();
+            self.answers.push(Value::Object(action));
+            foreign::export(&name, foreign::closure(&shape, result, self.answers.len() - 1)?);
+        }
+        Ok(())
+    }
+
+    /// Answer a call from C: run the action of a number, which takes the
+    /// call's arguments and gives its result by the primitives for that.
+    fn answer(&mut self, which: usize, taken: Vec<foreign::Number>) -> foreign::Number {
+        let Some(action) = self.answers.get(which).cloned() else { return foreign::Number::Long(0) };
+        self.frames.push((taken, foreign::Number::Long(0)));
+        let block = self.image.callback;
+        if let Err(message) = self.run(block, vec![action]) {
+            eprintln!("runtime error: {message}");
+            self.finish(1)
+        }
+        self.frames.pop().map_or(foreign::Number::Long(0), |(_, gave)| gave)
+    }
+
+    /// Run from a block, with an environment, until it halts.
+    fn run(&mut self, start: usize, mut env: Vec<Value>) -> Result<(), String> {
         let malformed = |what: &str| format!("the image is malformed: {what}");
-        let mut env: Vec<Value> = Vec::new();
-        let mut block = self.image.entry;
+        let mut block = start;
         let mut at = 0;
         loop {
             // The image is not changed while it runs, so an instruction can
@@ -797,6 +862,12 @@ impl Machine {
                     let arguments = env.split_off(env.len() - n);
                     let result = self.primitive(*p, &arguments)?;
                     env.push(result);
+                }
+                // A C function made of an action of the program's.
+                Instruction::Foreign { symbol, shape, result } if symbol == "wrapper" => {
+                    let action = env.pop().ok_or_else(|| malformed("a C function made of nothing"))?;
+                    self.answers.push(action);
+                    env.push(Value::Int(foreign::closure(shape, *result, self.answers.len() - 1)?));
                 }
                 Instruction::Foreign { symbol, shape, result } => {
                     let arguments = env.split_off(env.len() - shape.len());
@@ -914,6 +985,17 @@ enum Entered {
     Call(Value, Value),
 }
 
+/// The machine, for calls from C: they come from inside a call the machine
+/// made, on its thread, and have nothing else to find it by.
+static mut MACHINE: *mut Machine = std::ptr::null_mut();
+
+fn answer(which: usize, taken: Vec<foreign::Number>) -> foreign::Number {
+    // SAFETY: set before anything runs, to a machine that outlives the
+    // run; and the machine holds nothing across a call of C's.
+    let machine = unsafe { &mut *MACHINE };
+    machine.answer(which, taken)
+}
+
 fn main() {
     let mut arguments = std::env::args().skip(1);
     let Some(path) = arguments.next() else {
@@ -945,8 +1027,17 @@ fn main() {
             environment: std::env::vars_os().map(|(name, value)| format!("{}={}", name.to_string_lossy(), value.to_string_lossy())).collect(),
             arguments: rest,
             name: path,
+            answers: Vec::new(),
+            frames: Vec::new(),
         };
-        let outcome = foreign::load_libraries().and_then(|()| machine.run());
+        // SAFETY: the machine is in one place for as long as the thread
+        // runs, and C calls back only from inside a call the machine made.
+        unsafe { MACHINE = &mut machine };
+        foreign::answer_with(answer);
+        let outcome = foreign::load_libraries().and_then(|()| machine.export()).and_then(|()| {
+            let entry = machine.image.entry;
+            machine.run(entry, Vec::new())
+        });
         let _ = machine.out.flush();
         match outcome {
             Ok(()) => machine.finish(0),

@@ -249,6 +249,7 @@ resolveAfter seed lenient sources extra = case reverse (problems final) of
                   ++ concat [concatMap defines (grouped (moduleDecls m)) | (_, m) <- sourcesOf n]
                   ++ concat [fieldsOf d | (_, m) <- sourcesOf n, d <- moduleDecls m]
                   ++ [x | (_, m) <- sourcesOf n, Decl.Foreign _ x _ <- moduleDecls m]
+                  ++ [exportName entity x | (_, m) <- sourcesOf n, Decl.ForeignExport entity x _ <- moduleDecls m]
                   ++ concat [name : maybe [] pure printer | n == root, Just (name, printer, _, _) <- [extra]]
               )
       globals <- fmap Map.fromList . forM (nub (root : moduleNames)) $ \n ->
@@ -425,6 +426,16 @@ resolveAfter seed lenient sources extra = case reverse (problems final) of
             b <- node
             body <- mk (Foreign symbol) >>= plain
             pure . Binding b . Function (globalsOf n Map.! x) . pure . (\c -> Clause c [] body) <$> node
+          -- A function made C's is a definition of its own, of the type C
+          -- sees, that is the function: so that it is checked to have
+          -- that type, and there is something to make C's.
+          Decl.ForeignExport entity x ty -> within d $ do
+            let hidden = globalsOf n Map.! exportName entity x
+            declared' <- signatureOf [] ty
+            modify (\st -> st {signatures = IntMap.insert (nameKey hidden) declared' (signatures st)})
+            b <- node
+            body <- variable x >>= mk >>= plain
+            pure . Binding b . Function hidden . pure . (\c -> Clause c [] body) <$> node
           _ -> pure []
         (,) [globalsOf n Map.! f | Equations _ f _ <- gs] . (++ foreigns) <$> mapM binding gs
       asked <- fmap (fromMaybe []) . forM extra $ \(name, printer, file, e) -> inModule root file . within e $ do
@@ -445,6 +456,10 @@ resolveAfter seed lenient sources extra = case reverse (problems final) of
               Just (_, ms) | x `elem` map snd ms -> Just (c, x)
               _ -> Nothing
       pure (Linkage exports (if "Powder.Base" `elem` moduleNames then Just (own "Powder.Base") else linkBase before) belongings (Just (wiredTypes, wiredConstructors, wiredBuiltins)) IntMap.empty IntMap.empty IntMap.empty, (kept ++ asked, wiredBuiltins {builtinNumeric = method "Num" "fromInteger", builtinEquality = method "Eq" "==", builtinFractional = (\(c, x) k -> (c, x, k)) <$> method "Fractional" "fromRational" <*> Map.lookup ":%" (one (scopeConstructors (basis root)))}))
+
+    -- What the definition of a function made C's is called: nothing a
+    -- program can write, with what C is to call the function.
+    exportName entity x = "export#" ++ fromMaybe x (listToMaybe (reverse (words (fromMaybe "" entity))))
 
     overridden redefined b = case bindingKind b of
       Function f _ -> f `elem` redefined
@@ -1337,6 +1352,7 @@ grouped ds = map gather (NE.groupBy sameFunction (concatMap binds ds))
       Decl.Import {} -> []
       Decl.Default _ -> []
       Decl.Foreign {} -> []
+      Decl.ForeignExport {} -> []
     sameFunction (Left (_, f, _, _)) (Left (_, g, _, _)) = f == g
     sameFunction _ _ = False
     gather group = case NE.head group of

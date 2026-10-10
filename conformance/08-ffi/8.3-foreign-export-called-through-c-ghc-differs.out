@@ -1,0 +1,6 @@
+("called by its C name",42,[3,6,9])
+("called by its address",15,True)
+("the function here is still a function here",6)
+!!!
+
+("two arguments, in IO",6.0)

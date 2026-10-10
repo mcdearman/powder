@@ -3,7 +3,7 @@
 
 -- | The forms of a declaration. Import qualified.
 module Powder.Syntax.AST.Decl
-  ( Decl (Data, Clause, PatBind, Signature, Fixity, TypeSynonym, Class, Instance, Import, Default, Foreign),
+  ( Decl (Data, Clause, PatBind, Signature, Fixity, TypeSynonym, Class, Instance, Import, Default, Foreign, ForeignExport),
     Assoc (..),
     Listed (..),
     Subordinates (..),
@@ -151,4 +151,9 @@ foreignDecl r = (entity, name, child 0 r)
       n : _ -> nameOf n
       [] -> ""
 
-{-# COMPLETE Data, Clause, PatBind, Signature, Fixity, TypeSynonym, Class, Instance, Import, Default, Foreign #-}
+-- | A function made C's to call, under a name: what C is to call it, if
+-- that is said, the function, and the type C sees it at.
+pattern ForeignExport :: Maybe String -> Name -> Type -> Decl
+pattern ForeignExport entity name ty <- (kindIs [K.ForeignExportDecl] -> Just (foreignDecl -> (entity, name, ty)))
+
+{-# COMPLETE Data, Clause, PatBind, Signature, Fixity, TypeSynonym, Class, Instance, Import, Default, Foreign, ForeignExport #-}
