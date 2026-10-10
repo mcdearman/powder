@@ -3,12 +3,17 @@
 -- > [package]
 -- > name = "app"
 -- > version = "0.1.0"
+-- > edition = "Powder2026"
+-- > extensions = ["LambdaCase", "NoBlockArguments"]
 -- >
 -- > [dependencies]
 -- > util = { path = "../util" }
 --
--- It is read as the part of TOML that takes: sections, keys with a string
--- or a table of strings on one line, and comments.
+-- The edition is the language the package's modules are written in, and
+-- the extensions are turned on, or with @No@ before them off, beside it.
+-- It is read as the part of TOML that takes: sections, keys with a
+-- string, a list of strings or a table of strings on one line, and
+-- comments.
 module Powder.Build.Manifest
   ( Manifest (..),
     Dependency (..),
@@ -20,6 +25,8 @@ where
 
 import Data.Char (isAlphaNum, isAsciiLower, isAsciiUpper, isSpace)
 import Data.List (dropWhileEnd)
+import Data.Maybe (catMaybes)
+import Powder.Extensions (Edition, Settings (..), change, defaultSettings, editionNamed)
 
 manifestFile :: FilePath
 manifestFile = "Powder.toml"
@@ -27,7 +34,8 @@ manifestFile = "Powder.toml"
 data Manifest = Manifest
   { manifestName :: Maybe String,
     manifestVersion :: Maybe String,
-    manifestDependencies :: [Dependency]
+    manifestDependencies :: [Dependency],
+    manifestSettings :: Settings
   }
   deriving (Eq, Show)
 
@@ -43,11 +51,11 @@ validName = \case
   c : rest -> (isAsciiLower c || isAsciiUpper c) && all (\x -> isAlphaNum x && x < '\128' || x `elem` "-_") rest
   [] -> False
 
-data Value = Text String | Table [(String, Value)]
+data Value = Text String | Table [(String, Value)] | List [String]
 
 -- | Read a manifest, or say what is wrong with it and on which line.
 parseManifest :: String -> Either String Manifest
-parseManifest text = go "" (Manifest Nothing Nothing []) (zip [1 :: Int ..] (lines text))
+parseManifest text = go "" (Manifest Nothing Nothing [] defaultSettings) (zip [1 :: Int ..] (lines text))
   where
     go _ manifest [] = Right manifest {manifestDependencies = reverse (manifestDependencies manifest)}
     go section manifest ((n, raw) : rest) = case trim (uncommented raw) of
@@ -57,7 +65,7 @@ parseManifest text = go "" (Manifest Nothing Nothing []) (zip [1 :: Int ..] (lin
         | otherwise -> wrong n "a section's name ends with `]`"
       line -> case break (== '=') line of
         (key, '=' : value) -> do
-          v <- maybe (wrong n ("`" ++ trim value ++ "` is not a string or a table of strings")) Right (parseValue (trim value))
+          v <- maybe (wrong n ("`" ++ trim value ++ "` is not a string, a list of strings or a table of strings")) Right (parseValue (trim value))
           entry n section (unquoted (trim key)) v manifest >>= \m -> go section m rest
         _ -> wrong n "expected `key = value`"
 
@@ -66,6 +74,12 @@ parseManifest text = go "" (Manifest Nothing Nothing []) (zip [1 :: Int ..] (lin
         | validName s -> Right manifest {manifestName = Just s}
         | otherwise -> wrong n ("`" ++ s ++ "` is not a package's name: a name is letters, digits, `-` and `_`, and starts with a letter")
       ("package", "version", Text s) -> Right manifest {manifestVersion = Just s}
+      ("package", "edition", Text s) -> case editionNamed s of
+        Just edition -> Right manifest {manifestSettings = (manifestSettings manifest) {settingsEdition = edition}}
+        Nothing -> wrong n ("there is no edition called `" ++ s ++ "`: there are " ++ unwords (map show [minBound .. maxBound :: Edition]))
+      ("package", "extensions", List named) -> case mapM change named of
+        Right changes -> Right manifest {manifestSettings = (manifestSettings manifest) {settingsChanges = catMaybes changes}}
+        Left message -> wrong n message
       ("dependencies", _, Table fields)
         | Just (Text path) <- lookup "path" fields -> Right manifest {manifestDependencies = Dependency key path : manifestDependencies manifest}
         | any ((`elem` ["git", "version"]) . fst) fields -> wrong n ("`" ++ key ++ "` is not given by a path: only `{ path = \"...\" }` is a dependency yet")
@@ -97,6 +111,7 @@ uncommented = go False
 parseValue :: String -> Maybe Value
 parseValue s = case s of
   '"' : _ -> Text <$> string s
+  '[' : rest | not (null rest), last rest == ']' -> List <$> mapM string (filter (not . null) (map trim (commas (init rest))))
   '{' : rest | not (null rest), last rest == '}' -> Table <$> mapM field (filter (not . null) (map trim (commas (init rest))))
   _ -> Nothing
   where

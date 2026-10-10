@@ -42,7 +42,7 @@ import Powder.Build.Graph
 import Powder.Build.Status
 import qualified Powder.Core as Core
 import Powder.Diagnostics (Failure (..), Problem (..))
-import Powder.Frontend (Module, Unit, parseFile, readPrelude, unitModule)
+import Powder.Frontend (Module, Unit, haskell2010, parseFileWith, readPrelude, unitModule)
 import Powder.Package
 import System.Directory
 import System.Environment (getExecutablePath)
@@ -160,7 +160,7 @@ one options graph compiler slot package seen unseen = do
   mapM_ (evaluate . length) texts
   let print' =
         fingerprint
-          ( [compiler, show slot, packageName package, packageRoot package, show root]
+          ( [compiler, show slot, packageName package, packageRoot package, show root, show (packageSettings package)]
               ++ concat [[name, file, text] | ((name, file), text) <- zip modules texts]
               ++ map (shown . resultFingerprint) seen
           )
@@ -169,7 +169,7 @@ one options graph compiler slot package seen unseen = do
     Just compiled -> pure (Result print' Fresh (Just compiled) Nothing)
     Nothing -> do
       say (optionStatus options) "Compiling" (packageName package ++ " v" ++ packageVersion package ++ " (" ++ packageRoot package ++ ")")
-      case mapM (\((_, file), text) -> parseFile file text) (zip modules texts) >>= named modules >>= compile slot (interfaces seen) (interfaces unseen) of
+      case mapM (\((_, file), text) -> parseFileWith (packageSettings package) file text) (zip modules texts) >>= named modules >>= compile slot (interfaces seen) (interfaces unseen) of
         Left failure -> pure (Result print' Failed Nothing (Just failure))
         Right compiled -> do
           keep kept print' compiled
@@ -195,7 +195,7 @@ baseOf options compiler = do
     Just compiled -> pure (Result print' Fresh (Just compiled) Nothing)
     Nothing -> do
       say (optionStatus options) "Compiling" ("base (" ++ lib ++ ")")
-      case zipWithM parseFile files texts >>= compile 0 [] [] of
+      case zipWithM (parseFileWith haskell2010) files texts >>= compile 0 [] [] of
         Left failure -> pure (Result print' Failed Nothing (Just failure))
         Right compiled -> do
           keep kept print' compiled

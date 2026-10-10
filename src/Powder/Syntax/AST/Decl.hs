@@ -114,7 +114,7 @@ pattern Import :: Name -> Bool -> Maybe Name -> Maybe (Bool, [Listed]) -> Decl
 pattern Import name qualified alias items <- (kindIs [K.ImportDecl] -> Just (importDecl -> (name, qualified, alias, items)))
 
 importDecl :: Red.Red -> (Name, Bool, Maybe Name, Maybe (Bool, [Listed]))
-importDecl r = (name, qualified, alias, items)
+importDecl r = (name, qualified || qualifiedAfter, alias, items)
   where
     afterImport = drop 1 (spelled r)
     (qualified, afterQualified) = case afterImport of
@@ -123,7 +123,11 @@ importDecl r = (name, qualified, alias, items)
     (name, afterName) = case afterQualified of
       (_, n) : rest -> (n, rest)
       [] -> ("", [])
-    (alias, afterAlias) = case afterName of
+    -- The word may come after the name instead.
+    (qualifiedAfter, afterEither) = case afterName of
+      (K.VarId, "qualified") : rest -> (True, rest)
+      rest -> (False, rest)
+    (alias, afterAlias) = case afterEither of
       (K.VarId, "as") : (_, a) : rest -> (Just a, rest)
       rest -> (Nothing, rest)
     items = case afterAlias of

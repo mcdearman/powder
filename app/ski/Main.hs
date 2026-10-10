@@ -8,6 +8,7 @@ import Powder.Frontend
 import qualified Powder.HIR as HIR
 import qualified Data.ByteString.Lazy as L
 import qualified Powder.AxCut as AxCut
+import Powder.Extensions (change, editionNamed)
 import Powder.Stubs (stubs)
 import qualified Powder.Bytecode as Bytecode
 import qualified Powder.AxCut.Machine as AxCut
@@ -36,6 +37,8 @@ data Options = Options
     emit :: Maybe FilePath,
     -- | Write C for the functions the program exports here, and stop.
     stubsTo :: Maybe FilePath,
+    -- | The edition and extensions the program is written in.
+    language :: Settings,
     stats :: Bool,
     file :: Maybe FilePath,
     -- | What comes after the file is the program's.
@@ -59,6 +62,9 @@ usage =
       "  --dump-axcut    print the program in AxCut and stop",
       "  --emit OUT      write the program's bytecode image, for powder-vm to run",
       "  --stubs OUT     write C for the functions the program exports, for C to link with",
+      "  --edition NAME  the language the program is in: Powder2026 (the default),",
+      "                  Haskell2010, GHC2021 or GHC2024",
+      "  -XNAME          turn a language extension on, or with No before its name off",
       "  --stats      report program size and reduction count"
     ]
 
@@ -75,6 +81,12 @@ parseArgs opts = \case
   "--dump-axcut" : rest -> parseArgs opts {dumpAxCut = True} rest
   "--emit" : out : rest -> parseArgs opts {emit = Just out} rest
   "--stubs" : out : rest -> parseArgs opts {stubsTo = Just out} rest
+  "--edition" : name : rest -> case editionNamed name of
+    Just edition -> parseArgs opts {language = (language opts) {settingsEdition = edition}} rest
+    Nothing -> Left ("there is no edition called " ++ name)
+  ('-' : 'X' : name) : rest -> case change name of
+    Right turned -> parseArgs opts {language = (language opts) {settingsChanges = settingsChanges (language opts) ++ maybe [] pure turned}} rest
+    Left message -> Left message
   "--stats" : rest -> parseArgs opts {stats = True} rest
   path : rest | take 1 path /= "-", Nothing <- file opts -> Right opts {file = Just path, programArgs = rest}
   arg : _ -> Left ("unrecognised argument: " ++ arg)
@@ -82,7 +94,7 @@ parseArgs opts = \case
 main :: IO ()
 main = do
   args <- getArgs
-  opts <- either (\msg -> die (msg ++ "\n\n" ++ usage)) pure (parseArgs (Options False False False False False False False False Nothing Nothing False Nothing []) args)
+  opts <- either (\msg -> die (msg ++ "\n\n" ++ usage)) pure (parseArgs (Options False False False False False False False False Nothing Nothing defaultSettings False Nothing []) args)
   case file opts of
     Just path | not (interactive opts) -> runFile opts path
     path | typecheckOnly opts || dumpHir opts || dumpCore opts || dumpComb opts || stats opts -> die (maybe usage (const "--repl cannot be combined with other options") path)
@@ -90,7 +102,7 @@ main = do
 
 runFile :: Options -> FilePath -> IO ()
 runFile opts path | typecheckOnly opts = do
-  Typed hir found problems <- loadTyped path >>= either (\failure -> printFailure stderr failure >> exitFailure) pure
+  Typed hir found problems <- loadTypedWith (language opts) path >>= either (\failure -> printFailure stderr failure >> exitFailure) pure
   -- The file's own definitions, without the prelude's.
   let own b = fmap HIR.originFile (HIR.origin hir (HIR.bindingId b)) == Just path
   forM_ (filter own (HIR.programBindings hir)) $ \b -> forM_ (HIR.bound b) $ \x ->
@@ -98,12 +110,12 @@ runFile opts path | typecheckOnly opts = do
       putStrLn (HIR.nameText info ++ " :: " ++ prettyScheme hir scheme)
   unless (null (failureProblems problems)) (hFlush stdout >> printFailure stderr problems >> exitFailure)
 runFile opts path | dumpHir opts = do
-  hir <- loadHir path >>= either (\failure -> printFailure stderr failure >> exitFailure) pure
+  hir <- loadHirWith (language opts) path >>= either (\failure -> printFailure stderr failure >> exitFailure) pure
   -- The file's own definitions, without the prelude's.
   let own b = fmap HIR.originFile (HIR.origin hir (HIR.bindingId b)) == Just path
   putStr (HIR.pretty hir {HIR.programBindings = filter own (HIR.programBindings hir)})
 runFile opts path = do
-  prog <- loadProgram path >>= either (\failure -> printFailure stderr failure >> exitFailure) pure
+  prog <- loadProgramWith (language opts) path >>= either (\failure -> printFailure stderr failure >> exitFailure) pure
   let combs = compileProgram prog
   case () of
     _ | dumpCore opts -> mapM_ (putStrLn . prettyDef) (progDefs prog)

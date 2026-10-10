@@ -66,7 +66,8 @@ execute runtime name prog input = case runtime of
       Just (ExitSuccess, out, err) -> Outcome out 0 err
       Just (ExitFailure n, out, err) -> Outcome out n err
   where
-    limit = 60000000
+    -- Long enough for the slowest test on the Rust machine, on a slow host.
+    limit = 240000000
     inProcess go = do
       out <- newIORef ""
       rest <- newIORef input

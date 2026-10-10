@@ -12,6 +12,7 @@ import Powder.Build.Manifest
 import Powder.Build.Status
 import qualified Powder.Core as Core
 import Powder.Diagnostics (render)
+import Powder.Extensions (Edition (..), Extension (..), Settings (..), defaultSettings)
 import Powder.SKI.Compile (compileProgram)
 import Powder.SKI.Eval (Hooks (..), run)
 import Data.IORef
@@ -82,7 +83,14 @@ main = do
     describe "the manifest" $ do
       it "has a name, a version and dependencies by path" $
         parseManifest (unlines (manifest "app" [("util", "../util")]) ++ "# said by the way\n")
-          `shouldBe` Right (Manifest (Just "app") (Just "0.1.0") [Dependency "util" "../util"])
+          `shouldBe` Right (Manifest (Just "app") (Just "0.1.0") [Dependency "util" "../util"] defaultSettings)
+      it "has an edition, and extensions turned on and off beside it" $
+        fmap manifestSettings (parseManifest "[package]\nedition = \"Haskell2010\"\nextensions = [\"LambdaCase\", \"NoTupleSections\"]\n")
+          `shouldBe` Right (Settings Haskell2010 [(LambdaCase, True), (TupleSections, False)])
+      it "does not take an edition or an extension there is not" $ do
+        parseManifest "[package]\nedition = \"Haskell2030\"\n" `shouldSatisfy` either ("no edition" `isInfixOf`) (const False)
+        parseManifest "[package]\nextensions = [\"LambdaCases\"]\n" `shouldSatisfy` either ("no language extension" `isInfixOf`) (const False)
+        parseManifest "[package]\nextensions = [\"GADTs\"]\n" `shouldSatisfy` either ("not supported yet" `isInfixOf`) (const False)
       it "says which line is wrong" $
         parseManifest "[package]\nname = app\n" `shouldSatisfy` either ("line 2" `isInfixOf`) (const False)
       it "does not take a dependency that is not a path" $

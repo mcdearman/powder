@@ -38,7 +38,7 @@ one() {
         if (cd "$dir" && ghc -XHaskell2010 -fno-code -outputdir "$work" "$(basename "$main")" >/dev/null 2>&1); then echo accepts > "$key.ghc"; else echo refuses > "$key.ghc"; fi
       fi
       # As far as Core, which is as far as anything is refused.
-      if timeout 60 $POWDER --dump-core "$main" >/dev/null 2>&1; then powder=accepts; else powder=refuses; fi
+      if timeout 60 $POWDER --edition Haskell2010 --dump-core "$main" >/dev/null 2>&1; then powder=accepts; else powder=refuses; fi
       if [ "$(cat "$key.ghc")" = accepts ]; then echo "TESTBAD $t :: GHC accepts it (Powder $powder)"
       elif [ $powder = refuses ]; then echo "PASS $t"
       else echo "FAIL $t :: Powder accepts what must be refused"; fi
@@ -56,7 +56,7 @@ one() {
         if [ -d "$t" ]; then cp "$key.out" "$t/Main.out"; else cp "$key.out" "$name.out"; fi
       fi
       if [ "$(cat "$key.status")" != "$want" ]; then echo "TESTBAD $t :: under GHC it leaves with $(cat "$key.status"): $(grep -m1 -E 'error|rror:' "$key.err" 2>/dev/null | cut -c1-140)"; rm -rf "$work"; return; fi
-      timeout 60 $POWDER "$main" one "two words" < "$input" > "$work/out" 2> "$work/err"; status=$?
+      timeout 60 $POWDER --edition Haskell2010 "$main" one "two words" < "$input" > "$work/out" 2> "$work/err"; status=$?
       if [ $status = "$want" ] && cmp -s "$work/out" "$key.out"; then echo "PASS $t"
       else echo "FAIL $t :: exit $status :: $(grep -v '^ *$' "$work/err" | grep -m2 -E 'error\]|╰|runtime error|error:' | cut -c1-150 | tr '\n' ' ')$(diff "$work/out" "$key.out" 2>/dev/null | sed -n '2p;3p' | cut -c1-120 | tr '\n' ' ')"; fi
       ;;

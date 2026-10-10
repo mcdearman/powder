@@ -36,6 +36,7 @@ library
     Powder.Bytecode
     Powder.Core
     Powder.Diagnostics
+    Powder.Extensions
     Powder.Files
     Powder.Foreign
     Powder.Frontend

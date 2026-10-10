@@ -15,7 +15,8 @@ import Data.Char (isAlphaNum, isSpace)
 import Data.Either (isRight)
 import Data.List (isPrefixOf)
 import Data.Maybe (fromMaybe)
-import Powder.Frontend (parseLine)
+import Powder.Extensions (Extension (EmptyCase))
+import Powder.Frontend (Settings (..), defaultSettings, parseLineWith)
 import Powder.Lexer
 import Powder.Syntax.Kind
 import Powder.Syntax.Token
@@ -52,7 +53,9 @@ needsContinuation input
     -- The lines that hold code, each with its tokens.
     coded = [(l, ts) | l <- [1 .. length rows], let ts = [tokenKind (lexemeToken x) | x <- significant, posLine (lexemePos x) == l], not (null ts)] ++ [(0 :: Int, []) | null toks]
     (significant, _, _) = lexemes (lexer input)
-    parses = isRight (parseLine "" input)
+    -- A case with no alternatives yet is one still being typed, whatever
+    -- the language says of one that has none.
+    parses = isRight (parseLineWith defaultSettings {settingsChanges = [(EmptyCase, False)]} "" input)
 
 -- | Whether a line is a signature with nothing defined yet: names, and
 -- then their type. Anything else before a @::@ is an expression said to

@@ -10,6 +10,16 @@ module Powder.Frontend
     Failure,
     readPrelude,
     parseFile,
+    parseFileWith,
+    Settings (..),
+    defaultSettings,
+    haskell2010,
+    loadUnitsWith,
+    loadTypedWith,
+    loadProgramWith,
+    loadHirWith,
+    importedWith,
+    parseLineWith,
     Input (..),
     parseLine,
     Asked (..),
@@ -40,13 +50,17 @@ import qualified Powder.AxCut as AxCut
 import qualified Powder.AxCut.Lower as AxCut
 import qualified Powder.Sequent as Sequent
 import Powder.Sequent.FromCore (fromCore)
+import Powder.Extensions (Settings (..), defaultSettings, extensionsOf, haskell2010, pragmaWords)
+import Powder.Lexer (lexer)
 import Powder.Parser
+import Powder.Syntax.Kind (SyntaxKind (Pragma), isTrivia)
+import qualified Data.Text as Text
 import Powder.Resolve
 import Powder.Typecheck (Checked, typecheck)
 import Powder.Syntax.AST (Expr, Module, cast, moduleDecls, moduleHeader)
 import qualified Powder.Syntax.AST.Decl as Decl
 import qualified Powder.Syntax.Red as Red
-import Powder.Syntax.Token (Pos (..))
+import Powder.Syntax.Token (Pos (..), Token (..))
 import Data.List (isPrefixOf, isSuffixOf)
 import Data.Maybe (fromMaybe, mapMaybe)
 import System.Directory (doesFileExist)
@@ -81,14 +95,20 @@ parsed path src result = case parsedProblems result of
 
 -- | Parse a source file.
 parseFile :: FilePath -> String -> Either Failure (Unit Module)
-parseFile path src = do
+parseFile = parseFileWith defaultSettings
+
+-- | Parse a source file, given the edition and extensions asked for where
+-- it is compiled. What the file's own pragmas say comes after that.
+parseFileWith :: Settings -> FilePath -> String -> Either Failure (Unit Module)
+parseFileWith settings path src = do
+  extensions <- first (\wrong -> Failure [(path, src)] [Problem "error" message path Nothing False | message <- wrong]) (extensionsOf settings (pragmasOf src))
   -- In a literate file, program text marked line by line has a blank line
   -- between it and anything else.
   when (".lhs" `isSuffixOf` path) . forM_ (crowded src) $ \line ->
     Left (Failure [(path, src)] [Problem "syntax error" "program text in a literate file must have a blank line between it and what is not program text" path (Just (Pos line 1, Pos line 2)) False])
   -- A literate file is its program text, the rest left blank, so that
   -- everything in it is where it was.
-  tree <- parsed path src (parseModule (if ".lhs" `isSuffixOf` path then unlit src else src))
+  tree <- parsed path src (parseModuleWith extensions (if ".lhs" `isSuffixOf` path then unlit src else src))
   maybe (Left (Failure [] [Problem "error" (path ++ " is not a module") "" Nothing False])) (Right . (\m -> Unit path src m Nothing)) (cast tree)
 
 -- | The lines of a literate source that are program text hard against
@@ -115,13 +135,22 @@ unlit = unlines . go False . lines
       | '>' : rest <- l = (' ' : rest) : go False ls
       | otherwise = "" : go False ls
 
+-- | The words of the pragmas at a file's head that say what language it
+-- is in.
+pragmasOf :: String -> [String]
+pragmasOf src = concat [pragmaWords (Text.unpack (tokenText t)) | t <- takeWhile (\t -> isTrivia (tokenKind t) || tokenKind t == Pragma) (lexer src), tokenKind t == Pragma]
+
 -- | What is typed at a prompt.
 data Input = Declarations (Unit Module) | Expression (Unit Expr)
 
 -- | Parse what is typed at a prompt, under a name to report it by.
 parseLine :: FilePath -> String -> Either Failure Input
-parseLine path src = do
-  tree <- parsed path src (parseInput src)
+parseLine = parseLineWith defaultSettings
+
+parseLineWith :: Settings -> FilePath -> String -> Either Failure Input
+parseLineWith settings path src = do
+  extensions <- first (\wrong -> Failure [(path, src)] [Problem "error" message path Nothing False | message <- wrong]) (extensionsOf settings [])
+  tree <- parsed path src (parseInputWith extensions src)
   case (cast tree, [e | n <- Red.nodes tree, Just e <- [cast n]]) of
     (Just m, _) -> Right (Declarations (Unit path src m Nothing))
     (Nothing, e : _) -> Right (Expression (Unit path src e Nothing))
@@ -162,7 +191,10 @@ typed general units extra = do
 
 -- | Load a program together with the prelude, and check its types.
 loadTyped :: FilePath -> IO (Either Failure Typed)
-loadTyped path = fmap (>>= (\units -> typed False units Nothing)) (loadUnits path)
+loadTyped = loadTypedWith defaultSettings
+
+loadTypedWith :: Settings -> FilePath -> IO (Either Failure Typed)
+loadTypedWith settings path = fmap (>>= (\units -> typed False units Nothing)) (loadUnitsWith settings path)
 
 -- | Resolve modules, check their types and lower them to Core.
 check :: [Unit Module] -> Maybe Asked -> Either Failure Program
@@ -192,7 +224,10 @@ rooted root prog = do
 
 -- | Load a program together with the prelude.
 loadProgram :: FilePath -> IO (Either Failure Program)
-loadProgram path = fmap (>>= program "main" Nothing) (loadUnits path)
+loadProgram = loadProgramWith defaultSettings
+
+loadProgramWith :: Settings -> FilePath -> IO (Either Failure Program)
+loadProgramWith settings path = fmap (>>= program "main" Nothing) (loadUnitsWith settings path)
 
 -- | A Core program in the sequent calculus, started by running the action
 -- one of its definitions is.
@@ -205,16 +240,20 @@ axcut root = AxCut.lower . sequent root
 
 -- | Load a program together with the prelude, as far as HIR.
 loadHir :: FilePath -> IO (Either Failure HIR.Program)
-loadHir path = fmap (>>= (`resolved` Nothing)) (loadUnits path)
+loadHir = loadHirWith defaultSettings
+
+loadHirWith :: Settings -> FilePath -> IO (Either Failure HIR.Program)
+loadHirWith settings path = fmap (>>= (`resolved` Nothing)) (loadUnitsWith settings path)
 
 -- | The prelude and the modules it is made from. They come before
 -- everything else, the prelude last of them.
 loadBase :: IO (Either Failure [Unit Module])
 loadBase = do
   (path, src) <- readPrelude
-  case parseFile path src of
+  -- The libraries are written in the Report's language.
+  case parseFileWith haskell2010 path src of
     Left failure -> pure (Left failure)
-    Right prelude -> fmap (++ [prelude]) <$> chase [takeDirectory path] [unitModule prelude] [] (importsOf prelude)
+    Right prelude -> fmap (++ [prelude]) <$> chase [(takeDirectory path, haskell2010)] [unitModule prelude] [] (importsOf prelude)
 
 -- | A program's modules: the prelude's, the file given, and every module
 -- that imports lead to from it. A module is looked for by its name, @A.B@
@@ -222,38 +261,47 @@ loadBase = do
 -- They are a package: all of them are compiled together, and they may
 -- import each other in a circle. The file given comes last.
 loadUnits :: FilePath -> IO (Either Failure [Unit Module])
-loadUnits path = do
+loadUnits = loadUnitsWith defaultSettings
+
+-- | The same, with the edition and extensions the program's own modules
+-- are written in, unless they say otherwise themselves.
+loadUnitsWith :: Settings -> FilePath -> IO (Either Failure [Unit Module])
+loadUnitsWith settings path = do
   src <- readFile path
   loadBase >>= \case
     Left failure -> pure (Left failure)
-    Right base -> case parseFile path src of
+    Right base -> case parseFileWith settings path src of
       Left failure -> pure (Left failure)
-      Right main' -> fmap (\found -> base ++ found ++ [main']) <$> imported (takeDirectory path) (unitModule main' : map unitModule base) [main']
+      Right main' -> fmap (\found -> base ++ found ++ [main']) <$> importedWith settings (takeDirectory path) (unitModule main' : map unitModule base) [main']
 
 -- | The modules some pieces of source import, and those import, that are
 -- not among the ones named: looked for from a directory, and then among
 -- the libraries.
 imported :: FilePath -> [Name] -> [Unit Module] -> IO (Either Failure [Unit Module])
-imported dir known units = do
+imported = importedWith defaultSettings
+
+importedWith :: Settings -> FilePath -> [Name] -> [Unit Module] -> IO (Either Failure [Unit Module])
+importedWith settings dir known units = do
   (prelude, _) <- readPrelude
-  chase [dir, takeDirectory prelude] known [] (concatMap importsOf units)
+  chase [(dir, settings), (takeDirectory prelude, haskell2010)] known [] (concatMap importsOf units)
 
 importsOf :: Unit Module -> [Name]
 importsOf u = [name | Decl.Import name _ _ _ <- moduleDecls (unitSyntax u)]
 
 -- | Look for modules by name in some directories, and for what they
 -- import. A module found nowhere is left for name resolution to miss.
-chase :: [FilePath] -> [Name] -> [Unit Module] -> [Name] -> IO (Either Failure [Unit Module])
+-- Each directory has the settings its modules are parsed with.
+chase :: [(FilePath, Settings)] -> [Name] -> [Unit Module] -> [Name] -> IO (Either Failure [Unit Module])
 chase _ _ found [] = pure (Right (reverse found))
 chase dirs seen found (name : rest)
   | name `elem` seen = chase dirs seen found rest
   | otherwise = do
-      let files = [dir </> map (\c -> if c == '.' then '/' else c) name <.> extension | dir <- dirs, extension <- ["hs", "lhs"]]
-      existing <- filterM doesFileExist files
+      let files = [(dir </> map (\c -> if c == '.' then '/' else c) name <.> extension, settings) | (dir, settings) <- dirs, extension <- ["hs", "lhs"]]
+      existing <- filterM (doesFileExist . fst) files
       case existing of
         [] -> chase dirs (name : seen) found rest
-        file : _ -> do
+        (file, settings) : _ -> do
           text <- readFile file
-          case parseFile file text of
+          case parseFileWith settings file text of
             Left failure -> pure (Left failure)
             Right u -> chase dirs (name : seen) (u : found) (rest ++ importsOf u)

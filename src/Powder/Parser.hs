@@ -16,7 +16,9 @@
 module Powder.Parser
   ( Parsed (..),
     parseModule,
+    parseModuleWith,
     parseInput,
+    parseInputWith,
   )
 where
 
@@ -25,8 +27,10 @@ import Control.Monad.State.Strict
 import Data.Foldable (toList)
 import Data.Sequence (Seq, (|>))
 import Data.Sequence qualified as Seq
+import Data.Set qualified as Set
 import Data.Text qualified as Text
 import Powder.Diagnostics (Problem (..))
+import Powder.Extensions (Extension (..), Extensions)
 import Powder.Layout (Stream (..), layout)
 import Powder.Layout qualified as Layout
 import Powder.Lexer
@@ -41,20 +45,27 @@ data Parsed = Parsed {parsedTree :: Green, parsedProblems :: [Problem]}
 
 -- | Parse a source file into a tree whose root is a 'Module'.
 parseModule :: String -> Parsed
-parseModule = parseWith sourceFile
+parseModule = parseModuleWith Set.empty
+
+-- | Parse a source file written with some extensions.
+parseModuleWith :: Extensions -> String -> Parsed
+parseModuleWith extensions = parseWith extensions sourceFile
 
 -- | Parse what is typed at a prompt: declarations, giving a 'Module', or
 -- an expression, giving a 'ReplExpr'.
 parseInput :: String -> Parsed
-parseInput = parseWith $ do
+parseInput = parseInputWith Set.empty
+
+parseInputWith :: Extensions -> String -> Parsed
+parseInputWith extensions = parseWith extensions $ do
   declares <- startsDeclaration
   if declares then sourceFile else replExpr
 
-parseWith :: P () -> String -> Parsed
-parseWith grammar src = Parsed (buildTree (toList (events final)) trailing) (reverse (problems final))
+parseWith :: Extensions -> P () -> String -> Parsed
+parseWith extensions grammar src = Parsed (buildTree (toList (events final)) trailing) (reverse (problems final))
   where
-    (ls, trailing, end) = lexemes (lexer src)
-    final = execState grammar (Parser (layout ls end) 0 256 Seq.empty [])
+    (ls, trailing, end) = lexemes (lexerWith extensions src)
+    final = execState grammar (Parser (layout ls end) 0 256 Seq.empty [] extensions)
 
 -- The parser ----------------------------------------------------------------
 
@@ -74,7 +85,9 @@ data Parser = Parser
     -- function that loops without advancing is caught at once.
     fuel :: !Int,
     events :: Seq Event,
-    problems :: [Problem]
+    problems :: [Problem],
+    -- | The extensions the source is written with.
+    enabled :: Extensions
   }
 
 type P = State Parser
@@ -82,6 +95,10 @@ type P = State Parser
 newtype MarkOpened = MarkOpened Int
 
 newtype MarkClosed = MarkClosed Int
+
+-- | Whether an extension is on.
+on :: Extension -> P Bool
+on extension = gets (Set.member extension . enabled)
 
 -- | Start a node here.
 open :: P MarkOpened
@@ -339,6 +356,14 @@ atText s = gets $ \p -> case stream p of
   Next l _ _ -> tokenText (lexemeToken l) == Text.pack s
   End _ -> False
 
+-- | How the next so many tokens are spelled.
+spellings :: Int -> P [String]
+spellings n = gets (go n . stream)
+  where
+    go 0 _ = []
+    go k (Next l rest _) = Text.unpack (tokenText (lexemeToken l)) : go (k - 1 :: Int) rest
+    go _ (End _) = []
+
 atMinus :: P Bool
 atMinus = (&&) <$> at VarSym <*> atText "-"
 
@@ -480,7 +505,13 @@ topDecl = do
       expect_ Equals
       type_
       close_ m TypeDecl
-    KwImport -> wholeDecl ImportDecl
+    KwImport -> do
+      -- Where the word qualified goes is all the parser needs to know of
+      -- an import, to say so if it is somewhere that was not asked for.
+      after <- on ImportQualifiedPost
+      spelled <- spellings 3
+      when (not after && drop 2 spelled == ["qualified"]) (problem "`qualified` goes before the module's name, unless ImportQualifiedPost is on")
+      wholeDecl ImportDecl
     KwClass -> classDecl ClassDecl
     KwInstance -> classDecl InstanceDecl
     KwDefault -> do
@@ -655,7 +686,15 @@ binder = do
 -- | The right-hand side of an equation (after @=@) or of a case
 -- alternative (after @->@).
 rhs :: SyntaxKind -> P ()
-rhs sep = do
+rhs = rhsWith True
+
+-- | The alternatives of an @if@ with guards: a right-hand side that is
+-- all guards, and has no @where@ of its own.
+guards :: SyntaxKind -> P ()
+guards = rhsWith False
+
+rhsWith :: Bool -> SyntaxKind -> P ()
+rhsWith whole sep = do
   m <- open
   guarded <- at Bar
   if guarded
@@ -668,7 +707,7 @@ rhs sep = do
       expr
       close_ g GuardedRhs
     else expect_ sep >> expr
-  wheres <- at KwWhere
+  wheres <- (whole &&) <$> at KwWhere
   when wheres $ do
     w <- open
     advance
@@ -818,7 +857,16 @@ infixExpr = do
 exp10 :: P MarkClosed
 exp10 = do
   k <- nth 0
+  next <- nth 1
+  cased <- (&& (k, next) == (Backslash, KwCase)) <$> on LambdaCase
+  multi <- (&& (k, next) == (KwIf, Bar)) <$> on MultiWayIf
   case k of
+    Backslash | cased -> do
+      m <- open
+      advance
+      advance
+      alternatives
+      close m LamCaseExpr
     Backslash -> do
       m <- open
       advance
@@ -835,6 +883,11 @@ exp10 = do
       expect_ KwIn
       expr
       close m LetExpr
+    KwIf | multi -> do
+      m <- open
+      advance
+      guards RightArrow
+      close m MultiIfExpr
     KwIf -> do
       m <- open
       advance
@@ -849,7 +902,7 @@ exp10 = do
       advance
       expr
       expect_ KwOf
-      block1 "a case alternative" (VarSym : patStarts) alt
+      alternatives
       close m CaseExpr
     KwDo -> do
       m <- open
@@ -864,6 +917,11 @@ exp10 = do
       separated <- (&&) <$> atAny semis <*> ((== keyword) <$> nth 1)
       when separated advance
       expect_ keyword
+    -- A case's alternatives, of which there may be none only if that is
+    -- asked for.
+    alternatives = do
+      none <- on EmptyCase
+      if none then void (block True (VarSym : patStarts) alt) else block1 "a case alternative" (VarSym : patStarts) alt
     alt = do
       m <- open
       pat
@@ -878,13 +936,23 @@ application = do
     then missing "expected an expression"
     else do
       first <- recordAtom
-      more <- atAtomStart
+      more <- atArgument
       if not more
         then pure first
         else do
           m <- openBefore first
-          whileM atAtomStart (void recordAtom)
+          whileM atArgument argument
           close m AppExpr
+  where
+    -- With BlockArguments a do, a lambda, a case, an if or a let is an
+    -- argument as it stands, and takes all that follows it.
+    blocks = [KwDo, Backslash, KwCase, KwIf, KwLet]
+    atArgument = do
+      allowed <- on BlockArguments
+      (||) <$> atAtomStart <*> ((allowed &&) <$> atAny blocks)
+    argument = do
+      blocky <- atAny blocks
+      if blocky then void exp10 else void recordAtom
 
 -- | An atom, and any braces of field bindings after it, which bind
 -- tighter than application does.
@@ -938,8 +1006,15 @@ atom = do
     LParen : op : RParen : _
       | op `elem` [VarSym, QVarSym] -> advance >> advance >> advance >> close m VarExpr
       | op `elem` [ConSym, Colon, QConSym] -> advance >> advance >> advance >> close m ConExpr
-    -- A tuple's constructor, by itself: its commas.
-    LParen : Comma : _ -> advance >> whileM (eat Comma) (pure ()) >> expect_ RParen >> close m ConExpr
+    -- A tuple's constructor, by itself: its commas. With TupleSections,
+    -- commas with anything among them are a tuple with places left out.
+    LParen : Comma : rest | RParen : _ <- dropWhile (== Comma) rest -> advance >> whileM (eat Comma) (pure ()) >> expect_ RParen >> close m ConExpr
+    LParen : Comma : _ -> do
+      sections <- on TupleSections
+      advance
+      if sections
+        then hole >> places >> expect_ RParen >> close m TupleSection
+        else whileM (eat Comma) (pure ()) >> expect_ RParen >> close m ConExpr
     LParen : op : _ | op `elem` operatorKinds -> do
       advance
       minus <- atMinus
@@ -974,9 +1049,33 @@ atom = do
       k <- nth 0
       case () of
         _
-          | k == Comma -> whileM (eat Comma) expr >> expect_ RParen >> close m TupleExpr
+          | k == Comma -> do
+              sections <- on TupleSections
+              if not sections
+                then whileM (eat Comma) expr >> expect_ RParen >> close m TupleExpr
+                else do
+                  holes <- places
+                  expect_ RParen
+                  close m (if holes then TupleSection else TupleExpr)
           | k `elem` operatorKinds -> operator >> expect_ RParen >> close m SectionL
           | otherwise -> expect_ RParen >> close m ParenExpr
+
+-- | A place of a tuple left out.
+hole :: P ()
+hole = open >>= (`close_` TupleHole)
+
+-- | The rest of a tuple's places, each after its comma, any of which may
+-- be left out. Says whether any was.
+places :: P Bool
+places = go False
+  where
+    go left = do
+      more <- eat Comma
+      if not more
+        then pure left
+        else do
+          empty <- atAny [Comma, RParen]
+          if empty then hole >> go True else expr >> go left
 
 stmt :: P ()
 stmt = stmtUpTo []

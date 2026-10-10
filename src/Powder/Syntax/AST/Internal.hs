@@ -98,7 +98,7 @@ instance Ast Expr where
     wrap
       ExprNode
       [ K.VarExpr, K.ConExpr, K.LitExpr, K.AppExpr, K.InfixExpr, K.LamExpr, K.LetExpr, K.IfExpr,
-        K.CaseExpr, K.DoExpr, K.ParenExpr, K.TupleExpr, K.ListExpr, K.RangeExpr, K.SectionL, K.SectionR, K.TypedExpr, K.RangeStepExpr, K.ListComp, K.RecordExpr
+        K.CaseExpr, K.DoExpr, K.ParenExpr, K.TupleExpr, K.ListExpr, K.RangeExpr, K.SectionL, K.SectionR, K.TypedExpr, K.RangeStepExpr, K.ListComp, K.RecordExpr, K.LamCaseExpr, K.MultiIfExpr, K.TupleSection
       ]
   syntax (ExprNode r) = r
 
@@ -209,9 +209,15 @@ literalOf r = case [t | t <- Red.tokens r, Red.kind t `elem` [K.IntegerLit, K.Fl
     let s = Text.unpack (Red.text t)
         reading :: (Read a) => (a -> Literal) -> Literal
         reading f = maybe (Malformed s) f (readMaybe s)
+        -- Underscores in a number are for the reader; and a number may be
+        -- in binary.
+        digits = filter (/= '_') s
+        number = case digits of
+          '0' : b : bits | b `elem` "bB", not (null bits), all (`elem` "01") bits -> Number (foldl (\n d -> 2 * n + (if d == '1' then 1 else 0)) 0 bits)
+          _ -> maybe (Malformed s) Number (readMaybe digits)
      in case Red.kind t of
-          K.IntegerLit -> reading Number
+          K.IntegerLit -> number
           K.CharLit -> reading Character
           K.StringLit -> reading Text
-          _ -> Fraction s
+          _ -> Fraction digits
   [] -> Malformed ""

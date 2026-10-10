@@ -29,7 +29,7 @@ import Data.List (intercalate, isSuffixOf, nub, (\\))
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map as Map
 import Data.Char (isAlphaNum, isUpper)
-import Data.Maybe (catMaybes, fromMaybe, isNothing, listToMaybe)
+import Data.Maybe (catMaybes, fromMaybe, isNothing, listToMaybe, mapMaybe)
 import qualified Data.Set as Set
 import Numeric (readFloat)
 import Powder.Core (ConInfo (..), Name, Prim (MatchFail), primName)
@@ -1575,6 +1575,31 @@ expr e = within e $ case e of
       Alt n (head' ps) <$> extend scope (rhs r)
     mk (Case scrutinee' alts')
   Expr.Do stmts -> doBlock stmts
+  -- \case alternatives is \x -> case x of alternatives.
+  Expr.LamCase alts -> do
+    x <- newName "x" Local
+    scrutinee <- mk (Var x)
+    parameter <- mkPat (Pat.Var x)
+    alts' <- forM alts $ \a@(Syntax.Alt p r) -> within a $ do
+      n <- node
+      (ps, scope) <- patterns [p]
+      Alt n (head' ps) <$> extend scope (rhs r)
+    mk (Case scrutinee alts') >>= mk . Lam [parameter]
+  -- An if with guards is a case with nothing to take apart, and guards.
+  Expr.MultiIf alternatives -> do
+    scrutinee <- construct "()"
+    n <- node
+    anything <- mkPat Pat.Wild
+    rhs alternatives >>= mk . Case scrutinee . pure . Alt n anything
+  -- A tuple with places left out is a function of them.
+  Expr.TupleSection slots -> do
+    c <- construct (tupleName (length slots))
+    filled <- forM slots $ \case
+      Just given -> (,) Nothing <$> expr given
+      Nothing -> do
+        x <- newName "x" Local
+        (,) . Just <$> mkPat (Pat.Var x) <*> mk (Var x)
+    apply c (map snd filled) >>= mk . Lam (mapMaybe fst filled)
   Expr.Paren inner -> expr inner
   Expr.Tuple [] -> construct "()"
   Expr.Tuple es -> do

@@ -85,7 +85,7 @@ accepted known t = do
       want <- readFile (testExpected t)
       hasInput <- doesFileExist (testInput t)
       input <- if hasInput then readFile (testInput t) else pure ""
-      loaded <- loadProgram (testMain t)
+      loaded <- loadProgramWith haskell2010 (testMain t)
       passes <- case loaded of
         Left _ -> pure False
         Right prog -> do
@@ -97,7 +97,7 @@ accepted known t = do
 
 rejected :: [String] -> Test -> Expectation
 rejected known t = do
-  loaded <- loadProgram (testMain t)
+  loaded <- loadProgramWith haskell2010 (testMain t)
   settle known t (either (const True) (const False) loaded)
 
 -- | A test that is known to fail and does is passed over; one that is

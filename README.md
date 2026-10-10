@@ -254,6 +254,52 @@ makes of modules being allowed to.
 The examples stick to the subset that GHC also accepts, so the expected
 outputs in `examples/*.out` come from `runghc`.
 
+## Editions and extensions
+
+Beyond the Report the language is in extensions, as GHC's is, and an
+edition is a set of them under a name. A module is written in the
+edition asked for where it is compiled, with any extensions asked for
+beside it turned on or off; and then in what its own pragmas say, each
+naming an extension, one to turn off with `No` before it, or an edition
+to start again from:
+
+```haskell
+{-# LANGUAGE LambdaCase, NoTupleSections #-}
+```
+
+| Edition | What it is |
+| --- | --- |
+| `Powder2026` | The default: the extensions it is thought a program should be written with. Still being chosen. |
+| `Haskell2010` | The Report and nothing else. The libraries and the conformance suite are in it. |
+| `GHC2021`, `GHC2024` | GHC's, as far as their extensions are implemented. |
+
+Where it is said: `powder-ski --edition NAME -XEXTENSION FILE`; in a
+package, `edition = "..."` and `extensions = [...]` under `[package]` in
+`Powder.toml`; and in a file, by pragmas.
+
+Every extension of GHC2024 is known by name
+([Powder.Extensions](src/Powder/Extensions.hs)). An edition turns on
+those of its extensions that are implemented; asking for one that is
+not, by name, is an error, so that a program that needs it is not
+compiled as if it did not. Implemented so far, all of them in
+`Powder2026`:
+
+| Extension | What it adds |
+| --- | --- |
+| `LambdaCase` | `\case` alternatives: a function that takes its argument apart |
+| `TupleSections` | `(,x)`: a tuple with places left out is a function of them |
+| `EmptyCase` | `case x of {}` |
+| `MultiWayIf` | `if \| guard -> e \| ...` |
+| `BlockArguments` | `f do ...`, `g \x -> ...`: a block as an argument, as it stands |
+| `ImportQualifiedPost` | `import M qualified` |
+| `NumericUnderscores` | `1_000_000` |
+| `BinaryLiterals` | `0b1010` |
+
+An extension is tested like the Report is, in
+[conformance](conformance): a directory `ext-NAME` of programs that turn
+it on by a pragma and must print what GHC prints, and one under `reject`
+of programs that must be refused without it.
+
 ## How it fits together
 
 | Stage | Module | |
