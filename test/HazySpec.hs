@@ -21,7 +21,7 @@ spec = do
       names <- runIO (sort <$> listDirectory "hazy/run")
       parallel . forM_ names $ \name -> it name $ do
         want <- readFile ("hazy/run" </> name </> "result")
-        loadProgram ("hazy/run" </> name </> "source" </> "Main.hs") >>= \case
+        loadProgramWith haskell2010 ("hazy/run" </> name </> "source" </> "Main.hs") >>= \case
           Left failure -> expectationFailure (render failure)
           Right prog -> do
             -- On the reference, and on the machine in Rust if it is built.
@@ -46,7 +46,7 @@ modulesIn dir = map (dir </>) . sort . filter ((== ".hs") . takeExtension) <$> l
 -- | What is wrong with a module, if anything is.
 refusal :: FilePath -> IO (Maybe String)
 refusal file =
-  loadTyped file >>= \case
+  loadTypedWith haskell2010 file >>= \case
     Left failure -> pure (Just (render failure))
     Right (Typed _ _ problems)
       | null (failureProblems problems) -> pure Nothing

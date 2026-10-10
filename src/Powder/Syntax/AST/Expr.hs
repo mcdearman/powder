@@ -3,7 +3,7 @@
 
 -- | The forms of an expression. Import qualified.
 module Powder.Syntax.AST.Expr
-  ( Expr (Var, Con, Lit, App, Infix, Lam, Let, If, Case, Do, Paren, Tuple, List, Range, SectionL, SectionR, Typed, Comprehension, Record),
+  ( Expr (Var, Con, Lit, App, Infix, Lam, Let, If, Case, Do, Paren, Tuple, List, Range, SectionL, SectionR, Typed, Comprehension, Record, LamCase, MultiIf, TupleSection),
     Item (..),
   )
 where
@@ -128,4 +128,21 @@ pattern Typed inner ty <- (kindIs K.TypedExpr -> Just (typedExpr -> (inner, ty))
 typedExpr :: Red.Red -> (Expr, Type)
 typedExpr r = (child 0 r, child 0 r)
 
-{-# COMPLETE Var, Con, Lit, App, Infix, Lam, Let, If, Case, Do, Paren, Tuple, List, Range, SectionL, SectionR, Typed, Comprehension, Record #-}
+-- | @\\case alternatives@: a function of one argument, which it takes
+-- apart.
+pattern LamCase :: [Alt] -> Expr
+pattern LamCase alts <- (kindIs K.LamCaseExpr -> Just (children -> alts))
+
+-- | @if | guard -> e | ...@: the first whose guard holds.
+pattern MultiIf :: Rhs -> Expr
+pattern MultiIf alternatives <- (kindIs K.MultiIfExpr -> Just (child 0 -> alternatives))
+
+-- | A tuple with some of its places left out, which is a function of
+-- those: @(,x)@.
+pattern TupleSection :: [Maybe Expr] -> Expr
+pattern TupleSection places <- (kindIs K.TupleSection -> Just (places' -> places))
+
+places' :: Red.Red -> [Maybe Expr]
+places' r = [if Red.kind n == K.TupleHole then Nothing else cast n | n <- Red.nodes r]
+
+{-# COMPLETE Var, Con, Lit, App, Infix, Lam, Let, If, Case, Do, Paren, Tuple, List, Range, SectionL, SectionR, Typed, Comprehension, Record, LamCase, MultiIf, TupleSection #-}

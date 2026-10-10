@@ -24,6 +24,7 @@ import qualified Data.Map as Map
 import Data.Maybe (fromMaybe)
 import Powder.Build.Fingerprint
 import Powder.Build.Manifest
+import Powder.Extensions (Settings)
 import System.Directory
 import System.FilePath
 
@@ -35,7 +36,9 @@ data Package = Package
     -- | The packages its manifest names, in the manifest's order.
     packageDependencies :: [String],
     -- | Its modules, each with its file, in the order of their names.
-    packageModules :: [(String, FilePath)]
+    packageModules :: [(String, FilePath)],
+    -- | The language its modules are written in.
+    packageSettings :: Settings
   }
   deriving (Eq, Show)
 
@@ -88,7 +91,7 @@ discover start = do
             | otherwise ->
                 load root >>= \case
                   Left message -> pure (Left message)
-                  Right (name, version, dependencies) -> do
+                  Right (name, version, dependencies, settings) -> do
                     below <- forM dependencies $ \(Dependency key path) ->
                       doesDirectoryExist (root </> path) >>= \there ->
                         if not there
@@ -106,7 +109,7 @@ discover start = do
                         case modules of
                           Left message -> pure (Left message)
                           Right ms -> do
-                            let package = Package name version root (map packageName packages) ms
+                            let package = Package name version root (map packageName packages) ms settings
                             modifyIORef' found (Map.insert root package)
                             modifyIORef' order (package :)
                             pure (Right package)
@@ -126,7 +129,7 @@ discover start = do
           let name = fromMaybe (takeFileName (dropTrailingPathSeparator root)) (manifestName manifest)
           pure $
             if validName name
-              then Right (name, fromMaybe "0.0.0" (manifestVersion manifest), manifestDependencies manifest)
+              then Right (name, fromMaybe "0.0.0" (manifestVersion manifest), manifestDependencies manifest, manifestSettings manifest)
               else Left (root ++ ": the package has no name in a manifest, and `" ++ name ++ "` is not one a package can have")
 
 -- | No two packages of a build may have a module of one name: an import

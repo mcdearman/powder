@@ -11,7 +11,7 @@ import Data.IORef
 import Data.List (isPrefixOf, sort)
 import Data.Maybe (fromMaybe)
 import qualified Powder.Core as Core
-import Powder.Frontend (parseFile)
+import Powder.Frontend (haskell2010, parseFileWith)
 import Powder.Package
 import Powder.SKI.Compile (compileProgram)
 import Powder.SKI.Eval (Hooks (..), RuntimeError (..), run)
@@ -83,7 +83,7 @@ testsIn dir = do
 compiled :: Compiled -> [FilePath] -> IO (Either String Core.Program)
 compiled lib sources = do
   texts <- mapM readFile sources
-  pure $ case zipWithM parseFile sources texts >>= compile 1 [compiledInterface lib] [] of
+  pure $ case zipWithM (parseFileWith haskell2010) sources texts >>= compile 1 [compiledInterface lib] [] of
     Left _ -> Left "refused"
     Right package ->
       let linked = link [compiledCode lib, compiledCode package]

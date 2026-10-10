@@ -1,18 +1,21 @@
 {
 {-# OPTIONS_GHC -w #-}
 
--- | The lexical syntax of Haskell 2010.
+-- | The lexical syntax of Haskell 2010, and of the extensions to it that
+-- change what a token is.
 --
 -- The lexer keeps everything: whitespace and comments are tokens too, and
 -- text that is no token at all becomes an 'Error' token rather than a
 -- failure. So the texts of the tokens, end to end, are always the input.
 -- It knows nothing of layout, which is a pass of its own.
-module Powder.Lexer (lexer) where
+module Powder.Lexer (lexer, lexerWith) where
 
 import Data.Char
 import qualified Data.Map as Map
+import qualified Data.Set as Set
 import qualified Data.Text as Text
 import Data.Word (Word8)
+import Powder.Extensions (Extension (..), Extensions)
 import Powder.Syntax.Kind
 import Powder.Syntax.Token
 }
@@ -38,6 +41,9 @@ $charesc  = [A-Z a-z 0-9 \^ \[ \] \\ _ \@]
 @varsym   = $varsym1 $symbol*
 @consym   = \: $symbol*
 @decimal  = $digit+
+-- Digits with underscores among them, for NumericUnderscores.
+@spaced   = $digit+ (\_+ $digit+)*
+@spacedexp = [eE] [\-\+]? @spaced
 @exponent = [eE] [\-\+]? @decimal
 @escape   = \\ ~$space
 @gap      = \\ $space+ \\
@@ -75,6 +81,15 @@ tokens :-
   @decimal \. @decimal @exponent?            { plain FloatLit }
   @decimal @exponent                         { plain FloatLit }
 
+  -- Underscores in numbers, and numbers in binary.
+  $digit+ (\_+ $digit+)+ / { on NumericUnderscores }                    { plain IntegerLit }
+  0 [oO] \_* $octit+ (\_+ $octit+)* / { on NumericUnderscores }         { plain IntegerLit }
+  0 [xX] \_* $hexit+ (\_+ $hexit+)* / { on NumericUnderscores }         { plain IntegerLit }
+  @spaced \. @spaced @spacedexp? / { on NumericUnderscores }            { plain FloatLit }
+  @spaced @spacedexp / { on NumericUnderscores }                        { plain FloatLit }
+  0 [bB] [01]+ / { on BinaryLiterals }                                  { plain IntegerLit }
+  0 [bB] \_* [01]+ (\_+ [01]+)* / { on BinaryLiterals `alexAndPred` on NumericUnderscores } { plain IntegerLit }
+
   \' @charbody \'                            { plain CharLit }
   \" @strbody \"                             { plain StringLit }
   \" @strbody                                { plain Error }
@@ -99,6 +114,10 @@ plain k _ len = (k, len)
 
 identifier :: Action
 identifier s len = (Map.findWithDefault VarId (take len s) keywords, len)
+
+-- | Whether an extension is on, for a rule that is only a rule if it is.
+on :: Extension -> Extensions -> AlexInput -> Int -> AlexInput -> Bool
+on extension extensions _ _ _ = Set.member extension extensions
 
 -- | How an operator sits among its neighbours.
 data Occurrence = Prefix | Suffix | TightInfix | LooseInfix
@@ -202,11 +221,15 @@ classify c
         | isSymbol c || isPunctuation c -> 3
         | otherwise -> 0
 
--- | Every token of the input, in order.
+-- | Every token of the input, in order, as the Report has tokens.
 lexer :: String -> [Token]
-lexer = go . AlexInput '\n'
+lexer = lexerWith Set.empty
+
+-- | Every token of the input, in order, with some extensions on.
+lexerWith :: Extensions -> String -> [Token]
+lexerWith extensions = go . AlexInput '\n'
   where
-    go input = case alexScan input 0 of
+    go input = case alexScanUser extensions input 0 of
       AlexEOF -> []
       AlexError _ -> emit Error 1
       AlexSkip _ len -> emit Whitespace len

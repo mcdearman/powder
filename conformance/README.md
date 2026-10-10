@@ -11,6 +11,8 @@ flag made instances of `Eq` and `Ord` for `Maybe` go missing).
   (and chapter 12, pragmas). File names start with the Report section number.
 - `lib-<Module>/`: Report Part II libraries, one directory per module.
 - `05-modules/<test>/`: every module test is a directory; compile `Main.hs` with the directory as the import root.
+- `ext-<Extension>/`: language extensions, one directory per extension. Each program turns its extension on
+  with a `LANGUAGE` pragma, and is otherwise run as Haskell 2010. `ext-pragmas/` is about the pragmas themselves.
 - `reject/<same dirs>/`: programs a conforming compiler must REJECT (compilation fails). No expected output.
   In `reject/05-modules/` each test is again a directory with `Main.hs`.
 

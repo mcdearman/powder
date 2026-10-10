@@ -88,6 +88,10 @@ layout ls end = case ls of
           _ -> Nothing
         after
           | k `elem` [KwLet, KwWhere, KwDo, KwOf] = open ctx rest
+          -- A lambda that is a case: its alternatives are a block. Without
+          -- the extension that is no syntax at all, so nothing is lost by
+          -- always seeing it so.
+          | k == Backslash, c : more <- rest, kindOf c == KwCase = plain c (open ctx more)
           | k == LBrace = go ln (Explicit : ctx) rest
           | k == RBrace, Explicit : ctx' <- ctx = go ln ctx' rest
           | otherwise = go ln ctx rest

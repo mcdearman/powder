@@ -151,6 +151,13 @@ data SyntaxKind
     Negation
   | Operator
   | LamExpr
+  | -- | @\\case alternatives@
+    LamCaseExpr
+  | -- | @if | guard -> e ...@
+    MultiIfExpr
+  | -- | A tuple with places left out: @(,x)@, and a place left out.
+    TupleSection
+  | TupleHole
   | LetExpr
   | IfExpr
   | CaseExpr
