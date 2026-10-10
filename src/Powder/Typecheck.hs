@@ -850,6 +850,7 @@ pattern' p t = at (Pat.patId p) $ do
     Pat.As x q -> ((x, t) :) <$> pattern' q t
     Pat.Lazy q -> pattern' q t
     Pat.Ordered _ q -> pattern' q t
+    Pat.Bang q -> pattern' q t
     Pat.Error -> pure []
   where
     arrows = \case

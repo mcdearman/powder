@@ -275,7 +275,8 @@ to start again from:
 
 Where it is said: `powder-ski --edition NAME -XEXTENSION FILE`; in a
 package, `edition = "..."` and `extensions = [...]` under `[package]` in
-`Powder.toml`; and in a file, by pragmas.
+`Powder.toml`, which is for every module of the package; and in a file,
+by pragmas, which are for that file and come after the package's.
 
 Every extension of GHC2024 is known by name
 ([Powder.Extensions](src/Powder/Extensions.hs)). An edition turns on
@@ -294,6 +295,11 @@ compiled as if it did not. Implemented so far, all of them in
 | `ImportQualifiedPost` | `import M qualified` |
 | `NumericUnderscores` | `1_000_000` |
 | `BinaryLiterals` | `0b1010` |
+| `HexFloatLiterals` | `0x1.8p3`: a fraction in hexadecimal, with a power of two |
+| `NamedFieldPuns` | `C {f}`: a field by itself is the variable of its name |
+| `BangPatterns` | `!pattern`: what is matched is worked out first. In a function's, a lambda's or a case's patterns; not yet on a `let` |
+| `PostfixOperators` | `(e op)` is `op e`, so `op` may take one argument. It is so with the extension off too |
+| `EmptyDataDeriving` | `data Void deriving (Eq, Show)` |
 
 An extension is tested like the Report is, in
 [conformance](conformance): a directory `ext-NAME` of programs that turn

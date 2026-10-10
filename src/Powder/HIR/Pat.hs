@@ -29,6 +29,8 @@ data Kind
     -- first, in turn. It is what a pattern with field labels is when the
     -- labels are not written in the constructor's order.
     Ordered [Int] Pat
+  | -- | Matches what its pattern does, after working out what is matched.
+    Bang Pat
   | -- | Where the source was wrong.
     Error
 
@@ -39,6 +41,7 @@ binders p = case patKind p of
   As x q -> x : binders q
   Lazy q -> binders q
   Ordered _ q -> binders q
+  Bang q -> binders q
   Con _ ps -> concatMap binders ps
   Wild -> []
   Lit _ -> []
@@ -51,4 +54,5 @@ subpatterns p = case patKind p of
   As _ q -> [q]
   Lazy q -> [q]
   Ordered _ q -> [q]
+  Bang q -> [q]
   _ -> []

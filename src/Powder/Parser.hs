@@ -921,7 +921,7 @@ exp10 = do
     -- asked for.
     alternatives = do
       none <- on EmptyCase
-      if none then void (block True (VarSym : patStarts) alt) else block1 "a case alternative" (VarSym : patStarts) alt
+      if none then void (block True (VarSym : Bang : patStarts) alt) else block1 "a case alternative" (VarSym : Bang : patStarts) alt
     alt = do
       m <- open
       pat
@@ -984,11 +984,13 @@ fieldBinds value = do
   unless empty (bind >> whileM (eat Comma) bind)
   expect_ RBrace
   where
+    -- With NamedFieldPuns a field by itself is the variable of its name.
     bind = do
       f <- open
       fieldName
-      expect_ Equals
-      value
+      puns <- on NamedFieldPuns
+      given <- at Equals
+      when (given || not puns) (expect_ Equals >> value)
       close_ f FieldBind
 
 atAtomStart :: P Bool
@@ -1110,7 +1112,9 @@ stmtUpTo enders = do
 -- Patterns --------------------------------------------------------------------
 
 atPatStart :: P Bool
-atPatStart = atAny patStarts
+atPatStart = do
+  banged <- on BangPatterns
+  atAny (if banged then Bang : patStarts else patStarts)
 
 pat :: P ()
 pat = void pat'
@@ -1140,14 +1144,16 @@ bpat' :: P MarkClosed
 bpat' = do
   kinds <- ahead 0
   minus <- atMinus
+  banged <- on BangPatterns
+  let starts = if banged then Bang : patStarts else patStarts
   case kinds of
-    con : next : _ | con `elem` [ConId, QConId] && next `elem` patStarts -> do
+    con : next : _ | con `elem` [ConId, QConId] && next `elem` starts -> do
       m <- open
       advance
       whileM atPatStart apat
       close m ConPat
     -- A constructor that is an operator, written before its fields.
-    LParen : op : RParen : next : _ | op `elem` [ConSym, QConSym, Colon] && next `elem` patStarts -> do
+    LParen : op : RParen : next : _ | op `elem` [ConSym, QConSym, Colon] && next `elem` starts -> do
       m <- open
       replicateM_ 3 advance
       whileM atPatStart apat
@@ -1171,6 +1177,10 @@ apat' = do
     VarId : _ -> advance >> close m VarPat
     Underscore : _ -> advance >> close m WildPat
     Tilde : _ -> advance >> apat >> close m LazyPat
+    Bang : _ -> do
+      banged <- on BangPatterns
+      unless banged (problem "a pattern cannot start with `!` unless BangPatterns is on")
+      advance >> apat >> close m BangPat
     k : LBrace : _ | k `elem` [ConId, QConId] -> advance >> fieldBinds pat >> close m RecordPat
     k : _ | k `elem` [ConId, QConId] -> advance >> close m ConPat
     k : _ | k `elem` [IntegerLit, FloatLit, CharLit, StringLit] -> advance >> close m LitPat

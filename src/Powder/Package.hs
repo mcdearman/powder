@@ -122,7 +122,7 @@ data InstanceShape = InstanceShape NodeId NameId NameId [NameId] [Constraint]
 -- it is to be there once, among one or the other.
 compile :: Int -> [Interface] -> [Interface] -> [Unit Module] -> Either Failure Compiled
 compile slot seen unseen units = do
-  (hir, linked) <- first (Failure sources) (resolveAfter (Just seed) [] [(unitPath u, unitModule u, unitSyntax u) | u <- units] Nothing)
+  (hir, linked) <- first (Failure sources) (resolveAfter (Just seed) (Map.fromList [(unitPath u, unitExtensions u) | u <- units]) [] [(unitPath u, unitModule u, unitSyntax u) | u <- units] Nothing)
   let (found, problems) = typecheckAfter (ifaceSchemes below) [] hir
       wrong = kindcheck hir ++ problems
   unless (null wrong) (Left (Failure sources wrong))

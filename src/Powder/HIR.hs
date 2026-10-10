@@ -371,6 +371,7 @@ pretty program = unlines (map (binding 0) (programBindings program))
       Pat.As x q -> name x ++ "@" ++ pat True q
       Pat.Lazy q -> "~" ++ pat True q
       Pat.Ordered _ q -> pat atomic q
+      Pat.Bang q -> "!" ++ pat True q
       Pat.Error -> "<error>"
 
     literal = \case
