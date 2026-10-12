@@ -3,6 +3,13 @@
 Toy compilers for a small Haskell. A shared front end turns source into a
 little lambda calculus, Core, and each backend takes it from there.
 
+> **A note on AI use.** Most of the code, tests and documentation here were
+> written by an AI model, Anthropic's Claude working through
+> [Claude Code](https://claude.com/claude-code), under the author's direction;
+> the commits it wrote say so in a `Co-Authored-By` line. It is a project for
+> trying ideas out, and has not been reviewed line by line. It passes its own
+> tests, but expect mistakes, and do not rely on it for anything that matters.
+
 There is one backend so far: `powder-ski`, which compiles to SKI combinators
 and runs them by graph reduction, in the style of
 [MicroHs](https://github.com/augustss/MicroHs).
