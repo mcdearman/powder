@@ -41,5 +41,6 @@ Left out, with why:
 | `bad/check/AmbiguousInt` | accepted by the Report: the monomorphism restriction and defaulting make it an `Integer` |
 | `bad/check/DeriveAny`, `DeriveNum` | standalone deriving |
 | `bad/check/DoubleApp`, `TypeClassTypeVariablePair` | contexts the Report allows |
+| `bad/check/Orphan` | `instance Num [a]`: refused while `Num` had `Show` above it, which a list of anything is not. `Num` has nothing above it now, as in GHC, which accepts it |
 
 The tests are run by [test/HazySpec.hs](../test/HazySpec.hs).

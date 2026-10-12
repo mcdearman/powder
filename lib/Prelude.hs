@@ -5,7 +5,7 @@
 -- Report's names only. The types the language itself knows, such as Bool,
 -- Int and IO, are in scope everywhere and need no exporting.
 module Prelude
-  ( Maybe (..), Either (..), Ordering (..), String, Rational,
+  ( Maybe (..), Either (..), Ordering (..), String, Rational, Word,
     Eq (..), Ord (..), Enum (..), Bounded (..),
     Num (..), Real (..), Integral (..), Fractional (..), Floating (..), RealFrac (..), RealFloat (..),
     Functor (..), (<$>), Applicative (..), Monad (..), MonadFail (..), Semigroup (..), Monoid (..),
@@ -27,4 +27,5 @@ module Prelude
   )
 where
 
+import Data.Word (Word)
 import Powder.Base

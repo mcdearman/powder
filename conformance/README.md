@@ -10,7 +10,8 @@ flag made instances of `Eq` and `Ord` for `Maybe` go missing).
 - `03-expressions/` ... `11-deriving/`: Report Part I, one directory per chapter. `10-syntax/` covers chapters 2 and 10
   (and chapter 12, pragmas). File names start with the Report section number.
 - `lib-<Module>/`: Report Part II libraries, one directory per module. The modules that are not the Report's
-  (`Control.Applicative`, `Data.Functor`, `Data.Function`, `Data.Foldable`, `Data.Traversable`, `Data.Monoid`) have
+  (`Control.Applicative`, `Data.Functor`, `Data.Function`, `Data.Foldable`, `Data.Traversable`, `Data.Monoid`,
+  `Data.List.NonEmpty` and the small modules tested with it) have
   directories of the same kind; a program there that needs the Prelude of a later edition says `GHC2021` in a
   `LANGUAGE` pragma. `lib-Prelude/` is about which names the Prelude has in which edition.
 - `05-modules/<test>/`: every module test is a directory; compile `Main.hs` with the directory as the import root.
