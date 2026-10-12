@@ -1,0 +1,7 @@
+(Count 5,Count 24,Count 6)
+([Count 1,Count 2,Count 3,Count 4],(Count 3,Count 1),9)
+Count 0
+abcd
+(True,True)
+Parser (Just 2)
+Parser Nothing

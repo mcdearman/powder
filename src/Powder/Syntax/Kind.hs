@@ -116,6 +116,9 @@ data SyntaxKind
   | -- | @field = value@, in a record expression or pattern.
     FieldBind
   | Deriving
+  | -- | @deriving instance Class (Type a)@: an instance derived apart from
+    -- the type's declaration.
+    StandaloneDerivingDecl
   | TypeDecl
   | -- | A class: its head, a type, and the declarations in its @where@.
     ClassDecl

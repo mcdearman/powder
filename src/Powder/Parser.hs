@@ -478,7 +478,7 @@ sourceFile = do
     when exports (namespaces >> balanced)
     expect_ KwWhere
     close_ h ModuleHeader
-  _ <- block False ([KwData, KwNewtype, KwType, KwImport, KwClass, KwInstance, KwForeign, KwDefault] ++ declStarts) topDecl
+  _ <- block False ([KwData, KwNewtype, KwType, KwImport, KwClass, KwInstance, KwForeign, KwDefault, KwDeriving] ++ declStarts) topDecl
   leftovers "expected a declaration"
   close_ m Module
 
@@ -528,6 +528,18 @@ topDecl = do
       wholeDecl ImportDecl
     KwClass -> classDecl ClassDecl
     KwInstance -> classDecl InstanceDecl
+    -- An instance derived apart from its type's declaration, with
+    -- perhaps a word for how.
+    KwDeriving -> do
+      m <- open
+      allowed <- on StandaloneDeriving
+      unless allowed (problem "an instance is derived apart from its type's declaration only if StandaloneDeriving is on")
+      advance
+      how <- (||) <$> at KwNewtype <*> ((&&) <$> at VarId <*> ((||) <$> atText "stock" <*> atText "anyclass"))
+      when how advance
+      expect_ KwInstance
+      qualifiedType
+      close_ m StandaloneDerivingDecl
     KwDefault -> do
       m <- open
       advance

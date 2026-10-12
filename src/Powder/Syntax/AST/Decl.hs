@@ -3,7 +3,7 @@
 
 -- | The forms of a declaration. Import qualified.
 module Powder.Syntax.AST.Decl
-  ( Decl (Data, Clause, PatBind, Signature, Fixity, TypeSynonym, Class, Instance, Import, Default, Foreign, ForeignExport, PatternSynonym, PatternSignature),
+  ( Decl (Data, Clause, PatBind, Signature, Fixity, TypeSynonym, Class, Instance, Import, Default, Foreign, ForeignExport, PatternSynonym, PatternSignature, StandaloneDeriving),
     Assoc (..),
     Listed (..),
     Subordinates (..),
@@ -37,9 +37,32 @@ dataDecl r = (nameOf r, parametersOf r, children r)
 isNewtype :: Decl -> Bool
 isNewtype (syntax -> r) = K.KwNewtype `elem` map Red.kind (Red.tokens r)
 
--- | The classes a data declaration asks to have instances derived for.
-derived :: Decl -> [Name]
-derived (syntax -> r) = [Text.unpack (Red.text t) | d <- Red.nodes r, Red.kind d == K.Deriving, t <- Red.tokens d, Red.kind t `elem` [K.ConId, K.QConId]]
+-- | The classes a data declaration asks to have instances derived for,
+-- each with how, if that is said: @stock@, @newtype@ or @anyclass@. It
+-- is said after the word deriving, of which there may be several.
+derived :: Decl -> [(Maybe Name, Name)]
+derived (syntax -> r) = concat [clauses Nothing (spelled d) | d <- Red.nodes r, Red.kind d == K.Deriving]
+  where
+    clauses how = \case
+      (K.KwDeriving, _) : (K.KwNewtype, _) : rest -> clauses (Just "newtype") rest
+      (K.KwDeriving, _) : (K.VarId, s) : rest | s `elem` ["stock", "anyclass"] -> clauses (Just s) rest
+      (K.KwDeriving, _) : rest -> clauses Nothing rest
+      (k, c) : rest | k `elem` [K.ConId, K.QConId] -> (how, c) : clauses how rest
+      _ : rest -> clauses how rest
+      [] -> []
+
+-- | An instance derived apart from its type's declaration: how, if that
+-- is said, and the instance's head, with perhaps a context.
+pattern StandaloneDeriving :: Maybe Name -> Type -> Decl
+pattern StandaloneDeriving how hd <- (kindIs [K.StandaloneDerivingDecl] -> Just (standalone -> (how, hd)))
+
+standalone :: Red.Red -> (Maybe Name, Type)
+standalone r = (how, child 0 r)
+  where
+    how = case drop 1 (spelled r) of
+      (K.KwNewtype, _) : _ -> Just "newtype"
+      (K.VarId, s) : _ -> Just s
+      _ -> Nothing
 
 -- | The type variables a declaration's head names.
 parametersOf :: Red.Red -> [Name]
@@ -189,4 +212,4 @@ patternBuilder (syntax -> r) = [(child 0 d, child 0 d) | w <- Red.nodes r, Red.k
 pattern PatternSignature :: Decl
 pattern PatternSignature <- (kindIs [K.PatSynSig] -> Just _)
 
-{-# COMPLETE Data, Clause, PatBind, Signature, Fixity, TypeSynonym, Class, Instance, Import, Default, Foreign, ForeignExport, PatternSynonym, PatternSignature #-}
+{-# COMPLETE Data, Clause, PatBind, Signature, Fixity, TypeSynonym, Class, Instance, Import, Default, Foreign, ForeignExport, PatternSynonym, PatternSignature, StandaloneDeriving #-}
