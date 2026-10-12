@@ -51,7 +51,8 @@ import qualified Powder.AxCut.Lower as AxCut
 import qualified Powder.Sequent as Sequent
 import Powder.Sequent.FromCore (fromCore)
 import qualified Data.Map as Map
-import Powder.Extensions (Extensions, Settings (..), defaultSettings, extensionsOf, haskell2010, pragmaWords)
+import qualified Data.Set as Set
+import Powder.Extensions (Extension (ReportPrelude), Extensions, Settings (..), defaultSettings, extensionsOf, haskell2010, pragmaWords, reportPrelude)
 import Powder.Lexer (lexer)
 import Powder.Parser
 import Powder.Syntax.Kind (SyntaxKind (Pragma), isTrivia)
@@ -287,7 +288,10 @@ importedWith settings dir known units = do
   chase [(dir, settings), (takeDirectory prelude, haskell2010)] known [] (concatMap importsOf units)
 
 importsOf :: Unit Module -> [Name]
-importsOf u = [name | Decl.Import name _ _ _ <- moduleDecls (unitSyntax u)]
+importsOf u =
+  [name | Decl.Import name _ _ _ <- moduleDecls (unitSyntax u)]
+    -- Its prelude, which no import names.
+    ++ [reportPrelude | Set.member ReportPrelude (unitExtensions u)]
 
 -- | Look for modules by name in some directories, and for what they
 -- import. A module found nowhere is left for name resolution to miss.

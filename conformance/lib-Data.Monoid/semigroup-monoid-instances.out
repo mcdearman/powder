@@ -1,0 +1,20 @@
+list: ([1,2,3,4],"","abcdef")
+mappend: "abcd"
+ordering: (LT,GT,GT,EQ)
+ordering-compare: GT
+unit: ((),())
+maybe: (Just "ab",Nothing,Nothing)
+pair: (("ab",[1,2]),("",[]))
+triple: ("ax","by","cz")
+function: "5-5"
+function-compare: GT
+either: (Right 'a',Left 2)
+sum: (Sum {getSum = 7},55,Sum {getSum = 0})
+product: (Product {getProduct = 12},120)
+all-any: (True,False,All {getAll = False})
+first-last: (Just 1,Just 3)
+min-max: (Min {getMin = 1},Max {getMax = 3},Max {getMax = False})
+dual: "cdab"
+endo: (11,"abc")
+user: MaxLen "abcd"
+io: joined!

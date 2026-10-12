@@ -143,7 +143,6 @@ spec = do
           -- The prelude and the examples.
           ("the prelude is well typed", ok "main = return ()"),
           ("the prelude's map", typeOfPrelude prelude "map" == Just "(a -> b) -> [a] -> [b]"),
-          ("the prelude's foldr", typeOfPrelude prelude "foldr" == Just "(a -> b -> b) -> b -> [a] -> b"),
           ("the prelude's >>=", typeOfPrelude prelude "error" == Just "[Char] -> a"),
           ("the prelude's zip and unzip", (typeOfPrelude prelude "zip", typeOfPrelude prelude "unzip") == (Just "[a] -> [b] -> [(a, b)]", Just "[(a, b)] -> ([a], [b])")),
           ("the prelude's error", typeOfPrelude prelude "error" == Just "[Char] -> a")

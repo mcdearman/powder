@@ -1,0 +1,21 @@
+maybe-ap: (Just 7,Nothing)
+maybe-pure: Just 5
+maybe-then: (Just 2,Just 1,Nothing)
+maybe-liftA2: (Just ('a',True),Nothing)
+list-ap: [11,21,20,40]
+list-liftA2: [(1,'a'),(1,'b'),(2,'a'),(2,'b')]
+list-then: ("abab",[1,1,2,2])
+either-ap: Right 3
+either-left: Left "first"
+function-ap: 19
+function-pure: 'k'
+pair-ap: ("abcd",3)
+pair-pure: ("",'x')
+io-ap: io works
+io-then: first
+io-then: last
+io-then-result: 1
+liftA: Just 2
+liftA3: Just ('a','b','c')
+flipped-ap: Just 4
+replace: (Just 7,"zzz")

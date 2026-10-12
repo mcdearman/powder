@@ -45,7 +45,7 @@ CUSKs, DeepSubsumption. MonoLocalBinds and PolyKinds change what some Haskell
 | | Milestone | State |
 |---|---|---|
 | M0 | Plumbing: LANGUAGE pragmas, editions, defaults in `Powder.toml` | done |
-| M1 | The library hierarchy | waiting |
+| M1 | The library hierarchy | in progress |
 | M2 | Extensions that are only syntax | in progress |
 | M3 | Deriving | not started |
 | M4 | Explicit quantification at rank 1 | not started |
@@ -58,10 +58,21 @@ CUSKs, DeepSubsumption. MonoLocalBinds and PolyKinds change what some Haskell
 extensions, and a package's `Powder.toml` sets both for all its modules. Asking
 by name for an extension that is not implemented is an error.
 
-**M1, the library hierarchy.** Applicative above Monad, MonadFail, Semigroup
-above Monoid, Foldable and Traversable, and a Prelude that exports them. To
-be decided first: one library for every edition, as GHC has, or the Report's
-library kept beside it for the Haskell2010 edition.
+**M1, the library hierarchy.** There is one library for every edition, as
+GHC has. An edition chooses only which of its names the Prelude has: the
+Report's and no others in Haskell2010, by the extension `ReportPrelude`, and
+what GHC's Prelude has in the rest.
+
+- [x] Applicative above Monad, with Alternative, and MonadFail
+- [x] Semigroup above Monoid
+- [x] Foldable and Traversable, and the Prelude's folds over them
+- [x] `Control.Applicative`, `Data.Functor`, `Data.Function`, `Data.Foldable`,
+      `Data.Traversable`, `Data.Monoid`, `Data.Semigroup`
+- [ ] Num without Eq and Show above it, as GHC has it
+- [ ] What else GHC's Prelude and `base` have that programs lean on:
+      `Word` in the Prelude, `Data.List.NonEmpty` with `sconcat` and `stimes`,
+      `Data.Functor.Identity`, `Data.Coerce`, `Data.Either`, `Data.Ord`,
+      `Data.Tuple`, `Data.Bifunctor`, `Data.IORef`, `Control.Exception`
 
 **M2, extensions that are only syntax.**
 
@@ -173,6 +184,8 @@ has not been run on it; and the README still describes the old machine.
 
 ## To be decided
 
+- Whether `ReportPrelude` is the name to keep for the extension that says a
+  module has the Report's Prelude.
 - What Powder2026, the default edition, turns on, and what extensions of
   Powder's own it has. Today it is the thirteen extensions of M2 that are done.
 - Whether the register machine keeps tagged values with reference counts, as it

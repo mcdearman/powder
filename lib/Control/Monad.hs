@@ -1,31 +1,29 @@
 module Control.Monad
-  ( Functor (..), Monad (..), MonadPlus (..), mapM, mapM_, forM, forM_, sequence, sequence_, (=<<), (>=>), (<=<),
+  ( Functor (..), Applicative (..), Monad (..), MonadFail (..), MonadPlus (..), mapM, mapM_, forM, forM_, sequence, sequence_, (=<<), (>=>), (<=<),
     forever, void, join, msum, filterM, mapAndUnzipM, zipWithM, zipWithM_, foldM, foldM_,
     replicateM, replicateM_, guard, when, unless, liftM, liftM2, liftM3, liftM4, liftM5, ap
   )
 where
 
-import Powder.Base (unless, when)
+import Data.Functor (void)
+import Powder.Base
 
 infixr 1 >=>, <=<
 
-class Monad m => MonadPlus m where
+class (Alternative m, Monad m) => MonadPlus m where
   mzero :: m a
   mplus :: m a -> m a -> m a
+  mzero = empty
+  mplus = (<|>)
 
-instance MonadPlus Maybe where
-  mzero = Nothing
-  mplus Nothing m = m
-  mplus m _ = m
+instance MonadPlus Maybe
 
-instance MonadPlus [] where
-  mzero = []
-  mplus = (++)
+instance MonadPlus []
 
-forM :: Monad m => [a] -> (a -> m b) -> m [b]
+forM :: (Traversable t, Monad m) => t a -> (a -> m b) -> m (t b)
 forM xs f = mapM f xs
 
-forM_ :: Monad m => [a] -> (a -> m b) -> m ()
+forM_ :: (Foldable t, Monad m) => t a -> (a -> m b) -> m ()
 forM_ xs f = mapM_ f xs
 
 (>=>) :: Monad m => (a -> m b) -> (b -> m c) -> a -> m c
@@ -37,13 +35,10 @@ g <=< f = f >=> g
 forever :: Monad m => m a -> m b
 forever a = a >> forever a
 
-void :: Functor f => f a -> f ()
-void = fmap (const ())
-
 join :: Monad m => m (m a) -> m a
 join m = m >>= id
 
-msum :: MonadPlus m => [m a] -> m a
+msum :: (Foldable t, MonadPlus m) => t (m a) -> m a
 msum = foldr mplus mzero
 
 filterM :: Monad m => (a -> m Bool) -> [a] -> m [a]

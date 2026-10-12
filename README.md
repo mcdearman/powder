@@ -202,6 +202,10 @@ Haskell 2010, less what is listed under it:
   `Data.Word`, `Data.Complex`, `Control.Monad`, `Numeric`, `System.IO`,
   `System.IO.Error`, `System.Exit`, `System.Environment`, and `Foreign`
   and the libraries under it, in [lib](lib)
+- beyond the Report's libraries: `Applicative`, `Alternative`, `MonadFail`,
+  `Semigroup`, `Monoid`, `Foldable` and `Traversable`, in the Prelude and
+  in `Control.Applicative`, `Data.Functor`, `Data.Function`,
+  `Data.Foldable`, `Data.Traversable`, `Data.Monoid` and `Data.Semigroup`
 
 A program is kind and type checked before it is compiled (see
 [Types](#types)), and one that is not well typed does not run.
@@ -252,9 +256,29 @@ come.
 
 Everything a program is made of is in [lib](lib), written in the language
 itself. [Powder.Base](lib/Powder/Base.hs) holds the definitions, and
-`Prelude`, which every module imports unless it says otherwise, is the
-selection from it the Report says the Prelude exports; the library
-modules are selections and additions in the same way. `Prelude` and
+`Prelude`, which every module imports unless it says otherwise, is a
+selection from it; the library modules are selections and additions in
+the same way.
+
+There is one library for every edition, as GHC has, and its classes are
+the ones programs are written against today and not the Report's.
+`Applicative` is above `Monad`, `fail` is `MonadFail`'s and not
+`Monad`'s, and `length`, `foldr`, `mapM_`, `sequence` and their kind are
+`Foldable`'s and `Traversable`'s, so they go over more than lists. What
+an edition chooses is the Prelude's names. In `Haskell2010` the Prelude is
+[Powder.Prelude2010](lib/Powder/Prelude2010.hs): the names the Report
+gives it and no others, so that a program of the Report's may still call
+something of its own `pure`, `<>` or `traverse`. In every other edition
+it is [Prelude](lib/Prelude.hs), which has these classes too, as GHC's
+does. The extension
+`ReportPrelude`, which is Powder's own and which `Haskell2010` turns on,
+is what says which. So three things in a Haskell 2010 program are not as
+the Report has them: an instance of `Monad` needs one of `Applicative`,
+`fail` cannot be defined in an instance of `Monad`, and the types of the
+Prelude's folds are more general. `Num` still has `Eq` and `Show` above
+it, as in the Report and not as in GHC.
+
+`Prelude` and
 `Powder.Base` import each other, which is the first use the compiler
 makes of modules being allowed to.
 
@@ -277,7 +301,7 @@ to start again from:
 | Edition | What it is |
 | --- | --- |
 | `Powder2026` | The default: the extensions it is thought a program should be written with. Still being chosen. |
-| `Haskell2010` | The Report and nothing else. The libraries and the conformance suite are in it. |
+| `Haskell2010` | The Report's language, and a Prelude of the Report's names only (`ReportPrelude`). The libraries and the conformance suite are in it. |
 | `GHC2021`, `GHC2024` | GHC's, as far as their extensions are implemented. |
 
 Where it is said: `powder-ski --edition NAME -XEXTENSION FILE`; in a
@@ -307,6 +331,12 @@ compiled as if it did not. Implemented so far, all of them in
 | `BangPatterns` | `!pattern`: what is matched is worked out first. In a function's, a lambda's or a case's patterns; not yet on a `let` |
 | `PostfixOperators` | `(e op)` is `op e`, so `op` may take one argument. It is so with the extension off too |
 | `EmptyDataDeriving` | `data Void deriving (Eq, Show)` |
+
+And one of Powder's own, which only `Haskell2010` has on:
+
+| Extension | What it does |
+| --- | --- |
+| `ReportPrelude` | The Prelude has the names the Report gives it and no others |
 
 An extension is tested like the Report is, in
 [conformance](conformance): a directory `ext-NAME` of programs that turn

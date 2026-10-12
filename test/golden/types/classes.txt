@@ -1,5 +1,5 @@
 insert :: Ord a => a -> Tree a -> Tree a
 toList :: Tree a -> [a]
-total :: Num a => [a] -> a
+total :: (Num b, Foldable a) => a b -> b
 safeDiv :: Int -> Int -> Maybe Int
 main :: IO ()

@@ -1,0 +1,11 @@
+maybe: (Just 1,Just 2,Just 1)
+maybe-empty: Nothing
+list: ([1,2,3],"ab")
+number: Just (123,"abc")
+no-number: Nothing
+many: Just ("","abc")
+many-some: Just ("12","a")
+optional: (Just (Just '-',"1"),Just (Nothing,"1"))
+expr: Just (44,"")
+expr-rest: Just (3,")")
+pair: Just ((12,34),"rest")

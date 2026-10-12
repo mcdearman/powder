@@ -1,0 +1,21 @@
+tree-toList: [1,2,3,5,8,9]
+tree-size: (6,False,True)
+tree-numbers: (28,2160,9,1)
+tree-elem: (True,False,True)
+tree-foldr: ([1,2,3,5,8,9],-4)
+tree-foldl: ([9,8,5,3,2,1],-28)
+tree-fold1: (-4,-26)
+tree-strict: (28,28)
+tree-foldMap: [1,10,2,20,3,30,5,50,8,80,9,90]
+tree-fold: "abcd"
+rose-toList: [1,2,4,3]
+rose-size: (4,False)
+rose-numbers: (10,24,4,1)
+rose-elem: (True,False)
+rose-foldl: [3,4,2,1]
+rose-foldMap: "1243"
+searching: (True,True,Just 5,Nothing)
+joining: ("123589",[1,2,3])
+booleans: (True,False)
+by: (9,5)
+lazy: 1
