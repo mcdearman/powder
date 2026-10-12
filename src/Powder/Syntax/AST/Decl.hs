@@ -3,13 +3,14 @@
 
 -- | The forms of a declaration. Import qualified.
 module Powder.Syntax.AST.Decl
-  ( Decl (Data, Clause, PatBind, Signature, Fixity, TypeSynonym, Class, Instance, Import, Default, Foreign, ForeignExport, PatternSynonym, PatternSignature, StandaloneDeriving),
+  ( Decl (Data, Clause, PatBind, Signature, Fixity, TypeSynonym, Class, Instance, Import, Default, Foreign, ForeignExport, PatternSynonym, PatternSignature, StandaloneDeriving, KindSignature),
     Assoc (..),
     Listed (..),
     Subordinates (..),
     derived,
     isNewtype,
     patternBuilder,
+    kinds,
   )
 where
 
@@ -31,7 +32,19 @@ pattern Data :: Name -> [Name] -> [Constructor] -> Decl
 pattern Data name parameters constructors <- (kindIs [K.DataDecl] -> Just (dataDecl -> (name, parameters, constructors)))
 
 dataDecl :: Red.Red -> (Name, [Name], [Constructor])
-dataDecl r = (nameOf r, parametersOf r, children r)
+dataDecl r = (typeNameOf r, parametersOf r, children r)
+
+-- | The name of the type a declaration is of: the first capitalised name
+-- or operator of its head, which need not come first.
+typeNameOf :: Red.Red -> Name
+typeNameOf r = case [x | (k, x) <- takeWhile ((`notElem` [K.Equals, K.KwWhere, K.KwDeriving]) . fst) (spelled r), k `elem` [K.ConId, K.ConSym, K.VarSym]] of
+  x : _ -> x
+  [] -> nameOf r
+
+-- | The kinds a declaration gives the type variables its head names, for
+-- those it does.
+kinds :: Decl -> [(Name, Kind)]
+kinds = kindedBinders . syntax
 
 -- | Whether a declaration of a type is a @newtype@'s.
 isNewtype :: Decl -> Bool
@@ -66,7 +79,7 @@ standalone r = (how, child 0 r)
 
 -- | The type variables a declaration's head names.
 parametersOf :: Red.Red -> [Name]
-parametersOf r = [Text.unpack (Red.text t) | t <- Red.tokens r, Red.kind t == K.VarId]
+parametersOf r = concat [if Red.kind c == K.VarId then [Text.unpack (Red.text c)] else [nameOf c | Red.kind c == K.KindedBinder] | c <- Red.children r]
 
 -- | A class: its head, which is the class applied to its variable, with
 -- perhaps a context before it; and the declarations of its methods.
@@ -129,7 +142,14 @@ pattern TypeSynonym :: Name -> [Name] -> Type -> Decl
 pattern TypeSynonym name parameters ty <- (kindIs [K.TypeDecl] -> Just (synonym -> (name, parameters, ty)))
 
 synonym :: Red.Red -> (Name, [Name], Type)
-synonym r = (nameOf r, parametersOf r, child 0 r)
+synonym r = (typeNameOf r, parametersOf r, child 0 r)
+
+-- | The kind of a type, said apart from its declaration.
+pattern KindSignature :: Name -> Kind -> Decl
+pattern KindSignature name kind <- (kindIs [K.KindSigDecl] -> Just (kindSignature -> Just (name, kind)))
+
+kindSignature :: Red.Red -> Maybe (Name, Kind)
+kindSignature r = (,) (typeNameOf r) <$> kindOf r
 
 -- | An import: the module, whether its names come only qualified, the
 -- name they are qualified by if it is not the module's, and the items
@@ -212,4 +232,4 @@ patternBuilder (syntax -> r) = [(child 0 d, child 0 d) | w <- Red.nodes r, Red.k
 pattern PatternSignature :: Decl
 pattern PatternSignature <- (kindIs [K.PatSynSig] -> Just _)
 
-{-# COMPLETE Data, Clause, PatBind, Signature, Fixity, TypeSynonym, Class, Instance, Import, Default, Foreign, ForeignExport, PatternSynonym, PatternSignature, StandaloneDeriving #-}
+{-# COMPLETE Data, Clause, PatBind, Signature, Fixity, TypeSynonym, Class, Instance, Import, Default, Foreign, ForeignExport, PatternSynonym, PatternSignature, StandaloneDeriving, KindSignature #-}

@@ -1,0 +1,7 @@
+left 1, right two
+5 Truex
+(7,4,-4)
+(R 'a',L 2)
+(1 :*: 'b',1 :+++ (True :+++ 'c'))
+Just 6
+R 2

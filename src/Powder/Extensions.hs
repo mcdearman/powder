@@ -99,6 +99,8 @@ data Extension
   | UndecidableInstances
   | UnicodeSyntax
   | ViewPatterns
+  | AllowAmbiguousTypes
+  | PartialTypeSignatures
   deriving (Eq, Ord, Show, Read, Enum, Bounded)
 
 -- | The extensions a module is written with.
@@ -136,9 +138,11 @@ reportPrelude = "Powder.Prelude2010"
 implemented :: Extension -> Bool
 implemented =
   ( `elem`
-      [ BangPatterns,
+      [ AllowAmbiguousTypes,
+        BangPatterns,
         BinaryLiterals,
         BlockArguments,
+        ConstrainedClassMethods,
         DeriveAnyClass,
         DeriveFoldable,
         DeriveFunctor,
@@ -147,26 +151,36 @@ implemented =
         DisambiguateRecordFields,
         EmptyCase,
         EmptyDataDeriving,
+        ExplicitForAll,
         ExplicitNamespaces,
         GADTSyntax,
         GeneralisedNewtypeDeriving,
         HexFloatLiterals,
         ImportQualifiedPost,
+        InstanceSigs,
+        KindSignatures,
         LambdaCase,
         LexicalNegation,
         MultiWayIf,
         NamedFieldPuns,
+        NamedWildCards,
         NumDecimals,
         NumericUnderscores,
+        OverloadedStrings,
         PackageImports,
         ParallelListComp,
+        PartialTypeSignatures,
         PatternSynonyms,
         PostfixOperators,
         RecordWildCards,
         ReportPrelude,
+        ScopedTypeVariables,
         StandaloneDeriving,
+        StandaloneKindSignatures,
         StrictData,
         TupleSections,
+        TypeApplications,
+        TypeOperators,
         UnicodeSyntax,
         ViewPatterns
       ]
@@ -227,6 +241,7 @@ editionExtensions = \case
     [ BangPatterns,
       BinaryLiterals,
       BlockArguments,
+      ConstrainedClassMethods,
       DeriveFoldable,
       DeriveFunctor,
       DeriveTraversable,
@@ -234,11 +249,14 @@ editionExtensions = \case
       DisambiguateRecordFields,
       EmptyCase,
       EmptyDataDeriving,
+      ExplicitForAll,
       ExplicitNamespaces,
       GADTSyntax,
       GeneralisedNewtypeDeriving,
       HexFloatLiterals,
       ImportQualifiedPost,
+      InstanceSigs,
+      KindSignatures,
       LambdaCase,
       MultiWayIf,
       NamedFieldPuns,
@@ -248,8 +266,12 @@ editionExtensions = \case
       PatternSynonyms,
       PostfixOperators,
       RecordWildCards,
+      ScopedTypeVariables,
       StandaloneDeriving,
+      StandaloneKindSignatures,
       TupleSections,
+      TypeApplications,
+      TypeOperators,
       UnicodeSyntax,
       ViewPatterns
     ]

@@ -486,7 +486,8 @@ sourceFile = do
 -- name says the name is a type's: allowed if ExplicitNamespaces is on.
 namespaces :: P ()
 namespaces = do
-  allowed <- on ExplicitNamespaces
+  -- Which TypeOperators allows too, since an operator may be a type's.
+  allowed <- (||) <$> on ExplicitNamespaces <*> on TypeOperators
   kinds <- ahead 0
   when (not allowed && KwType `elem` takeWhile (`notElem` Eof : KwWhere : semis) kinds) $
     problem "`type` before a name in a list of names is allowed only if ExplicitNamespaces is on"
@@ -510,11 +511,24 @@ topDecl = do
     KwType -> do
       m <- open
       advance
-      expect_ ConId
-      whileM (at VarId) advance
-      expect_ Equals
-      type_
-      close_ m TypeDecl
+      kinds <- ahead 0
+      -- The kind of a type, said apart from the type.
+      standalone <- on StandaloneKindSignatures
+      case kinds of
+        _ : DoubleColon : _ | standalone -> do
+          expect_ ConId
+          advance
+          kind
+          close_ m KindSigDecl
+        LParen : _ : RParen : DoubleColon : _ | standalone -> do
+          replicateM_ 4 advance
+          kind
+          close_ m KindSigDecl
+        _ -> do
+          typeHead
+          expect_ Equals
+          type_
+          close_ m TypeDecl
     KwImport -> do
       -- Where the word qualified goes is all the parser needs to know of
       -- an import, to say so if it is somewhere that was not asked for.
@@ -642,8 +656,7 @@ dataDecl = do
   -- A context, which says nothing the constructors' uses do not.
   kinds <- ahead 0
   when (stoppedAt (scan [DoubleArrow, Equals] kinds) == DoubleArrow) (btype >> expect_ DoubleArrow)
-  expect_ ConId
-  whileM (at VarId) advance
+  typeHead
   -- The constructors, each written as one, or after a where each given by
   -- its type.
   typed <- at KwWhere
@@ -734,6 +747,75 @@ dataDecl = do
     atField = do
       strict <- atStrict
       (strict ||) <$> atAny [ConId, QConId, VarId, LParen, LBracket]
+
+-- | The head of a declaration of a type: its name and then its
+-- variables, or with TypeOperators an operator between two.
+typeHead :: P ()
+typeHead = do
+  operators <- on TypeOperators
+  kinds <- ahead 0
+  let infixed = case dropBinder kinds of
+        Just (op : _) -> op `elem` [ConSym, VarSym, Backquote]
+        _ -> False
+      dropBinder = \case
+        VarId : rest -> Just rest
+        LParen : VarId : DoubleColon : rest -> Just (drop 1 (dropWhile (/= RParen) rest))
+        _ -> Nothing
+  case kinds of
+    _ | operators && infixed -> do
+      binder'
+      quoted <- eat Backquote
+      if quoted then expect_ ConId >> expect_ Backquote else advance
+      binder'
+    LParen : op : RParen : _ | operators && op `elem` [ConSym, VarSym] -> replicateM_ 3 advance >> binders
+    _ -> expect_ ConId >> binders
+  where
+    binder' = do
+      plain <- at VarId
+      if plain then advance else kindedBinder
+
+-- | The type variables a declaration or a forall names, each of which
+-- may be given a kind with KindSignatures.
+binders :: P ()
+binders = whileM atBinder $ do
+  plain <- at VarId
+  if plain then advance else kindedBinder
+  where
+    atBinder = do
+      kinded <- on KindSignatures
+      kinds <- ahead 0
+      pure $ case kinds of
+        VarId : _ -> True
+        LParen : VarId : DoubleColon : _ -> kinded
+        _ -> False
+
+-- | @(a :: kind)@
+kindedBinder :: P ()
+kindedBinder = do
+  b <- open
+  expect_ LParen
+  expect_ VarId
+  expect_ DoubleColon
+  kind
+  expect_ RParen
+  close_ b KindedBinder
+
+-- | A kind: stars, or the word Type, with arrows between and in
+-- parentheses.
+kind :: P ()
+kind = do
+  m <- open
+  go
+  close_ m KindSig
+  where
+    go = do
+      k <- nth 0
+      star <- (&&) <$> at VarSym <*> atText "*"
+      case () of
+        _
+          | star || k `elem` [ConId, QConId, RightArrow] -> advance >> go
+          | k == LParen -> advance >> go >> expect_ RParen >> go
+          | otherwise -> pure ()
 
 -- | Do something for as long as a test holds. The test may consume.
 whileM :: P Bool -> P () -> P ()
@@ -834,32 +916,72 @@ rhsWith whole sep = do
 -- Types -----------------------------------------------------------------------
 
 typeStarts :: [SyntaxKind]
-typeStarts = [VarId, ConId, QConId, LParen, LBracket]
+typeStarts = [VarId, ConId, QConId, LParen, LBracket, Underscore]
 
 -- | A type as a signature gives it: perhaps with a context before a @=>@,
 -- which only looking ahead can tell from the type itself.
 qualifiedType :: P ()
 qualifiedType = do
-  kinds <- ahead 0
-  if stoppedAt (scan [DoubleArrow, KwWhere] kinds) /= DoubleArrow
-    then type_
+  -- With ExplicitForAll its variables may be named first, after the word
+  -- forall, which is a name like any other everywhere else.
+  explicit <- (&&) <$> on ExplicitForAll <*> ((&&) <$> at VarId <*> atText "forall")
+  if not explicit
+    then contextual
     else do
       m <- open
-      btype
-      expect_ DoubleArrow
-      type_
-      close_ m TyQual
+      advance
+      binders
+      dot <- (&&) <$> at VarSym <*> atText "."
+      if dot then advance else problem "expected a . after the variables of a forall"
+      contextual
+      close_ m TyForall
+  where
+    contextual = do
+      kinds <- ahead 0
+      if stoppedAt (scan [DoubleArrow, KwWhere] kinds) /= DoubleArrow
+        then type_
+        else do
+          m <- open
+          btype
+          expect_ DoubleArrow
+          type_
+          close_ m TyQual
 
 -- | Function types, which group to the right.
 type_ :: P ()
 type_ = do
-  argument <- btype'
+  argument <- operands
   function <- at RightArrow
   when function $ do
     m <- openBefore argument
     advance
     type_
     close_ m TyFun
+
+-- | With TypeOperators, types with operators between them, which bind
+-- tighter than the arrow does. Which binds tighter of two of them is
+-- for whoever knows their fixities.
+operands :: P MarkClosed
+operands = do
+  first <- btype'
+  more <- atTypeOperator
+  if not more
+    then pure first
+    else do
+      m <- openBefore first
+      whileM atTypeOperator (operator >> btype)
+      close m TyInfix
+  where
+    atTypeOperator = do
+      allowed <- on TypeOperators
+      kinds <- ahead 0
+      spelled <- spellings 1
+      pure $ allowed && case kinds of
+        ConSym : _ -> True
+        QConSym : _ -> True
+        Backquote : k : Backquote : _ -> k `elem` [ConId, QConId]
+        VarSym : _ -> spelled `notElem` [["."], ["!"], ["*"]]
+        _ -> False
 
 btype :: P ()
 btype = void btype'
@@ -889,18 +1011,24 @@ atype' = do
   m <- open
   case kinds of
     VarId : _ -> advance >> close m TyVar
+    Underscore : _ -> advance >> close m TyWild
     k : _ | k `elem` [ConId, QConId] -> advance >> close m TyCon
     LParen : RParen : _ -> advance >> advance >> close m TyTuple
     -- A constructor with no name of its own: a tuple's, or the arrow.
     LParen : Comma : _ -> advance >> whileM (eat Comma) (pure ()) >> expect_ RParen >> close m TyCon
     LParen : RightArrow : RParen : _ -> advance >> advance >> advance >> close m TyCon
+    -- An operator that is a type's name, by itself.
+    LParen : op : RParen : _ | op `elem` [ConSym, QConSym, VarSym] -> advance >> advance >> advance >> close m TyCon
     LParen : _ -> do
       advance
       type_
       tuple <- at Comma
-      if tuple
-        then whileM (eat Comma) type_ >> expect_ RParen >> close m TyTuple
-        else expect_ RParen >> close m TyParen
+      kinded <- (&&) <$> on KindSignatures <*> at DoubleColon
+      case () of
+        _
+          | tuple -> whileM (eat Comma) type_ >> expect_ RParen >> close m TyTuple
+          | kinded -> advance >> kind >> expect_ RParen >> close m TyKinded
+          | otherwise -> expect_ RParen >> close m TyParen
     LBracket : RBracket : _ -> advance >> advance >> close m TyCon
     LBracket : _ -> advance >> type_ >> expect_ RBracket >> close m TyList
     _ -> problem "expected a type" >> close m ErrorNode
@@ -1065,10 +1193,27 @@ application = do
     blocks = [KwDo, Backslash, KwCase, KwIf, KwLet]
     atArgument = do
       allowed <- on BlockArguments
-      (||) <$> atAtomStart <*> ((allowed &&) <$> atAny blocks)
+      typed <- atTypeArgument
+      (\atomic blocky -> typed || atomic || blocky) <$> atAtomStart <*> ((allowed &&) <$> atAny blocks)
+    -- With TypeApplications an argument may be a type, after an @: what
+    -- one of the function's type variables is.
+    atTypeArgument = do
+      allowed <- on TypeApplications
+      marked <- at At
+      next <- nth 1
+      pure (allowed && marked && next `elem` typeStarts)
     argument = do
+      typed <- atTypeArgument
       blocky <- atAny blocks
-      if blocky then void exp10 else void recordAtom
+      case () of
+        _
+          | typed -> do
+              t <- open
+              advance
+              atype
+              close_ t TypeArg
+          | blocky -> void exp10
+          | otherwise -> void recordAtom
 
 -- | An atom, and any braces of field bindings after it, which bind
 -- tighter than application does.
@@ -1368,7 +1513,15 @@ component = do
       expect_ RightArrow
       pat
       close_ v ViewPat
-    else pat
+    else do
+      -- With ScopedTypeVariables a pattern may be said to have a type.
+      p <- pat'
+      signed <- (&&) <$> on ScopedTypeVariables <*> at DoubleColon
+      when signed $ do
+        s <- openBefore p
+        advance
+        type_
+        close_ s SigPat
 
 -- The prompt ------------------------------------------------------------------
 

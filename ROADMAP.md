@@ -48,7 +48,7 @@ CUSKs, DeepSubsumption. MonoLocalBinds and PolyKinds change what some Haskell
 | M1 | The library hierarchy | done |
 | M2 | Extensions that are only syntax | done |
 | M3 | Deriving | done |
-| M4 | Explicit quantification at rank 1 | not started |
+| M4 | Explicit quantification at rank 1 | done |
 | M5 | The class system | not started |
 | M6 | Higher ranks and existentials | not started |
 | M7 | GADTs, type families and what needs an implication solver | not started |
@@ -139,12 +139,35 @@ What these do not yet do:
   parameter, which may be more than is needed.
 - DefaultSignatures goes with DeriveGeneric in M7, which is what it is for.
 
-**M4, explicit quantification at rank 1.** ExplicitForAll,
-ScopedTypeVariables, InstanceSigs, ConstrainedClassMethods, KindSignatures,
-StandaloneKindSignatures, TypeOperators, TypeApplications with
-AllowAmbiguousTypes, NamedWildCards and PartialTypeSignatures, MonoLocalBinds;
-and OverloadedStrings. The checker's metavariables need levels, and a scheme's
-binders need an order.
+**M4, explicit quantification at rank 1.**
+
+- [x] ExplicitForAll
+- [x] ScopedTypeVariables, with types on patterns
+- [x] InstanceSigs
+- [x] ConstrainedClassMethods
+- [x] KindSignatures and StandaloneKindSignatures
+- [x] TypeOperators
+- [x] TypeApplications, with AllowAmbiguousTypes
+- [x] PartialTypeSignatures and NamedWildCards
+- [x] OverloadedStrings
+
+None of it needed levels on the checker's metavariables: a signature's type
+variables are rigid and known by their identity, so one in scope further in
+is the same variable there, and a scheme's variables were in order already.
+
+What these do not yet do:
+
+- A type on a pattern constrains what the pattern matches, and cannot bring
+  a type variable into scope: one it mentions that is not in scope is its
+  own. It is where a view pattern may be, and not in a pattern that is bound.
+- A type with parts left out has all its variables left out with them: what
+  is found for it has that shape, and may be less general than its variables
+  say. What it leaves out is not reported.
+- An instance's own signature for a method is read and not checked against
+  the class's.
+- A class or an instance is not declared with an operator between its
+  types, which waits for classes of more than one parameter in M5.
+- MonoLocalBinds goes with M7, which is what needs it.
 
 **M5, the class system.** FlexibleContexts, FlexibleInstances,
 TypeSynonymInstances, MultiParamTypeClasses, ConstraintKinds; then

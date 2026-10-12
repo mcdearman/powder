@@ -7,6 +7,7 @@ module Powder.Syntax.AST.Expr
     Item (..),
     recordWild,
     comprehensionBranches,
+    typeArguments,
   )
 where
 
@@ -116,6 +117,11 @@ pattern Comprehension element qualifiers <- (kindIs K.ListComp -> Just (comprehe
 
 comprehension :: Red.Red -> (Expr, [Stmt])
 comprehension r = (child 0 r, children r)
+
+-- | The types among the arguments of an application, in order: what the
+-- function's type variables are, each after an @.
+typeArguments :: Expr -> [Type]
+typeArguments (syntax -> r) = [t | a <- Red.nodes r, Red.kind a == K.TypeArg, t <- children a]
 
 -- | The qualifiers a list comprehension goes through beside its first:
 -- those after each bar but the first.

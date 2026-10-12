@@ -29,7 +29,7 @@ import Data.List (intercalate, isSuffixOf, nub, (\\))
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map as Map
 import Data.Char (isAlphaNum, isUpper)
-import Data.Maybe (catMaybes, fromMaybe, isJust, isNothing, listToMaybe, mapMaybe)
+import Data.Maybe (catMaybes, fromMaybe, isJust, isNothing, listToMaybe, mapMaybe, maybeToList)
 import Data.Ratio (denominator, numerator)
 import qualified Data.Set as Set
 import Numeric (readFloat)
@@ -123,7 +123,18 @@ data St = St
     -- became: the function that builds the synonym, if it has one, and
     -- the patterns the synonym was applied to. It is how such a pattern
     -- is read back as an expression.
-    synonymUses :: [(NameId, (Maybe NameId, [Pat]))]
+    synonymUses :: [(NameId, (Maybe NameId, [Pat]))],
+    -- | The types names were said to have with parts left out, by 'NameId'.
+    partials :: Table Signature,
+    -- | For a name whose signature names its type variables with a
+    -- forall, where they are in scope in its definition: the variables.
+    scopedVariables :: Table [(Name, NameId)],
+    -- | The parts left out of the type being read: a variable for each.
+    wildcards :: [NameId],
+    -- | The kinds type variables and types were said to have, by 'NameId',
+    -- and the types said to have one where they are written.
+    kindsSaid :: Table KindSyntax,
+    kindedTypes :: [(Type.Type, KindSyntax)]
   }
 
 type M = ReaderT Env (State St)
@@ -206,13 +217,13 @@ resolveAfter seed languages lenient sources extra = case reverse (problems final
   [] -> Right (program, linked {linkFields = fields final, linkFixities = fixityTable final, linkStrict = strict final})
   found -> Left found
   where
-    program = Program (bindings ++ reverse (generated final)) (names final) (origins final) (signatures final) (reverse (dataTypes final)) (synonyms final) (classes final) (reverse (instances final)) builtins spelled (defaults final) (newtypes final) (maybe [] seedModules seed ++ [(file, n) | (file, n, _) <- sources] ++ [(file, root) | Just (_, _, file, _) <- [extra]]) (maybe [] seedImports seed ++ [(n, [name | (name, _, _, _) <- importsOf n]) | n <- moduleNames]) (maybe (-1) seedFloor seed)
+    program = Program (bindings ++ reverse (generated final)) (names final) (origins final) (signatures final) (reverse (dataTypes final)) (synonyms final) (classes final) (reverse (instances final)) builtins spelled (defaults final) (newtypes final) (maybe [] seedModules seed ++ [(file, n) | (file, n, _) <- sources] ++ [(file, root) | Just (_, _, file, _) <- [extra]]) (maybe [] seedImports seed ++ [(n, [name | (name, _, _, _) <- importsOf n]) | n <- moduleNames]) (maybe (-1) seedFloor seed) (partials final) (kindsSaid final) (reverse (kindedTypes final))
     ((linked, (bindings, builtins)), final) =
       runState
         (runReaderT run (Env Map.empty Map.empty Map.empty Map.empty Map.empty Map.empty "" Nothing "" spelled Set.empty Map.empty Map.empty Map.empty Map.empty languages False))
         initial
     initial = case seed of
-      Nothing -> St 0 IntMap.empty IntMap.empty IntMap.empty IntMap.empty [] IntMap.empty [] IntMap.empty [] [] IntMap.empty [] IntMap.empty [] [] [] []
+      Nothing -> St 0 IntMap.empty IntMap.empty IntMap.empty IntMap.empty [] IntMap.empty [] IntMap.empty [] [] IntMap.empty [] IntMap.empty [] [] [] [] IntMap.empty IntMap.empty [] IntMap.empty []
       Just s ->
         St
           (seedFloor s)
@@ -234,6 +245,11 @@ resolveAfter seed languages lenient sources extra = case reverse (problems final
           []
           []
           []
+          []
+          IntMap.empty
+          IntMap.empty
+          []
+          IntMap.empty
           []
     -- What the packages before this one let be known.
     before = maybe mempty seedLinkage seed
@@ -394,7 +410,11 @@ resolveAfter seed languages lenient sources extra = case reverse (problems final
       -- The fixities each module declares, before any expression is read.
       forM_ sources $ \(file, n, m) -> inModule n file $ do
         env <- ask
-        let find o = Map.lookup o (envOwnValues env) <|> Map.lookup o (envOwnConstructors env) <|> Map.lookup o (envValues env) <|> Map.lookup o (envConstructors env)
+        -- A fixity is for the value of the name and for the type of the
+        -- name, where an operator is both.
+        let find o =
+              maybeToList (Map.lookup o (envOwnValues env) <|> Map.lookup o (envOwnConstructors env) <|> Map.lookup o (envValues env) <|> Map.lookup o (envConstructors env))
+                ++ maybeToList (Map.lookup o (envTypes env))
         declareFixities find (moduleDecls m ++ concat [ds | Decl.Class _ ds <- moduleDecls m])
       -- Types first, since everything else may mention them; then classes,
       -- before the instances that need to know their methods.
@@ -709,7 +729,7 @@ binder x = do
 
 -- | Note the fixities some declarations give, to the names a lookup
 -- finds for them.
-declareFixities :: (Name -> Maybe NameId) -> [Syntax.Decl] -> M ()
+declareFixities :: (Name -> [NameId]) -> [Syntax.Decl] -> M ()
 declareFixities find ds = do
   let given = [(o, d) | d@(Decl.Fixity _ _ os) <- ds, o <- os]
   forM_ (nub (map fst given \\ nub (map fst given))) $ \o ->
@@ -718,8 +738,8 @@ declareFixities find ds = do
     Decl.Fixity assoc prec os -> do
       when (prec < 0 || prec > 9) (within d (complain "a precedence is from 0 to 9"))
       forM_ os $ \o -> case find o of
-        Just x -> modify (\st -> st {fixityTable = IntMap.insert (nameKey x) (assoc, prec) (fixityTable st)})
-        Nothing -> within d (complain ("a fixity is given for " ++ o ++ ", which is not defined here"))
+        [] -> within d (complain ("a fixity is given for " ++ o ++ ", which is not defined here"))
+        xs -> forM_ xs (\x -> modify (\st -> st {fixityTable = IntMap.insert (nameKey x) (assoc, prec) (fixityTable st)}))
     _ -> pure ()
 
 -- | The fixity of an operator in scope: what was declared for the thing
@@ -860,15 +880,20 @@ patternExpr variables p = case Pat.patKind p of
 -- @C $! x@ for each of them (4.2.1). A newtype's constructor is not there
 -- to be strict.
 constructing :: NameId -> M Expr
-constructing k = do
+constructing = constructingWith pure
+
+-- | The same, with something done to the constructor itself first: it
+-- may be applied to types.
+constructingWith :: (Expr -> M Expr) -> NameId -> M Expr
+constructingWith with k = do
   musts <- gets (IntMap.findWithDefault [] (nameKey k) . strict)
   new <- gets (elem k . newtypes)
   if new || not (or musts)
-    then mk (Con k)
+    then mk (Con k) >>= with
     else do
       xs <- mapM (const (newName "x" Local)) musts
       ps <- mapM (mkPat . Pat.Var) xs
-      whole <- mk (Con k) >>= \c -> mapM (mk . Var) xs >>= apply c
+      whole <- mk (Con k) >>= with >>= \c -> mapM (mk . Var) xs >>= apply c
       body <- foldM (\rest (x, must) -> if must then mk (Var x) >>= \v -> call "seq" [v, rest] else pure rest) whole (reverse (zip xs musts))
       mk (Lam ps body)
 
@@ -1051,11 +1076,20 @@ typeDecl own d = within d $ case d of
     scope <- typeParameters parameters
     body <- withTypeVariables scope (type' ty)
     modify (\st -> st {synonyms = IntMap.insert (nameKey (fst (own Map.! t))) (Synonym (map snd scope) body) (synonyms st)})
+  -- The kind of a type or a class, said apart from it.
+  Decl.KindSignature t k -> do
+    types <- asks envTypes
+    classes' <- asks envClasses
+    case Map.lookup t types <|> Map.lookup t classes' of
+      Just n -> sayKind k n
+      Nothing -> complain ("a kind is given for " ++ t ++ ", which is not a type or a class in scope")
   _ -> pure ()
   where
     typeParameters parameters = do
       forM_ (nub (parameters \\ nub parameters)) (\x -> complain ("the type variable " ++ x ++ " is given twice"))
-      forM (nub parameters) (\x -> (,) x <$> newName x TypeVariable)
+      scope <- forM (nub parameters) (\x -> (,) x <$> newName x TypeVariable)
+      -- Those the head gives kinds have them.
+      scope <$ forM_ (Decl.kinds d) (\(x, k) -> forM_ (lookup x scope) (sayKind k))
 
 withTypeVariables :: [(Name, NameId)] -> M a -> M a
 withTypeVariables scope = local (\env -> env {envTypeVariables = Map.fromList scope})
@@ -1083,6 +1117,38 @@ type' t = within t $ case t of
     type' element >>= applyType c . pure
   SType.Paren inner -> type' inner
   SType.Qualified _ inner -> complain "a context can only be at the front of a signature or of the head of a class or an instance" >> type' inner
+  SType.Forall _ inner -> complain "a forall can only be at the front of a signature: a type with one inside it is not supported yet" >> type' inner
+  -- A type said to have a kind is the type, and the kind is checked.
+  SType.Kinded inner k -> do
+    inner' <- type' inner
+    inner' <$ modify (\st -> st {kindedTypes = (inner', kindSyntax k) : kindedTypes st})
+  -- Types with operators between them group as the operators' fixities
+  -- say, each operator a type's name applied to the two.
+  SType.Operators operands operators -> do
+    resolved <- mapM type' operands
+    let climb :: Int -> [Type.Type] -> [Name] -> M (Type.Type, [Type.Type], [Name])
+        climb least qs os = case qs of
+          left : rest -> loop least left rest os
+          [] -> (,,) <$> mkType Type.Error <*> pure [] <*> pure os
+        loop least left rest = \case
+          o : os -> do
+            (assoc, prec) <- typeFixity o
+            if prec < least
+              then pure (left, rest, o : os)
+              else do
+                (right, rest', os') <- climb (if assoc == RightAssoc then prec else prec + 1) rest os
+                joined <- typeConstructor o >>= (`applyType` [left, right])
+                loop least joined rest' os'
+          [] -> pure (left, rest, [])
+    (\(whole, _, _) -> whole) <$> climb 0 resolved operators
+  -- A part left out is a variable of its own, which whoever reads the
+  -- type takes note of.
+  SType.Wild -> do
+    allowed <- enabled PartialTypeSignatures
+    unless allowed (complain "a part of a type is left out, as _, only if PartialTypeSignatures is on")
+    blank <- newName "_" TypeVariable
+    modify (\st -> st {wildcards = wildcards st ++ [blank]})
+    mkType (Type.Var blank)
   where
     mkType form = (`Type.Type` form) <$> node
     applyType = foldM (\f a -> mkType (Type.App f a))
@@ -1102,6 +1168,10 @@ typeVariables = \case
   SType.List element -> typeVariables element
   SType.Paren inner -> typeVariables inner
   SType.Qualified context inner -> typeVariables context ++ typeVariables inner
+  SType.Forall _ inner -> typeVariables inner
+  SType.Wild -> []
+  SType.Kinded inner _ -> typeVariables inner
+  SType.Operators operands _ -> concatMap typeVariables operands
 
 -- | Note the types a scope's signatures declare, for the names that scope
 -- defines, which are in scope. A signature quantifies over the variables
@@ -1117,26 +1187,96 @@ declaredTypesOf given defined ds = do
 declaredTypesIn :: [(Name, NameId)] -> [Name] -> [Syntax.Decl] -> M ()
 declaredTypesIn given defined ds = forM_ ds $ \d -> within d $ case d of
   Decl.Signature xs ty -> do
-    declared <- signatureOf given ty
+    (declared, own, partial) <- signatureFull given ty
+    scoping <- enabled ScopedTypeVariables
     forM_ xs $ \x ->
       if x `notElem` defined
         then complain ("the type signature for " ++ x ++ " has no definition to go with it")
         else do
           NameId n <- binder x
-          modify (\st -> st {signatures = IntMap.insert n declared (signatures st)})
+          -- A type with parts left out is not what the name is declared
+          -- to have: its type is found, and has that shape.
+          if partial
+            then modify (\st -> st {partials = IntMap.insert n declared (partials st)})
+            else modify (\st -> st {signatures = IntMap.insert n declared (signatures st)})
+          -- Variables named with a forall are in scope in the definition.
+          when (scoping && explicit ty && not partial) (modify (\st -> st {scopedVariables = IntMap.insert n own (scopedVariables st)}))
   _ -> pure ()
+  where
+    explicit = \case
+      SType.Forall _ _ -> True
+      _ -> False
 
 -- | A type as a signature gives it, with its context if it has one, over
 -- the variables it is given and then its own.
 signatureOf :: [(Name, NameId)] -> SType.Type -> M Signature
 signatureOf given ty = do
-  let (assertions, body) = case ty of
+  (declared, _, partial) <- signatureFull given ty
+  when partial (complain "a type with parts left out, as _, can only be the signature of a definition")
+  pure declared
+
+-- | The same, with its own variables as they are spelled, and whether
+-- it has parts left out: an underscore, or with NamedWildCards a variable
+-- that starts with one. Then every variable of it stands for a part left
+-- out. A type variable that is in scope already is that one, and not the
+-- signature's own: so it is where the variables of an enclosing
+-- signature are in scope.
+signatureFull :: [(Name, NameId)] -> SType.Type -> M (Signature, [(Name, NameId)], Bool)
+signatureFull given whole = do
+  outer <- asks (Map.toList . envTypeVariables)
+  let (named, ty) = case whole of
+        SType.Forall vs inner -> (Just vs, inner)
+        _ -> (Nothing, whole)
+      (assertions, body) = case ty of
         SType.Qualified context inner -> (assertionsOf context, inner)
         _ -> ([], ty)
-  own <- forM (nub (typeVariables ty) \\ map fst given) (\x -> (,) x <$> newName x TypeVariable)
+      -- One it names itself is its own, whatever else goes by the name.
+      around = [(x, n) | (x, n) <- outer, x `notElem` map fst given, x `notElem` fromMaybe [] named]
+      mentioned = nub (typeVariables ty) \\ (map fst given ++ map fst around)
+  forM_ named $ \vs -> forM_ (mentioned \\ vs) (\x -> complain ("the type variable " ++ x ++ " is not among those the forall names"))
+  own <- forM (maybe mentioned (\vs -> nub (vs ++ mentioned)) named) (\x -> (,) x <$> newName x TypeVariable)
+  forM_ (SType.forallKinds whole) (\(x, k) -> forM_ (lookup x own) (sayKind k))
   let scope = given ++ own
-  (constrained, resolved) <- withTypeVariables scope ((,) . catMaybes <$> mapM constraint assertions <*> type' body)
-  pure (Signature (map snd scope) constrained resolved)
+  modify (\st -> st {wildcards = []})
+  (constrained, resolved) <- withTypeVariables (scope ++ around) ((,) . catMaybes <$> mapM constraint assertions <*> type' body)
+  blanks <- gets wildcards
+  modify (\st -> st {wildcards = []})
+  namedWild <- enabled NamedWildCards
+  let partial = not (null blanks) || (namedWild && any ((== "_") . take 1 . fst) own)
+  pure (Signature (map snd scope ++ blanks) constrained resolved, own, partial)
+
+-- | Note the kind something is said to have.
+sayKind :: Syntax.Kind -> NameId -> M ()
+sayKind k n = modify (\st -> st {kindsSaid = IntMap.insert (nameKey n) (kindSyntax k) (kindsSaid st)})
+
+kindSyntax :: Syntax.Kind -> KindSyntax
+kindSyntax = \case
+  Syntax.Star -> KindStar
+  Syntax.Arrow a r -> KindArrow (kindSyntax a) (kindSyntax r)
+
+-- | The fixity of an operator that is a type's name: what was declared
+-- for the type, or for the constructor of the same name, since one
+-- declaration is for both; or failing that the tightest, to the left.
+typeFixity :: Name -> M (Assoc, Int)
+typeFixity name = do
+  ofType <- asks (Map.lookup name . envTypes)
+  ofConstructor <- asks (Map.lookup name . envConstructors)
+  known <- gets fixityTable
+  pure (fromMaybe (LeftAssoc, 9) (listToMaybe [f | Just x <- [ofType, ofConstructor], Just f <- [IntMap.lookup (nameKey x) known]]))
+
+-- | Do something with the type variables a name's signature brought into
+-- scope, if it brought any.
+scopedBy :: NameId -> M a -> M a
+scopedBy name inner = do
+  found <- gets (IntMap.findWithDefault [] (nameKey name) . scopedVariables)
+  local (\env -> env {envTypeVariables = Map.union (Map.fromList found) (envTypeVariables env)}) inner
+
+-- | Do something with some type variables in scope, if ScopedTypeVariables
+-- is on: an instance's, in its methods, and a class's in its defaults.
+scopedIf :: [(Name, NameId)] -> M a -> M a
+scopedIf scope inner = do
+  scoping <- enabled ScopedTypeVariables
+  if scoping then local (\env -> env {envTypeVariables = Map.union (Map.fromList scope) (envTypeVariables env)}) inner else inner
 
 -- Classes -------------------------------------------------------------------
 
@@ -1145,7 +1285,10 @@ signatureOf given ty = do
 classHead :: SType.Type -> Maybe ([SType.Type], Name, SType.Type)
 classHead = \case
   SType.Qualified context inner -> (\(_, c, t) -> (assertionsOf context, c, t)) <$> classHead inner
+  SType.App (SType.Con c) [SType.Kinded t _] -> Just ([], c, t)
   SType.App (SType.Con c) [t] -> Just ([], c, t)
+  -- Its variables may be named, which says nothing more.
+  SType.Forall _ inner -> classHead inner
   _ -> Nothing
 
 -- | The assertions of a context: one, or several in parentheses.
@@ -1168,8 +1311,15 @@ constraint t = within t $ case t of
 -- module's classes were given. Its methods are in scope already.
 classDecl :: Map.Map Name NameId -> Syntax.Decl -> M ()
 classDecl own d = within d $ case d of
-  Decl.Class (classHead -> Just (context, c, SType.Var a)) ds -> do
+  Decl.Class hd@(classHead -> Just (context, c, SType.Var a)) ds -> do
     v <- newName a TypeVariable
+    -- The class's variable may be given a kind.
+    let kindSaid = \case
+          SType.Qualified _ inner -> kindSaid inner
+          SType.Forall _ inner -> kindSaid inner
+          SType.App _ [SType.Kinded _ k] -> Just k
+          _ -> Nothing
+    forM_ (kindSaid hd) (`sayKind` v)
     supers <- withTypeVariables [(a, v)] (catMaybes <$> mapM constraint context)
     let methods = [x | Decl.Signature xs _ <- ds, x <- xs]
         groups = grouped ds
@@ -1180,15 +1330,19 @@ classDecl own d = within d $ case d of
         let (asked, body) = case ty of
               SType.Qualified given inner -> (assertionsOf given, inner)
               _ -> ([], ty)
-        unless (a `elem` typeVariables body) (complain ("the type of a method must mention the class's variable, " ++ a))
+        -- With AllowAmbiguousTypes it need not: then only applying the
+        -- method to a type says which instance is meant.
+        ambiguous <- enabled AllowAmbiguousTypes
+        unless (ambiguous || a `elem` typeVariables body) (complain ("the type of a method must mention the class's variable, " ++ a))
+        more <- enabled ConstrainedClassMethods
         forM_ asked $ \case
-          SType.App _ [SType.Var x] | x == a -> complain ("a method's context cannot ask more of the class's variable, " ++ a)
+          SType.App _ [SType.Var x] | x == a, not more -> complain ("a method's context asks more of the class's variable, " ++ a ++ ", only if ConstrainedClassMethods is on")
           _ -> pure ()
       _ -> pure ()
     methodIds <- mapM binder (nub methods)
     declaredTypesOf [(a, v)] methods ds
     defaults <- fmap concat . forM groups $ \g -> case g of
-      Equations _ f _ | f `elem` methods -> pure <$> binding g
+      Equations _ f _ | f `elem` methods -> pure <$> scopedIf [(a, v)] (binding g)
       _ -> [] <$ within (declOf g) (complain "a class can only define its own methods")
     let cls = Class (own Map.! c) v (map constraintClass supers) methodIds defaults
     modify (\st -> st {classes = IntMap.insert (nameKey (className cls)) cls (classes st)})
@@ -1209,10 +1363,33 @@ instanceDecl d = within d $ case d of
     asks (Map.lookup c . envClasses) >>= \case
       Nothing -> complain ("unknown class " ++ c)
       Just k -> do
+        -- With InstanceSigs a method's type may be said again. It is
+        -- read, and what the class says is what the method is checked
+        -- against.
+        signatures' <- enabled InstanceSigs
         forM_ ds $ \s -> case s of
-          Decl.Signature _ _ -> within s (complain "an instance cannot give its methods type signatures: the class gives them")
+          Decl.Signature _ _ | not signatures' -> within s (complain "an instance gives its methods type signatures only if InstanceSigs is on: the class gives them")
           _ -> pure ()
         scope <- forM (nub (typeVariables t)) (\x -> (,) x <$> newName x TypeVariable)
+        -- One that names its variables with a forall brings them into
+        -- scope in the method, as the variables the class's own
+        -- signature has where they are.
+        scoping <- enabled ScopedTypeVariables
+        said <- fmap concat . forM ds $ \s -> case s of
+          Decl.Signature xs ty | signatures' -> within s $ do
+            (Signature _ _ written', own, _) <- withTypeVariables scope (signatureFull [] ty)
+            pure [(x, (written', own)) | scoping, SType.Forall _ _ <- [ty], x <- xs]
+          _ -> pure []
+        declared' <- gets signatures
+        let -- Where the two types have a variable each in one place.
+            matched a m w = case (Type.typeForm m, Type.typeForm w) of
+              (Type.Var u, Type.Var v) | u /= a -> [(v, u)]
+              (Type.App f x, Type.App g y) -> matched a f g ++ matched a x y
+              (Type.Fun x y, Type.Fun x' y') -> matched a x x' ++ matched a y y'
+              _ -> []
+            scopeOfMethod f m = case (lookup f said, IntMap.lookup (nameKey m) declared') of
+              (Just (written', own), Just (Signature (a : _) _ theirs)) -> [(x, u) | (x, v) <- own, Just u <- [lookup v (matched a theirs written')]]
+              _ -> []
         (t', context') <- withTypeVariables scope ((,) <$> type' t <*> (catMaybes <$> mapM constraint context))
         cls <- gets (IntMap.lookup (nameKey k) . classes)
         let methods = maybe [] classMethods cls
@@ -1230,7 +1407,7 @@ instanceDecl d = within d $ case d of
             -- It must be in scope, though under any name.
             visible <- asks (\env -> maybe False (`elem` Map.elems (envValues env)) found)
             if visible
-              then pure <$> bindingAs found g
+              then pure <$> scopedIf (scope ++ maybe [] (scopeOfMethod (unqualified f)) found) (bindingAs found g)
               else [] <$ within (declOf g) (complain (f ++ " is not a method of the class " ++ c))
           Destructuring {} -> [] <$ within (declOf g) (complain "an instance can only define methods")
         case hd of
@@ -1851,6 +2028,7 @@ grouped ds = map gather (NE.groupBy sameFunction (concatMap binds ds))
       Decl.PatternSynonym {} -> []
       Decl.PatternSignature -> []
       Decl.StandaloneDeriving {} -> []
+      Decl.KindSignature {} -> []
     sameFunction (Left (_, f, _, _)) (Left (_, g, _, _)) = f == g
     sameFunction _ _ = False
     gather group = case NE.head group of
@@ -1880,6 +2058,7 @@ patternNames wild = \case
       ++ (if SPat.recordWild p then map snd (wild c) \\ map (unqualified . fst) fs else [])
   SPat.Bang p -> patternNames wild p
   SPat.View _ p -> patternNames wild p
+  SPat.Sig p _ -> patternNames wild p
   SPat.Paren p -> patternNames wild p
   SPat.Lazy p -> patternNames wild p
   SPat.Tuple ps -> concatMap (patternNames wild) ps
@@ -1912,7 +2091,7 @@ bindingsForced ds inner = do
   conflicts defined groups
   scope <- forM (nub defined) (\x -> (,) x <$> newName x Local)
   local (\env -> env {envValues = Map.union (Map.fromList scope) (envValues env)}) $ do
-    declareFixities (`lookup` scope) ds
+    declareFixities (maybeToList . (`lookup` scope)) ds
     declaredTypesOf [] defined ds
     outer <- gets forced
     modify (\st -> st {forced = []})
@@ -1935,7 +2114,7 @@ bindingAs known = \case
     when (length (nub [length ps | (_, ps, _) <- clauses]) > 1) $
       complain ("the equations for " ++ f ++ " have different numbers of arguments")
     n <- node
-    Binding n . Function name <$> forM clauses (\(d', ps, r) -> within d' (clause ps r))
+    Binding n . Function name <$> scopedBy name (forM clauses (\(d', ps, r) -> within d' (clause ps r)))
   Destructuring d p r -> within d $ do
     -- The names are in scope already: the pattern refers to them.
     n <- node
@@ -2023,11 +2202,6 @@ viewedExpr vs body = do
 
 -- | Resolve patterns that bind new names, giving the names with them. A
 -- name may be bound only once among them.
-patterns :: [SPat.Pat] -> M ([Pat], [(Name, NameId)])
-patterns ps = do
-  (ps', scope, _) <- patternsViewed ps
-  pure (ps', scope)
-
 -- | The same, with what the view patterns among them ask for, which is
 -- to hold where the patterns match. The patterns have a variable where
 -- each view pattern was.
@@ -2043,6 +2217,20 @@ patternsViewed ps = do
   modify (\st -> st {views = []})
   pure (ps', scope, vs)
 
+-- | A view pattern, given its function and how to read its pattern: a
+-- variable, and a qualifier for whoever has the pattern to add, that the
+-- function applied to the variable matches. A view pattern inside its
+-- pattern comes after it, since it is of what that pattern binds.
+viewing :: Expr -> M Pat -> M Pat
+viewing function inner = do
+  x <- newName "view" Local
+  applied' <- mk (Var x) >>= \argument -> apply function [argument]
+  outer <- gets views
+  modify (\st -> st {views = []})
+  q <- inner
+  modify (\st -> st {views = outer ++ Match q applied' : views st})
+  mkPat (Pat.Var x)
+
 -- | Say so if a view pattern was met where there is nowhere for what it
 -- asks to go.
 noViews :: M ()
@@ -2057,6 +2245,16 @@ patternOf :: SPat.Pat -> M Pat
 patternOf p = within p $ case p of
   SPat.Var x -> binder x >>= mkPat . Pat.Var
   SPat.Wild -> mkPat Pat.Wild
+  -- With OverloadedStrings a string is of any type that has them, and
+  -- what is matched is compared with it.
+  SPat.Lit l@(Syntax.Text _) -> do
+    overloaded <- enabled OverloadedStrings
+    if not overloaded
+      then literal l >>= mkPat . maybe Pat.Error Pat.Lit
+      else do
+        string <- literal l >>= mk . maybe Error Lit >>= call "fromString" . pure
+        function <- builtin "==" >>= (`apply` [string])
+        viewing function (constructor "True" >>= mkPat . maybe Pat.Error (`Pat.Con` []))
   SPat.Lit l -> literal l >>= mkPat . maybe Pat.Error Pat.Lit
   SPat.NegLit (Syntax.Number n) -> mkPat (Pat.Lit (Number (negate n)))
   SPat.NegLit fraction@(Syntax.Fraction _) -> literal fraction >>= mkPat . maybe Pat.Error (\case Fraction q -> Pat.Lit (Fraction (negate q)); l -> Pat.Lit l)
@@ -2123,16 +2321,19 @@ patternOf p = within p $ case p of
   -- A view pattern is a variable, and a qualifier for whoever has the
   -- pattern to add: that the function applied to it matches. One inside
   -- its pattern is after it, since it is of what that pattern binds.
-  SPat.View f q -> do
-    x <- newName "view" Local
-    applied <- sequence [expr f, mk (Var x)] >>= \case
-      [f', argument] -> apply f' [argument]
-      _ -> mk Error
-    outer <- gets views
-    modify (\st -> st {views = []})
-    q' <- patternOf q
-    modify (\st -> st {views = outer ++ Match q' applied : views st})
-    mkPat (Pat.Var x)
+  SPat.View f q -> expr f >>= (`viewing` patternOf q)
+  -- A pattern said to have a type matches what it does of the value
+  -- taken as of that type: a view pattern of the identity at the type.
+  SPat.Sig q ty -> do
+    Signature vs context said <- signatureOf [] ty
+    again <- substituted (NameId (-1)) said said
+    x <- newName "x" Local
+    function <- (Type.Type <$> node <*> pure (Type.Fun said again)) >>= \to -> do
+      parameter <- mkPat (Pat.Var x)
+      body <- mk (Var x)
+      identity <- mk (Lam [parameter] body)
+      mk (Annotated identity (Signature vs context to))
+    viewing function (patternOf q)
   SPat.Tuple [] -> con "()" []
   SPat.Tuple ps -> con (tupleName (length ps)) ps
   SPat.List ps -> do
@@ -2164,9 +2365,16 @@ expr :: Syntax.Expr -> M Expr
 expr e = within e $ case e of
   Expr.Var x -> variable x >>= mk
   Expr.Con c -> construct c
+  -- With OverloadedStrings a string is of any type that has them.
+  Expr.Lit l@(Syntax.Text _) -> do
+    overloaded <- enabled OverloadedStrings
+    string <- literal l >>= mk . maybe Error Lit
+    if overloaded then call "fromString" [string] else pure string
   Expr.Lit l -> literal l >>= mk . maybe Error Lit
   Expr.App f args -> do
-    f' <- expr f
+    f' <- case Expr.typeArguments e of
+      [] -> expr f
+      types -> typeApplied f types
     mapM expr args >>= apply f'
   Expr.Infix items -> infixExpr items
   Expr.Lam ps body -> do
@@ -2264,7 +2472,11 @@ expr e = within e $ case e of
       body <- mk (Con c) >>= (`apply` arguments)
       Alt <$> node <*> pure p <*> plain body
     mk (Case subject' alts)
-  Expr.Typed inner ty -> (Annotated <$> expr inner <*> signatureOf [] ty) >>= mk
+  -- Said to have a type with parts left out, it is said nothing of.
+  Expr.Typed inner ty -> do
+    inner' <- expr inner
+    (said, _, partial) <- signatureFull [] ty
+    if partial then pure inner' else mk (Annotated inner' said)
   Expr.SectionL operand o -> do
     sectioned True o operand
     f <- operator o
@@ -2285,6 +2497,31 @@ expr e = within e $ case e of
     head' ps = case ps of
       p : _ -> p
       [] -> error "Powder.Resolve: a case alternative with no pattern"
+
+-- | A name applied to types: what the first of its type variables are.
+-- They are in the order its type has them: a signature's, which for a
+-- method is its class's first, and for a constructor its type's
+-- parameters. A type left out, as _, leaves its variable to be found.
+typeApplied :: Syntax.Expr -> [SType.Type] -> M Expr
+typeApplied f types = case f of
+  Expr.Paren inner -> typeApplied inner types
+  Expr.Var x ->
+    variable x >>= \case
+      Var n -> mk (Var n) >>= at'
+      other -> complain "only a name can be applied to a type" >> mk other
+  Expr.Con c ->
+    constructor c >>= \case
+      Nothing -> mk Error
+      Just k -> do
+        synonym <- isSynonym k
+        if synonym then complain "a pattern synonym cannot be applied to a type" >> construct c else constructingWith at' k
+  _ -> complain "only a name can be applied to a type" >> expr f
+  where
+    at' inner = do
+      given <- forM types $ \case
+        SType.Wild -> pure Nothing
+        t -> Just <$> type' t
+      mk (Applied inner given)
 
 -- | A section's operand must be the whole of one side of its operator:
 -- every operator in it must bind tighter than the section's, or as
@@ -2375,6 +2612,7 @@ failable = \case
   SPat.Wild -> False
   SPat.Lazy _ -> False
   SPat.Bang p -> failable p
+  SPat.Sig p _ -> failable p
   SPat.As _ p -> failable p
   SPat.Paren p -> failable p
   SPat.Tuple ps -> any failable ps
@@ -2443,7 +2681,7 @@ doBlock = \case
   Stmt.Expr e : rest@(_ : _) -> do
     action <- expr e
     wild <- mkPat Pat.Wild
-    continue action [wild] [] rest
+    continue action [wild] [] [] rest
   -- Where the pattern can fail to match, the monad says what then.
   Stmt.Bind p e : rest@(_ : _) | failable p -> do
     action <- expr e
@@ -2454,15 +2692,15 @@ doBlock = \case
     call ">>=" [action, k]
   Stmt.Bind p e : rest@(_ : _) -> do
     action <- expr e
-    (ps, scope) <- patterns [p]
-    continue action ps scope rest
+    (ps, scope, vs) <- patternsViewed [p]
+    continue action ps scope vs rest
   Stmt.Let ds : rest@(_ : _) -> do
     (bs, strictly, body) <- bindingsForced ds (doBlock rest)
     forcingAll strictly body >>= mk . Let bs
   _ -> complain "the last statement in a 'do' block must be an expression" >> mk Error
   where
-    continue action ps scope rest = do
+    continue action ps scope vs rest = do
       bind <- builtin ">>="
-      k <- extend scope (doBlock rest) >>= mk . Lam ps
+      k <- extend scope (doBlock rest) >>= viewedExpr vs >>= mk . Lam ps
       apply bind [action, k]
 

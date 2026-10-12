@@ -3,10 +3,12 @@
 
 -- | The forms of a type. Import qualified.
 module Powder.Syntax.AST.Type
-  ( Type (Var, Con, App, Fun, Tuple, List, Paren, Qualified),
+  ( Type (Var, Con, App, Fun, Tuple, List, Paren, Qualified, Forall, Wild, Kinded, Operators),
+    forallKinds,
   )
 where
 
+import qualified Data.Text as Text
 import Powder.Syntax.AST.Internal
 import qualified Powder.Syntax.Kind as K
 import qualified Powder.Syntax.Red as Red
@@ -45,4 +47,35 @@ pattern Paren inner <- (kindIs K.TyParen -> Just (child 0 -> inner))
 pattern Qualified :: Type -> Type -> Type
 pattern Qualified context ty <- (kindIs K.TyQual -> Just (children -> [context, ty]))
 
-{-# COMPLETE Var, Con, App, Fun, Tuple, List, Paren, Qualified #-}
+-- | @forall a b. type@: the variables, and the type they are in.
+pattern Forall :: [Name] -> Type -> Type
+pattern Forall variables ty <- (kindIs K.TyForall -> Just (forall' -> (variables, ty)))
+
+forall' :: Red.Red -> ([Name], Type)
+forall' r = (drop 1 (concat [if Red.kind c == K.VarId then [nameOf' c] else [nameOf c | Red.kind c == K.KindedBinder] | c <- Red.children r]), child 0 r)
+  where
+    nameOf' = Text.unpack . Red.text
+
+-- | The kinds a forall gives the variables it names, for those it does.
+forallKinds :: Type -> [(Name, Kind)]
+forallKinds = kindedBinders . syntax
+
+-- | @(type :: kind)@
+pattern Kinded :: Type -> Kind -> Type
+pattern Kinded ty kind <- (kindIs K.TyKinded -> Just (kinded -> Just (ty, kind)))
+
+kinded :: Red.Red -> Maybe (Type, Kind)
+kinded r = (,) (child 0 r) <$> kindOf r
+
+-- | Types with operators between them: the types, and the operators.
+pattern Operators :: [Type] -> [Name] -> Type
+pattern Operators operands operators <- (kindIs K.TyInfix -> Just (operators' -> (operands, operators)))
+
+operators' :: Red.Red -> ([Type], [Name])
+operators' r = (children r, [nameOf o | o <- Red.nodes r, Red.kind o == K.Operator])
+
+-- | @_@: a type left to be found.
+pattern Wild :: Type
+pattern Wild <- (kindIs K.TyWild -> Just _)
+
+{-# COMPLETE Var, Con, App, Fun, Tuple, List, Paren, Qualified, Forall, Wild, Kinded, Operators #-}
