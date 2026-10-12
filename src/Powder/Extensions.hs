@@ -68,13 +68,17 @@ data Extension
   | InstanceSigs
   | KindSignatures
   | LambdaCase
+  | LexicalNegation
   | MonoLocalBinds
   | MultiParamTypeClasses
   | MultiWayIf
   | NamedFieldPuns
   | NamedWildCards
+  | NumDecimals
   | NumericUnderscores
   | OverloadedStrings
+  | PackageImports
+  | ParallelListComp
   | PatternSynonyms
   | PolyKinds
   | PostfixOperators
@@ -93,6 +97,7 @@ data Extension
   | TypeOperators
   | TypeSynonymInstances
   | UndecidableInstances
+  | UnicodeSyntax
   | ViewPatterns
   deriving (Eq, Ord, Show, Read, Enum, Bounded)
 
@@ -142,14 +147,21 @@ implemented =
         HexFloatLiterals,
         ImportQualifiedPost,
         LambdaCase,
+        LexicalNegation,
         MultiWayIf,
         NamedFieldPuns,
+        NumDecimals,
         NumericUnderscores,
+        PackageImports,
+        ParallelListComp,
+        PatternSynonyms,
         PostfixOperators,
         RecordWildCards,
         ReportPrelude,
         StrictData,
-        TupleSections
+        TupleSections,
+        UnicodeSyntax,
+        ViewPatterns
       ]
   )
 
@@ -200,9 +212,10 @@ editionExtensions = \case
   GHC2024 ->
     editionExtensions GHC2021
       ++ [DataKinds, DerivingStrategies, DisambiguateRecordFields, ExplicitNamespaces, GADTs, LambdaCase, MonoLocalBinds, RoleAnnotations]
-  -- To be curated. For now: what is implemented of the extensions that
-  -- only add syntax, each of which a program either uses or cannot tell
-  -- is on.
+  -- What is implemented of the extensions that only add syntax, each of
+  -- which a program either uses or cannot tell is on. One that changes
+  -- what a program already means, as StrictData, LexicalNegation and
+  -- NumDecimals do, is left to be asked for.
   Powder2026 ->
     [ BangPatterns,
       BinaryLiterals,
@@ -218,9 +231,14 @@ editionExtensions = \case
       MultiWayIf,
       NamedFieldPuns,
       NumericUnderscores,
+      PackageImports,
+      ParallelListComp,
+      PatternSynonyms,
       PostfixOperators,
       RecordWildCards,
-      TupleSections
+      TupleSections,
+      UnicodeSyntax,
+      ViewPatterns
     ]
 
 editionNamed :: String -> Maybe Edition

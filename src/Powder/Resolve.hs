@@ -30,6 +30,7 @@ import qualified Data.List.NonEmpty as NE
 import qualified Data.Map as Map
 import Data.Char (isAlphaNum, isUpper)
 import Data.Maybe (catMaybes, fromMaybe, isNothing, listToMaybe, mapMaybe)
+import Data.Ratio (denominator, numerator)
 import qualified Data.Set as Set
 import Numeric (readFloat)
 import Powder.Core (ConInfo (..), Name, Prim (MatchFail), primName)
@@ -110,7 +111,19 @@ data St = St
     newtypes :: [NameId],
     -- | Which of each constructor's fields are strict, by 'NameId'.
     strict :: Table [Bool],
-    problems :: [Problem]
+    problems :: [Problem],
+    -- | What the view patterns met since they were last taken ask for:
+    -- for each, that its function applied to what was matched matches
+    -- its pattern.
+    views :: [Qualifier],
+    -- | The names of what the strict bindings met since they were last
+    -- taken bind, each to be worked out before what the bindings are for.
+    forced :: [NameId],
+    -- | For the variable each use of a pattern synonym in a pattern
+    -- became: the function that builds the synonym, if it has one, and
+    -- the patterns the synonym was applied to. It is how such a pattern
+    -- is read back as an expression.
+    synonymUses :: [(NameId, (Maybe NameId, [Pat]))]
   }
 
 type M = ReaderT Env (State St)
@@ -199,7 +212,7 @@ resolveAfter seed languages lenient sources extra = case reverse (problems final
         (runReaderT run (Env Map.empty Map.empty Map.empty Map.empty Map.empty Map.empty "" Nothing "" spelled Set.empty Map.empty Map.empty Map.empty Map.empty languages False))
         initial
     initial = case seed of
-      Nothing -> St 0 IntMap.empty IntMap.empty IntMap.empty IntMap.empty [] IntMap.empty [] IntMap.empty [] [] IntMap.empty [] IntMap.empty []
+      Nothing -> St 0 IntMap.empty IntMap.empty IntMap.empty IntMap.empty [] IntMap.empty [] IntMap.empty [] [] IntMap.empty [] IntMap.empty [] [] [] []
       Just s ->
         St
           (seedFloor s)
@@ -218,6 +231,9 @@ resolveAfter seed languages lenient sources extra = case reverse (problems final
           (linkFixities before)
           (seedNewtypes s)
           (linkStrict before)
+          []
+          []
+          []
           []
     -- What the packages before this one let be known.
     before = maybe mempty seedLinkage seed
@@ -259,6 +275,13 @@ resolveAfter seed languages lenient sources extra = case reverse (problems final
           name <- newName c TypeClass
           pure [(c, name, [x | Decl.Signature xs _ <- ds, x <- xs])]
         _ -> pure []
+      -- A pattern synonym is a name among the constructors, and beside it
+      -- two functions no program can name: one that matches, and if the
+      -- synonym is an expression too, one that builds.
+      declaredPatterns <- forM sources $ \(file, n, m) -> inPart n file . fmap concat . forM (moduleDecls m) $ \d -> within d $ case d of
+        Decl.PatternSynonym p _ both _ -> (\name -> [(p, name, both || not (null (Decl.patternBuilder d)))]) <$> newName p Global
+        _ -> pure []
+      let patternsOf n = concat [ps | ((_, n', _), ps) <- zip sources declaredPatterns, n' == n]
       let parts = zip3 sources declaredTypes declaredClasses
           partsOf n = [(file, m, ts, cs) | ((file, n', m), ts, cs) <- parts, n' == n]
           methodsOf n = Map.fromList [(x, c) | (_, _, _, cs) <- partsOf n, (_, c, xs) <- cs, x <- xs]
@@ -267,6 +290,7 @@ resolveAfter seed languages lenient sources extra = case reverse (problems final
               ( Map.keys (methodsOf n)
                   ++ concat [concatMap defines (grouped (moduleDecls m)) | (_, m) <- sourcesOf n]
                   ++ concat [fieldsOf d | (_, m) <- sourcesOf n, d <- moduleDecls m]
+                  ++ concat [matcherName p : [builderName p | both] | (p, _, both) <- patternsOf n]
                   ++ [x | (_, m) <- sourcesOf n, Decl.Foreign _ x _ <- moduleDecls m]
                   ++ [exportName entity x | (_, m) <- sourcesOf n, Decl.ForeignExport entity x _ <- moduleDecls m]
                   ++ concat [name : maybe [] pure printer | n == root, Just (name, printer, _, _) <- [extra]]
@@ -279,7 +303,7 @@ resolveAfter seed languages lenient sources extra = case reverse (problems final
           own n =
             Scope
               { scopeValues = Map.map pure (globalsOf n),
-                scopeConstructors = Map.fromList [(c, [x]) | (_, _, ts, _) <- partsOf n, (_, _, cs, _) <- ts, (c, x) <- cs],
+                scopeConstructors = Map.fromList ([(c, [x]) | (_, _, ts, _) <- partsOf n, (_, _, cs, _) <- ts, (c, x) <- cs] ++ [(p, [x]) | (p, x, _) <- patternsOf n]),
                 scopeTypes = Map.fromList [(t, [x]) | (_, _, ts, _) <- partsOf n, (t, x, _, _) <- ts],
                 scopeClasses = Map.fromList [(c, [x]) | (_, _, _, cs) <- partsOf n, (c, x, _) <- cs]
               }
@@ -457,6 +481,45 @@ resolveAfter seed languages lenient sources extra = case reverse (problems final
             b <- node
             body <- variable x >>= mk >>= plain
             pure . Binding b . Function hidden . pure . (\c -> Clause c [] body) <$> node
+          -- A pattern synonym's two functions. The one that matches gives
+          -- a list: of what the synonym's variables are, in a tuple, if
+          -- what it is given matches the synonym's pattern, and of nothing
+          -- if not. A use of the synonym in a pattern is then a view
+          -- pattern, of that function.
+          Decl.PatternSynonym p parameters both definition -> within d $ do
+            (ps, scope, vs) <- patternsViewed [definition]
+            unless (nub parameters == parameters && all (`elem` map fst scope) parameters && all ((`elem` parameters) . fst) scope) $
+              complain ("the pattern " ++ p ++ " stands for must bind the variables " ++ p ++ " is applied to, and no others")
+            found <- extend scope (mapM (variable >=> mk) parameters) >>= tupleOf
+            matched <- sequence [pure found, construct "[]"] >>= \arguments -> construct ":" >>= (`apply` arguments)
+            nothing <- construct "[]"
+            anything <- mkPat Pat.Wild
+            b <- node
+            hit <- (\c r -> Clause c ps (viewed vs r)) <$> node <*> plain matched
+            miss <- (\c -> Clause c [anything]) <$> node <*> plain nothing
+            -- The one that builds is the pattern read as an expression,
+            -- which it can be if it is constructors, numbers and the
+            -- variables.
+            builder <- case Decl.patternBuilder d of
+              -- Or it is what the synonym's own equations say.
+              written'@(_ : _) -> do
+                clauses <- fmap concat . forM written' $ \(left, r) -> within left $ case left of
+                  SPat.Con p' arguments | p' == p -> do
+                    c <- node
+                    (ps', scope', vs') <- patternsViewed arguments
+                    pure . Clause c ps' . viewed vs' <$> extend scope' (rhs r)
+                  _ -> [] <$ complain ("after the where of the pattern synonym " ++ p ++ " come equations for " ++ p ++ ", applied to its arguments")
+                b' <- node
+                pure [Binding b' (Function (globalsOf n Map.! builderName p) clauses)]
+              []
+                | not both -> pure []
+                | otherwise -> do
+                    (ps', scope', _) <- patternsViewed [definition]
+                    body <- mapM (patternExpr (map snd scope')) (take 1 ps')
+                    xs <- mapM (\x -> mkPat (maybe Pat.Error Pat.Var (lookup x scope'))) parameters
+                    b' <- node
+                    forM body $ \e -> (\c r -> Binding b' (Function (globalsOf n Map.! builderName p) [Clause c xs r])) <$> node <*> plain e
+            pure (Binding b (Function (globalsOf n Map.! matcherName p) [hit, miss]) : builder)
           _ -> pure []
         (,) [globalsOf n Map.! f | Equations _ f _ <- gs] . (++ foreigns) <$> mapM binding gs
       asked <- fmap (fromMaybe []) . forM extra $ \(name, printer, file, e) -> inModule root file . within e $ do
@@ -494,6 +557,7 @@ resolveAfter seed languages lenient sources extra = case reverse (problems final
       Syntax.Value x -> x
       Syntax.Thing c _ -> c
       Syntax.Reexport m -> "module " ++ m
+      Syntax.Pattern p -> "pattern " ++ p
 
 -- Modules -------------------------------------------------------------------
 
@@ -542,6 +606,12 @@ picked :: IntMap.IntMap ([(Name, NameId)], [(Name, NameId)]) -> Scope -> Syntax.
 picked belongings scope = \case
   Syntax.Value x -> mempty {scopeValues = at x (scopeValues scope)}
   Syntax.Reexport _ -> mempty
+  -- A pattern synonym, with the functions that are what it does.
+  Syntax.Pattern p ->
+    mempty
+      { scopeConstructors = at p (scopeConstructors scope),
+        scopeValues = Map.filterWithKey (\k _ -> k `elem` [beside p matcherName, beside p builderName]) (scopeValues scope)
+      }
   Syntax.Thing c subordinates ->
     let things = Map.findWithDefault [] c (scopeTypes scope) ++ Map.findWithDefault [] c (scopeClasses scope)
         wanted x = case subordinates of
@@ -588,6 +658,16 @@ selected belongings items exports = case items of
 
 tupleName :: Int -> Name
 tupleName n = "(" ++ replicate (n - 1) ',' ++ ")"
+
+-- | What the function that matches a pattern synonym is called, and the
+-- one that builds it: names no program can write.
+matcherName, builderName :: Name -> Name
+matcherName p = "match#" ++ p
+builderName p = "build#" ++ p
+
+-- | A name made from another, qualified as that one is.
+beside :: Name -> (Name -> Name) -> Name
+beside name f = take (length name - length (unqualified name)) name ++ f (unqualified name)
 
 -- Plumbing ------------------------------------------------------------------
 
@@ -699,7 +779,81 @@ constructor name = do
   pure found
 
 construct :: Name -> M Expr
-construct name = constructor name >>= maybe (mk Error) constructing
+construct name =
+  constructor name >>= \case
+    Nothing -> mk Error
+    Just k -> do
+      synonym <- isSynonym k
+      if not synonym
+        then constructing k
+        else
+          asks (Map.lookup (beside name builderName) . envValues) >>= \case
+            Just b -> mk (Var b)
+            Nothing -> complain (name ++ " is a pattern synonym that is a pattern only: it is written with <-") >> mk Error
+
+-- | Whether what a constructor's name refers to is a pattern synonym.
+isSynonym :: NameId -> M Bool
+isSynonym k = gets $ \st -> case IntMap.lookup (nameKey k) (names st) of
+  Just (NameInfo _ Global _) -> True
+  _ -> False
+
+-- | A pattern that is a constructor applied to patterns, given the
+-- constructor as it is spelled and how many view qualifiers there were
+-- before its patterns were read. If the constructor is a pattern synonym
+-- this is a view pattern of the function that matches it, which comes
+-- before whatever its own patterns asked for.
+applied :: Name -> NameId -> Int -> [Pat] -> M Pat
+applied name k before ps = do
+  synonym <- isSynonym k
+  if not synonym
+    then mkPat (Pat.Con k ps)
+    else
+      asks (Map.lookup (beside name matcherName) . envValues) >>= \case
+        Nothing -> complain ("the pattern synonym " ++ name ++ " is in scope without what it stands for") >> mkPat Pat.Error
+        Just matcher -> do
+          x <- newName "view" Local
+          result <- sequence [mk (Var matcher), mk (Var x)] >>= \case
+            [f, argument] -> apply f [argument]
+            _ -> mk Error
+          inside <- tuplePatOf ps
+          rest <- mkPat Pat.Wild
+          one <- constructor ":" >>= mkPat . maybe Pat.Error (`Pat.Con` [inside, rest])
+          builder <- asks (Map.lookup (beside name builderName) . envValues)
+          modify (\st -> st {views = take before (views st) ++ Match one result : drop before (views st), synonymUses = (x, (builder, ps)) : synonymUses st})
+          mkPat (Pat.Var x)
+
+-- | Some expressions as one: a tuple of them, unless there is just one.
+tupleOf :: [Expr] -> M Expr
+tupleOf = \case
+  [x] -> pure x
+  xs -> construct (if null xs then "()" else tupleName (length xs)) >>= (`apply` xs)
+
+tuplePatOf :: [Pat] -> M Pat
+tuplePatOf = \case
+  [p] -> pure p
+  ps -> constructor (if null ps then "()" else tupleName (length ps)) >>= mkPat . maybe Pat.Error (`Pat.Con` ps)
+
+-- | A pattern as the expression that makes what it matches, if it is
+-- constructors, literals, pattern synonyms that can be built, and the
+-- variables given.
+patternExpr :: [NameId] -> Pat -> M Expr
+patternExpr variables p = case Pat.patKind p of
+  Pat.Var x
+    | x `elem` variables -> mk (Var x)
+    | otherwise ->
+        gets (lookup x . synonymUses) >>= \case
+          Just (Just builder, ps) -> do
+            f <- mk (Var builder)
+            mapM (patternExpr variables) ps >>= apply f
+          _ -> no
+  Pat.Lit l -> mk (Lit l)
+  Pat.Con k ps -> do
+    f <- constructing k
+    mapM (patternExpr variables) ps >>= apply f
+  Pat.Ordered _ q -> patternExpr variables q
+  _ -> no
+  where
+    no = complain "this pattern cannot be read as an expression: write the synonym with <-" >> mk Error
 
 -- | A constructor, to be applied to its fields. One with strict fields is
 -- a function that works those out before it makes anything: the Report's
@@ -1456,6 +1610,8 @@ grouped ds = map gather (NE.groupBy sameFunction (concatMap binds ds))
       Decl.Default _ -> []
       Decl.Foreign {} -> []
       Decl.ForeignExport {} -> []
+      Decl.PatternSynonym {} -> []
+      Decl.PatternSignature -> []
     sameFunction (Left (_, f, _, _)) (Left (_, g, _, _)) = f == g
     sameFunction _ _ = False
     gather group = case NE.head group of
@@ -1484,6 +1640,7 @@ patternNames wild = \case
     concat [maybe [unqualified f] (patternNames wild) q | (f, q) <- fs]
       ++ (if SPat.recordWild p then map snd (wild c) \\ map (unqualified . fst) fs else [])
   SPat.Bang p -> patternNames wild p
+  SPat.View _ p -> patternNames wild p
   SPat.Paren p -> patternNames wild p
   SPat.Lazy p -> patternNames wild p
   SPat.Tuple ps -> concatMap (patternNames wild) ps
@@ -1506,9 +1663,10 @@ declOf = \case
   Destructuring d _ _ -> d
 
 -- | Local definitions, all in scope in each other, and something resolved
--- in their scope.
-bindings' :: [Syntax.Decl] -> M a -> M ([Binding], a)
-bindings' ds inner = do
+-- in their scope; with the names of what the bindings marked strict among
+-- them bind, which whoever has the bindings is to work out first.
+bindingsForced :: [Syntax.Decl] -> M a -> M ([Binding], [NameId], a)
+bindingsForced ds inner = do
   wild <- fieldsOfConstructor
   let groups = grouped ds
       defined = concatMap (definesWith wild) groups
@@ -1517,7 +1675,12 @@ bindings' ds inner = do
   local (\env -> env {envValues = Map.union (Map.fromList scope) (envValues env)}) $ do
     declareFixities (`lookup` scope) ds
     declaredTypesOf [] defined ds
-    (,) <$> mapM binding groups <*> inner
+    outer <- gets forced
+    modify (\st -> st {forced = []})
+    bs <- mapM binding groups
+    strictly <- gets forced
+    modify (\st -> st {forced = outer})
+    (,,) bs strictly <$> inner
 
 -- | A group whose names are already in scope.
 binding :: Group -> M Binding
@@ -1538,12 +1701,21 @@ bindingAs known = \case
     -- The names are in scope already: the pattern refers to them.
     n <- node
     p' <- patternOf p
-    Binding n . Destructure p' <$> rhs r
+    noViews
+    -- A binding marked strict is one whose value is worked out before
+    -- what the binding is for: the value is given a name to do that by.
+    p'' <- case Pat.patKind p' of
+      Pat.Bang inner -> do
+        whole <- newName "strict" Local
+        modify (\st -> st {forced = forced st ++ [whole]})
+        mkPat (Pat.As whole inner)
+      _ -> pure p'
+    Binding n . Destructure p'' <$> rhs r
   where
     clause ps r = do
       c <- node
-      (ps', scope) <- patterns ps
-      Clause c ps' <$> extend scope (rhs r)
+      (ps', scope, vs) <- patternsViewed ps
+      Clause c ps' . viewed vs <$> extend scope (rhs r)
 
 extend :: [(Name, NameId)] -> M a -> M a
 extend scope = local (\env -> env {envValues = Map.union (Map.fromList scope) (envValues env)})
@@ -1552,10 +1724,12 @@ extend scope = local (\env -> env {envValues = Map.union (Map.fromList scope) (e
 rhs :: Syntax.Rhs -> M Rhs
 rhs r@(Syntax.Rhs alternatives wheres) = within r $ do
   n <- node
-  (bs, guardeds) <- bindings' wheres . forM alternatives $ \(guard', body) -> within body $ do
+  (bs, strictly, guardeds) <- bindingsForced wheres . forM alternatives $ \(guard', body) -> within body $ do
     g <- node
     uncurry (Guarded g) <$> qualifiers guard' (expr body)
-  pure (Rhs n guardeds bs)
+  -- What is bound strictly is worked out before any guard is tried.
+  first <- mapM forcing strictly
+  pure (Rhs n [Guarded g (first ++ qs) body | Guarded g qs body <- guardeds] bs)
 
 -- | The qualifiers of a guard, each in scope of what those before it
 -- bind, and something resolved in scope of them all.
@@ -1568,12 +1742,43 @@ qualifiers (s : rest) inner = within s $ case s of
     pure (Condition c : qs, a)
   Stmt.Bind p e -> do
     e' <- expr e
-    (ps, scope) <- patterns [p]
+    (ps, scope, vs) <- patternsViewed [p]
     (qs, a) <- extend scope (qualifiers rest inner)
-    pure ([Match q e' | q <- take 1 ps] ++ qs, a)
+    pure ([Match q e' | q <- take 1 ps] ++ vs ++ qs, a)
   Stmt.Let ds -> do
-    (bs, (qs, a)) <- bindings' ds (qualifiers rest inner)
-    pure (Bindings bs : qs, a)
+    (bs, strictly, (qs, a)) <- bindingsForced ds (qualifiers rest inner)
+    first <- mapM forcing strictly
+    pure (Bindings bs : first ++ qs, a)
+
+-- | A condition that holds once a name's value has been worked out.
+forcing :: NameId -> M Qualifier
+forcing x = do
+  v <- mk (Var x)
+  true <- construct "True"
+  Condition <$> call "seq" [v, true]
+
+-- | An expression, after the values of some names have been worked out.
+forcingAll :: [NameId] -> Expr -> M Expr
+forcingAll xs body = foldM (\rest x -> mk (Var x) >>= \v -> call "seq" [v, rest]) body (reverse xs)
+
+-- | A right-hand side each of whose bodies is chosen only if some
+-- qualifiers hold as well as its own, which come first. What its where
+-- defines may use what they bind, so it goes in with each guard.
+viewed :: [Qualifier] -> Rhs -> Rhs
+viewed [] r = r
+viewed vs (Rhs n guardeds bs) = Rhs n [Guarded g (vs ++ [Bindings bs | not (null bs)] ++ qs) body | Guarded g qs body <- guardeds] []
+
+-- | An expression that is itself where some qualifiers hold, and a
+-- failure to match where they do not.
+viewedExpr :: [Qualifier] -> Expr -> M Expr
+viewedExpr [] body = pure body
+viewedExpr vs body = do
+  scrutinee <- construct "()"
+  anything <- mkPat Pat.Wild
+  r <- node
+  g <- node
+  a <- node
+  mk (Case scrutinee [Alt a anything (Rhs r [Guarded g vs body] [])])
 
 -- Patterns ------------------------------------------------------------------
 
@@ -1581,13 +1786,31 @@ qualifiers (s : rest) inner = within s $ case s of
 -- name may be bound only once among them.
 patterns :: [SPat.Pat] -> M ([Pat], [(Name, NameId)])
 patterns ps = do
+  (ps', scope, _) <- patternsViewed ps
+  pure (ps', scope)
+
+-- | The same, with what the view patterns among them ask for, which is
+-- to hold where the patterns match. The patterns have a variable where
+-- each view pattern was.
+patternsViewed :: [SPat.Pat] -> M ([Pat], [(Name, NameId)], [Qualifier])
+patternsViewed ps = do
   wild <- fieldsOfConstructor
   let spelled = concatMap (patternNames wild) ps
   forM_ (nub (spelled \\ nub spelled)) $ \x ->
     forM_ (take 1 ps) (\p -> within p (complain (x ++ " is bound more than once in these patterns")))
   scope <- forM (nub spelled) (\x -> (,) x <$> newName x Local)
   ps' <- extend scope (mapM patternOf ps)
-  pure (ps', scope)
+  vs <- gets views
+  modify (\st -> st {views = []})
+  pure (ps', scope, vs)
+
+-- | Say so if a view pattern was met where there is nowhere for what it
+-- asks to go.
+noViews :: M ()
+noViews = do
+  vs <- gets views
+  modify (\st -> st {views = []})
+  unless (null vs) (complain "a view pattern cannot be used in a binding that is not a function's")
 
 -- | Resolve a pattern whose variables are in scope already, as the names
 -- it binds.
@@ -1599,10 +1822,16 @@ patternOf p = within p $ case p of
   SPat.NegLit (Syntax.Number n) -> mkPat (Pat.Lit (Number (negate n)))
   SPat.NegLit fraction@(Syntax.Fraction _) -> literal fraction >>= mkPat . maybe Pat.Error (\case Fraction q -> Pat.Lit (Fraction (negate q)); l -> Pat.Lit l)
   SPat.NegLit _ -> complain "only a number can be negated in a pattern" >> mkPat Pat.Error
-  SPat.Con c ps -> con c ps
+  SPat.Con c ps ->
+    constructor c >>= \case
+      Nothing -> mkPat Pat.Error
+      Just k -> do
+        before <- gets (length . views)
+        mapM patternOf ps >>= applied c k before
   -- A row of patterns with constructors between them groups as the
   -- constructors' fixities say.
   SPat.Infix {} -> do
+    before <- gets (length . views)
     let row q = case q of
           SPat.Infix a c b -> let (more, between) = row b in (a : more, c : between)
           _ -> ([q], [])
@@ -1619,7 +1848,7 @@ patternOf p = within p $ case p of
               else do
                 (rhs', rest', os') <- climb (if assoc == RightAssoc then prec else prec + 1) rest os
                 k <- constructor o
-                joined <- mkPat (maybe Pat.Error (`Pat.Con` [lhs, rhs']) k)
+                joined <- maybe (mkPat Pat.Error) (\k' -> applied o k' before [lhs, rhs']) k
                 loop least joined rest' os'
           [] -> pure (lhs, rest, [])
     resolved <- mapM patternOf operands
@@ -1652,6 +1881,19 @@ patternOf p = within p $ case p of
   SPat.Paren q -> patternOf q
   SPat.Lazy q -> patternOf q >>= mkPat . Pat.Lazy
   SPat.Bang q -> patternOf q >>= mkPat . Pat.Bang
+  -- A view pattern is a variable, and a qualifier for whoever has the
+  -- pattern to add: that the function applied to it matches. One inside
+  -- its pattern is after it, since it is of what that pattern binds.
+  SPat.View f q -> do
+    x <- newName "view" Local
+    applied <- sequence [expr f, mk (Var x)] >>= \case
+      [f', argument] -> apply f' [argument]
+      _ -> mk Error
+    outer <- gets views
+    modify (\st -> st {views = []})
+    q' <- patternOf q
+    modify (\st -> st {views = outer ++ Match q' applied : views st})
+    mkPat (Pat.Var x)
   SPat.Tuple [] -> con "()" []
   SPat.Tuple ps -> con (tupleName (length ps)) ps
   SPat.List ps -> do
@@ -1669,7 +1911,11 @@ literal = \case
   Syntax.Character c -> pure (Just (Character c))
   Syntax.Text s -> pure (Just (Text s))
   Syntax.Fraction s -> case readFloat s of
-    [(q, "")] -> pure (Just (Fraction q))
+    -- With NumDecimals a number written with an exponent that is whole
+    -- is a whole number, of any type that has them.
+    [(q, "")] -> do
+      whole <- (&& denominator q == 1) <$> enabled NumDecimals
+      pure (Just (if whole then Number (numerator q) else Fraction q))
     _ -> Nothing <$ complain ("malformed literal: " ++ s)
   Syntax.Malformed s -> Nothing <$ complain ("malformed literal: " ++ s)
 
@@ -1685,18 +1931,18 @@ expr e = within e $ case e of
     mapM expr args >>= apply f'
   Expr.Infix items -> infixExpr items
   Expr.Lam ps body -> do
-    (ps', scope) <- patterns ps
-    extend scope (expr body) >>= mk . Lam ps'
+    (ps', scope, vs) <- patternsViewed ps
+    extend scope (expr body) >>= viewedExpr vs >>= mk . Lam ps'
   Expr.Let ds body -> do
-    (bs, body') <- bindings' ds (expr body)
-    mk (Let bs body')
+    (bs, strictly, body') <- bindingsForced ds (expr body)
+    forcingAll strictly body' >>= mk . Let bs
   Expr.If c t f -> (If <$> expr c <*> expr t <*> expr f) >>= mk
   Expr.Case scrutinee alts -> do
     scrutinee' <- expr scrutinee
     alts' <- forM alts $ \a@(Syntax.Alt p r) -> within a $ do
       n <- node
-      (ps, scope) <- patterns [p]
-      Alt n (head' ps) <$> extend scope (rhs r)
+      (ps, scope, vs) <- patternsViewed [p]
+      Alt n (head' ps) . viewed vs <$> extend scope (rhs r)
     mk (Case scrutinee' alts')
   Expr.Do stmts -> doBlock stmts
   -- \case alternatives is \x -> case x of alternatives.
@@ -1706,8 +1952,8 @@ expr e = within e $ case e of
     parameter <- mkPat (Pat.Var x)
     alts' <- forM alts $ \a@(Syntax.Alt p r) -> within a $ do
       n <- node
-      (ps, scope) <- patterns [p]
-      Alt n (head' ps) <$> extend scope (rhs r)
+      (ps, scope, vs) <- patternsViewed [p]
+      Alt n (head' ps) . viewed vs <$> extend scope (rhs r)
     mk (Case scrutinee alts') >>= mk . Lam [parameter]
   -- An if with guards is a case with nothing to take apart, and guards.
   Expr.MultiIf alternatives -> do
@@ -1737,7 +1983,9 @@ expr e = within e $ case e of
     let ends = [from] ++ maybe [] pure next ++ maybe [] pure to
     f <- builtin ("enumFrom" ++ maybe "" (const "Then") next ++ maybe "" (const "To") to)
     mapM expr ends >>= apply f
-  Expr.Comprehension element qs -> comprehension element qs
+  Expr.Comprehension element qs -> case Expr.comprehensionBranches e of
+    [] -> comprehension (expr element) qs
+    more -> parallel element (qs : more)
   -- A record built: the constructor applied, with a field not given
   -- being an error to look at.
   e0@(Expr.Record (Expr.Con c) fs) ->
@@ -1819,34 +2067,65 @@ sectioned left o operand = case operand of
 -- | A list comprehension, as the Report says what one means: a condition
 -- is a choice between the rest and nothing, and a generator is the rest
 -- for each element that matches, all put end to end.
-comprehension :: Syntax.Expr -> [Stmt.Stmt] -> M Expr
+comprehension :: M Expr -> [Stmt.Stmt] -> M Expr
 comprehension element = \case
   [] -> do
-    x <- expr element
+    x <- element
     nil <- construct "[]"
     c <- construct ":"
     apply c [x, nil]
   s : rest -> within s $ case s of
     Stmt.Expr c -> (If <$> expr c <*> comprehension element rest <*> construct "[]") >>= mk
     Stmt.Let ds -> do
-      (bs, body) <- bindings' ds (comprehension element rest)
-      mk (Let bs body)
+      (bs, strictly, body) <- bindingsForced ds (comprehension element rest)
+      forcingAll strictly body >>= mk . Let bs
     Stmt.Bind p from -> do
       from' <- expr from
-      (ps, scope) <- patterns [p]
+      (ps, scope, vs) <- patternsViewed [p]
       body <- extend scope (comprehension element rest)
       nil <- construct "[]"
-      f <- matching ps body nil
+      f <- matchingViewed ps vs body nil
       call "concatMap" [f, from']
+
+-- | A list comprehension whose qualifiers are in several rows, gone
+-- through side by side: the element for each of what the rows give
+-- together, as far as the shortest goes. Each row is a comprehension of
+-- its own, of what it binds, and they are zipped.
+parallel :: Syntax.Expr -> [[Stmt.Stmt]] -> M Expr
+parallel element rows = do
+  wild <- fieldsOfConstructor
+  let bound row = nub (concat [case s of Stmt.Bind p _ -> patternNames wild p; Stmt.Let ds -> concatMap (definesWith wild) (grouped ds); Stmt.Expr _ -> [] | s <- row])
+      names' = map bound rows
+      doubled = concat names' \\ nub (concat names')
+  unless (null doubled) (complain (unwords (nub doubled) ++ " is bound in more than one row of this comprehension"))
+  lists <- forM (zip rows names') $ \(row, xs) -> comprehension (mapM (variable >=> mk) xs >>= tupleOf) row
+  scope <- forM (concat names') (\x -> (,) x <$> newName x Local)
+  ps <- forM names' (mapM (\x -> mkPat (Pat.Var (fromMaybe (error "Powder.Resolve: a name of a comprehension was not made") (lookup x scope)))) >=> tuplePatOf)
+  zipped <- zipAll lists
+  p <- nest ps
+  body <- extend scope (expr element)
+  f <- mk (Lam [p] body)
+  call "map" [f, zipped]
+  where
+    zipAll = \case
+      [l] -> pure l
+      l : ls -> zipAll ls >>= \rest -> call "zip" [l, rest]
+      [] -> construct "[]"
+    nest = \case
+      [p] -> pure p
+      p : ps -> nest ps >>= \rest -> constructor (tupleName 2) >>= mkPat . maybe Pat.Error (`Pat.Con` [p, rest])
+      [] -> mkPat Pat.Wild
 
 -- | A function that is one thing where its argument matches a pattern
 -- and another where it does not.
-matching :: [Pat] -> Expr -> Expr -> M Expr
-matching ps body otherwise' = do
+-- Matching is also that some qualifiers hold, which the pattern's view
+-- patterns ask for.
+matchingViewed :: [Pat] -> [Qualifier] -> Expr -> Expr -> M Expr
+matchingViewed ps vs body otherwise' = do
   x <- newName "x" Local
   scrutinee <- mk (Var x)
   wild <- mkPat Pat.Wild
-  alts <- sequence ([Alt <$> node <*> pure p <*> plain body | p <- take 1 ps] ++ [Alt <$> node <*> pure wild <*> plain otherwise'])
+  alts <- sequence ([Alt <$> node <*> pure p <*> (viewed vs <$> plain body) | p <- take 1 ps] ++ [Alt <$> node <*> pure wild <*> plain otherwise'])
   parameter <- mkPat (Pat.Var x)
   mk (Case scrutinee alts) >>= mk . Lam [parameter]
 
@@ -1929,18 +2208,18 @@ doBlock = \case
   -- Where the pattern can fail to match, the monad says what then.
   Stmt.Bind p e : rest@(_ : _) | failable p -> do
     action <- expr e
-    (ps, scope) <- patterns [p]
+    (ps, scope, vs) <- patternsViewed [p]
     body <- extend scope (doBlock rest)
     failed <- mk (Lit (Text "pattern match failure in a do block")) >>= call "fail" . pure
-    k <- matching ps body failed
+    k <- matchingViewed ps vs body failed
     call ">>=" [action, k]
   Stmt.Bind p e : rest@(_ : _) -> do
     action <- expr e
     (ps, scope) <- patterns [p]
     continue action ps scope rest
   Stmt.Let ds : rest@(_ : _) -> do
-    (bs, body) <- bindings' ds (doBlock rest)
-    mk (Let bs body)
+    (bs, strictly, body) <- bindingsForced ds (doBlock rest)
+    forcingAll strictly body >>= mk . Let bs
   _ -> complain "the last statement in a 'do' block must be an expression" >> mk Error
   where
     continue action ps scope rest = do

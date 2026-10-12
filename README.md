@@ -332,19 +332,27 @@ compiled as if it did not. Implemented so far, all of them in
 | `BinaryLiterals` | `0b1010` |
 | `HexFloatLiterals` | `0x1.8p3`: a fraction in hexadecimal, with a power of two |
 | `NamedFieldPuns` | `C {f}`: a field by itself is the variable of its name |
-| `BangPatterns` | `!pattern`: what is matched is worked out first. In a function's, a lambda's or a case's patterns; not yet on a `let` |
+| `BangPatterns` | `!pattern`: what is matched is worked out first. On a binding in a `let` or a `where`, it is worked out before what the binding is for |
 | `PostfixOperators` | `(e op)` is `op e`, so `op` may take one argument. It is so with the extension off too |
 | `EmptyDataDeriving` | `data Void deriving (Eq, Show)` |
 | `GADTSyntax` | `data T a where C :: a -> T a`: constructors given by their types. Each must make the type applied to variables, which is all that is not a GADT |
 | `RecordWildCards` | `C {..}`: the fields not named, each as the variable of its name. Not in a pattern bound at the top of a module |
 | `DisambiguateRecordFields` | A field that two modules have is the constructor's, where a record is built or matched |
 | `ExplicitNamespaces` | `import M (type T)`: `type` before a name in a list of names |
+| `ViewPatterns` | `(f -> p)`: matches what `p` does, of `f` applied to what is matched. Where patterns are matched, not where one is bound |
+| `PatternSynonyms` | `pattern P x = C x 0`: a name for a pattern, and an expression too; `pattern P x <- ...` for a pattern only, with equations after `where` to say how it is built. Exported and imported as `pattern P` |
+| `ParallelListComp` | `[e \| x <- xs \| y <- ys]`: rows of qualifiers gone through side by side |
+| `PackageImports` | `import "base" Data.List`. The package is not looked at |
+| `UnicodeSyntax` | `→`, `←`, `⇒` and `∷` for `->`, `<-`, `=>` and `::` |
 
-Implemented and in no edition, since it changes what a program means:
+Implemented and in no edition, since each changes what a program already
+means:
 
 | Extension | What it does |
 | --- | --- |
 | `StrictData` | A constructor's fields are strict unless marked lazy, `~T` |
+| `LexicalNegation` | A minus that touches what follows it and not what comes before is that thing's sign: `f -1` is `f (-1)`, and `(- 1)` is a section |
+| `NumDecimals` | `1e6 :: Int`: a number written with an exponent, if it is whole, is a whole number |
 
 And one of Powder's own, which only `Haskell2010` has on:
 

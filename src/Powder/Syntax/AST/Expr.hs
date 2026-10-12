@@ -6,6 +6,7 @@ module Powder.Syntax.AST.Expr
   ( Expr (Var, Con, Lit, App, Infix, Lam, Let, If, Case, Do, Paren, Tuple, List, Range, SectionL, SectionR, Typed, Comprehension, Record, LamCase, MultiIf, TupleSection),
     Item (..),
     recordWild,
+    comprehensionBranches,
   )
 where
 
@@ -115,6 +116,11 @@ pattern Comprehension element qualifiers <- (kindIs K.ListComp -> Just (comprehe
 
 comprehension :: Red.Red -> (Expr, [Stmt])
 comprehension r = (child 0 r, children r)
+
+-- | The qualifiers a list comprehension goes through beside its first:
+-- those after each bar but the first.
+comprehensionBranches :: Expr -> [[Stmt]]
+comprehensionBranches (syntax -> r) = [children b | b <- Red.nodes r, Red.kind b == K.ListCompBranch]
 
 -- | @(e op)@
 pattern SectionL :: Expr -> Operator -> Expr

@@ -80,7 +80,7 @@ instance Ast Module where
   syntax (ModuleNode r) = r
 
 instance Ast Decl where
-  cast = wrap DeclNode [K.DataDecl, K.TypeDecl, K.ClassDecl, K.InstanceDecl, K.DefaultDecl, K.ForeignDecl, K.ForeignExportDecl, K.ImportDecl, K.TypeSig, K.FixityDecl, K.FunClause, K.InfixClause, K.PatBind]
+  cast = wrap DeclNode [K.PatSynDecl, K.PatSynSig, K.DataDecl, K.TypeDecl, K.ClassDecl, K.InstanceDecl, K.DefaultDecl, K.ForeignDecl, K.ForeignExportDecl, K.ImportDecl, K.TypeSig, K.FixityDecl, K.FunClause, K.InfixClause, K.PatBind]
   syntax (DeclNode r) = r
 
 instance Ast Constructor where
@@ -117,7 +117,7 @@ instance Ast Stmt where
   syntax (StmtNode r) = r
 
 instance Ast Pat where
-  cast = wrap PatNode [K.BangPat, K.VarPat, K.WildPat, K.LitPat, K.NegLitPat, K.ConPat, K.InfixPat, K.AsPat, K.ParenPat, K.TuplePat, K.ListPat, K.LazyPat, K.RecordPat]
+  cast = wrap PatNode [K.ViewPat, K.BangPat, K.VarPat, K.WildPat, K.LitPat, K.NegLitPat, K.ConPat, K.InfixPat, K.AsPat, K.ParenPat, K.TuplePat, K.ListPat, K.LazyPat, K.RecordPat]
   syntax (PatNode r) = r
 
 -- | The children of a node that are of some sort.
@@ -147,6 +147,8 @@ data Listed
     Thing Name Subordinates
   | -- | @module M@, in an export list: all that was imported from it.
     Reexport Name
+  | -- | @pattern P@: a pattern synonym.
+    Pattern Name
   deriving (Eq, Show)
 
 data Subordinates = None | All | Some [Name]
@@ -182,6 +184,10 @@ spelled r = [(Red.kind t, Text.unpack (Red.text t)) | t <- Red.tokens r, not (K.
 -- parenthesis.
 itemsOf :: [(SyntaxKind, Name)] -> [Listed]
 itemsOf = \case
+  -- The word pattern with a constructor's name right after it. Before
+  -- anything else it is a variable of that name.
+  (K.VarId, "pattern") : (k, c) : rest | k `elem` constructors -> Pattern c : itemsOf rest
+  (K.VarId, "pattern") : (K.LParen, _) : (k, c) : (K.RParen, _) : rest | k `elem` [K.ConSym, K.Colon] -> Pattern c : itemsOf rest
   (k, x) : rest | k `elem` [K.VarId, K.QVarId] -> Value x : itemsOf rest
   (K.LParen, _) : (k, x) : (K.RParen, _) : rest | k `elem` [K.VarSym, K.QVarSym] -> Value x : itemsOf rest
   (k, c) : (K.LParen, _) : (K.DotDot, _) : (K.RParen, _) : rest | k `elem` constructors -> Thing c All : itemsOf rest

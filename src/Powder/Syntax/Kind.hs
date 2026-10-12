@@ -24,6 +24,9 @@ data SyntaxKind
   | ConSym
   | QVarSym
   | QConSym
+  | -- | A minus with something right after it and nothing right before:
+    -- with LexicalNegation, the sign of what follows.
+    PrefixMinus
   | -- Literals.
     IntegerLit
   | FloatLit
@@ -126,6 +129,10 @@ data SyntaxKind
     ForeignExportDecl
   | TypeSig
   | FixityDecl
+  | -- | @pattern P x = ...@ or @pattern P x <- ...@: a name for a pattern.
+    PatSynDecl
+  | -- | @pattern P :: type@
+    PatSynSig
   | FunClause
   | InfixClause
   | PatBind
@@ -177,6 +184,9 @@ data SyntaxKind
     RangeStepExpr
   | -- | @[e | qualifiers]@
     ListComp
+  | -- | The qualifiers after a second bar or a later one, in a list
+    -- comprehension whose qualifiers are gone through side by side.
+    ListCompBranch
   | SectionL
   | SectionR
   | -- | @expression :: type@
@@ -205,6 +215,9 @@ data SyntaxKind
     BangPat
   | -- | A constructor and patterns for some of its fields, in braces.
     RecordPat
+  | -- | @function -> pattern@: matches what the pattern does, of the
+    -- function applied to what is matched.
+    ViewPat
   deriving (Eq, Ord, Show, Enum, Bounded)
 
 -- | Whether a kind is a token's rather than a node's.

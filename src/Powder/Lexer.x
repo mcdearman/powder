@@ -67,6 +67,7 @@ tokens :-
   -- one with something to bind to after it but not before is a prefix
   -- occurrence, the other way about a suffix one, with both a tight infix
   -- one and with neither a loose infix one. The first that holds wins.
+  \- / { on LexicalNegation `alexAndPred` notPrecededByClosingToken `alexAndPred` followedByOpeningToken } { plain PrefixMinus }
   @varsym / { precededByClosingToken `alexAndPred` followedByOpeningToken } { operator TightInfix }
   @varsym / { followedByOpeningToken }       { operator Prefix }
   @varsym / { precededByClosingToken }       { operator Suffix }
@@ -144,6 +145,9 @@ precededByClosingToken :: user -> AlexInput -> Int -> AlexInput -> Bool
 precededByClosingToken _ before _ _ = closes (previous before)
   where
     closes c = isAlphaNum c || c `elem` ")]\125\"'_"
+
+notPrecededByClosingToken :: user -> AlexInput -> Int -> AlexInput -> Bool
+notPrecededByClosingToken user before len after = not (precededByClosingToken user before len after)
 
 -- | Whether what is just after a token is the start of something an
 -- operator could apply to: a name, a literal or an opening bracket that
@@ -240,5 +244,15 @@ lexerWith extensions = go . AlexInput '\n'
       where
         emit k len =
           let (lexeme, rest) = splitAt len (remaining input)
-           in Token k (Text.pack lexeme) : go (AlexInput (last (previous input : lexeme)) rest)
+           in Token (spelledOtherwise k lexeme) (Text.pack lexeme) : go (AlexInput (last (previous input : lexeme)) rest)
+    -- With UnicodeSyntax some reserved operators have another spelling,
+    -- each one character that is otherwise an operator of its own.
+    spelledOtherwise k lexeme
+      | k == VarSym, Set.member UnicodeSyntax extensions = Map.findWithDefault k lexeme unicodeOps
+      | otherwise = k
+
+unicodeOps :: Map.Map String SyntaxKind
+unicodeOps =
+  Map.fromList
+    [("\x2192", RightArrow), ("\x2190", LeftArrow), ("\x21D2", DoubleArrow), ("\x2237", DoubleColon)]
 }

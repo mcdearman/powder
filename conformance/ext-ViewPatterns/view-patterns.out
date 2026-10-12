@@ -1,0 +1,12 @@
+["nothing","small","big: 25"]
+["leaving","hello there","b a","number 1234","unknown: what is this"]
+["all three","even","sum 6"]
+["o","none"]
+(True,False)
+("one","missing")
+"3 long"
+-5
+"three"
+[1,3]
+'z'
+Nothing

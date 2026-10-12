@@ -432,9 +432,10 @@ block1 what starts item = do
   when (n == 0) (problem ("expected " ++ what))
 
 patStarts, atomStarts, declStarts :: [SyntaxKind]
-patStarts = [VarId, Underscore, Tilde, ConId, QConId, IntegerLit, FloatLit, CharLit, StringLit, LParen, LBracket]
-atomStarts = [VarId, QVarId, ConId, QConId, IntegerLit, FloatLit, CharLit, StringLit, LParen, LBracket]
-declStarts = [KwInfix, KwInfixl, KwInfixr] ++ patStarts
+patStarts = [VarId, Underscore, Tilde, ConId, QConId, IntegerLit, FloatLit, CharLit, StringLit, LParen, LBracket, PrefixMinus]
+atomStarts = [VarId, QVarId, ConId, QConId, IntegerLit, FloatLit, CharLit, StringLit, LParen, LBracket, PrefixMinus]
+-- A binding may be marked strict, with BangPatterns.
+declStarts = [KwInfix, KwInfixl, KwInfixr, Bang] ++ patStarts
 
 closers :: [SyntaxKind]
 closers = [RBrace, VRBrace]
@@ -521,6 +522,9 @@ topDecl = do
       spelled <- spellings 3
       when (not after && drop 2 spelled == ["qualified"]) (problem "`qualified` goes before the module's name, unless ImportQualifiedPost is on")
       namespaces
+      packages <- on PackageImports
+      kinds <- ahead 0
+      when (not packages && StringLit `elem` take 3 kinds) (problem "an import names the package its module is from only if PackageImports is on")
       wholeDecl ImportDecl
     KwClass -> classDecl ClassDecl
     KwInstance -> classDecl InstanceDecl
@@ -552,6 +556,19 @@ topDecl = do
               expect_ DoubleColon
               type_
               close_ m (if imported then ForeignDecl else ForeignExportDecl)
+      | k == VarId -> do
+          -- The word pattern is a name like any other, but for where it
+          -- starts a declaration and what follows could not be the
+          -- arguments of a function of that name.
+          synonyms <- on PatternSynonyms
+          word <- atText "pattern"
+          kinds <- ahead 1
+          let heads = case kinds of
+                ConId : _ -> True
+                LParen : op : RParen : _ -> op `elem` [ConSym, Colon]
+                VarId : op : _ -> op `elem` [ConSym, Backquote]
+                _ -> False
+          if synonyms && word && heads then patternSynonym else localDecl
       | otherwise -> localDecl
   where
     wholeDecl kind = do
@@ -559,6 +576,37 @@ topDecl = do
       advance
       restOfDecl
       close_ m kind
+
+-- | A pattern synonym, or the type of one: after the word, the synonym
+-- applied to variables, or between two, and the pattern it stands for.
+-- With @=@ the synonym is an expression too, and with @<-@ a pattern only.
+patternSynonym :: P ()
+patternSynonym = do
+  m <- open
+  advance
+  kinds <- ahead 0
+  if stoppedAt (scan [DoubleColon, Equals, LeftArrow] kinds) == DoubleColon
+    then restOfDecl >> close_ m PatSynSig
+    else do
+      case kinds of
+        ConId : _ -> advance >> whileM (at VarId) advance
+        LParen : _ -> replicateM_ 3 advance >> whileM (at VarId) advance
+        _ -> do
+          expect_ VarId
+          quoted <- eat Backquote
+          if quoted then expect_ ConId >> expect_ Backquote else expectAny [ConSym] "a constructor operator"
+          expect_ VarId
+      expectAny [Equals, LeftArrow] "= or <-"
+      pat
+      -- After a where, how the synonym is built, as equations of it,
+      -- where its pattern does not say.
+      explicit <- at KwWhere
+      when explicit $ do
+        w <- open
+        advance
+        _ <- block True declStarts localDecl
+        close_ w WhereClause
+      close_ m PatSynDecl
 
 -- | A class or an instance: a head, which is a type with perhaps a context
 -- before it, and then perhaps a @where@ and declarations.
@@ -1069,6 +1117,15 @@ atom = do
     k : _ | k `elem` [VarId, QVarId] -> advance >> close m VarExpr
     k : _ | k `elem` [ConId, QConId] -> advance >> close m ConExpr
     k : _ | k `elem` [IntegerLit, FloatLit, CharLit, StringLit] -> advance >> close m LitExpr
+    -- With LexicalNegation a minus that touches what follows it and not
+    -- what comes before is that thing's sign, and binds as tightly as
+    -- anything does.
+    PrefixMinus : _ -> do
+      n <- open
+      advance
+      close_ n Negation
+      _ <- recordAtom
+      close m InfixExpr
     LParen : RParen : _ -> advance >> advance >> close m TupleExpr
     LParen : op : RParen : _
       | op `elem` [VarSym, QVarSym] -> advance >> advance >> advance >> close m VarExpr
@@ -1084,8 +1141,9 @@ atom = do
         else whileM (eat Comma) (pure ()) >> expect_ RParen >> close m ConExpr
     LParen : op : _ | op `elem` operatorKinds -> do
       advance
-      minus <- atMinus
       -- A minus is not the start of a section: it negates what follows.
+      -- With LexicalNegation it is one, when it stands apart from that.
+      minus <- (&&) <$> atMinus <*> (not <$> on LexicalNegation)
       if minus then parenthesised m else operator >> expr >> expect_ RParen >> close m SectionR
     LParen : _ -> advance >> parenthesised m
     LBracket : RBracket : _ -> advance >> advance >> close m ListExpr
@@ -1100,7 +1158,22 @@ atom = do
             close m kind
       case k of
         DotDot -> advance >> upTo RangeExpr
-        Bar -> advance >> qualifier >> whileM (eat Comma) qualifier >> expect_ RBracket >> close m ListComp
+        Bar -> do
+          advance
+          qualifier
+          whileM (eat Comma) qualifier
+          -- With ParallelListComp, more qualifiers after another bar are
+          -- gone through beside these.
+          whileM (at Bar) $ do
+            allowed <- on ParallelListComp
+            unless allowed (problem "a list comprehension has one bar, unless ParallelListComp is on")
+            b <- open
+            advance
+            qualifier
+            whileM (eat Comma) qualifier
+            close_ b ListCompBranch
+          expect_ RBracket
+          close m ListComp
         Comma -> do
           advance
           expr
@@ -1249,6 +1322,7 @@ apat' = do
     k : LBrace : _ | k `elem` [ConId, QConId] -> advance >> fieldBinds pat >> close m RecordPat
     k : _ | k `elem` [ConId, QConId] -> advance >> close m ConPat
     k : _ | k `elem` [IntegerLit, FloatLit, CharLit, StringLit] -> advance >> close m LitPat
+    PrefixMinus : number : _ | number `elem` [IntegerLit, FloatLit] -> advance >> advance >> close m NegLitPat
     LParen : RParen : _ -> advance >> advance >> close m TuplePat
     -- An operator in parentheses: a variable, or a constructor.
     LParen : op : RParen : _
@@ -1256,10 +1330,10 @@ apat' = do
       | op `elem` [ConSym, QConSym, Colon] -> replicateM_ 3 advance >> close m ConPat
     LParen : _ -> do
       advance
-      pat
+      component
       tuple <- at Comma
       if tuple
-        then whileM (eat Comma) pat >> expect_ RParen >> close m TuplePat
+        then whileM (eat Comma) component >> expect_ RParen >> close m TuplePat
         else expect_ RParen >> close m ParenPat
     LBracket : _ -> do
       advance
@@ -1268,6 +1342,21 @@ apat' = do
       expect_ RBracket
       close m ListPat
     _ -> problem "expected a pattern" >> close m ErrorNode
+
+-- | A pattern in parentheses or in a tuple, which with ViewPatterns may
+-- be a function, an arrow, and a pattern for what the function gives.
+component :: P ()
+component = do
+  views <- on ViewPatterns
+  kinds <- ahead 0
+  if views && stoppedAt (scan [RightArrow, Comma] kinds) == RightArrow
+    then do
+      v <- open
+      expr
+      expect_ RightArrow
+      pat
+      close_ v ViewPat
+    else pat
 
 -- The prompt ------------------------------------------------------------------
 
