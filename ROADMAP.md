@@ -45,7 +45,7 @@ CUSKs, DeepSubsumption. MonoLocalBinds and PolyKinds change what some Haskell
 | | Milestone | State |
 |---|---|---|
 | M0 | Plumbing: LANGUAGE pragmas, editions, defaults in `Powder.toml` | done |
-| M1 | The library hierarchy | in progress |
+| M1 | The library hierarchy | waiting |
 | M2 | Extensions that are only syntax | in progress |
 | M3 | Deriving | not started |
 | M4 | Explicit quantification at rank 1 | not started |
@@ -59,9 +59,9 @@ extensions, and a package's `Powder.toml` sets both for all its modules. Asking
 by name for an extension that is not implemented is an error.
 
 **M1, the library hierarchy.** Applicative above Monad, MonadFail, Semigroup
-above Monoid, Foldable and Traversable, and a Prelude that exports them. The
-Report's hierarchy has to stay available, because the conformance suite tests
-it.
+above Monoid, Foldable and Traversable, and a Prelude that exports them. To
+be decided first: one library for every edition, as GHC has, or the Report's
+library kept beside it for the Haskell2010 edition.
 
 **M2, extensions that are only syntax.**
 
