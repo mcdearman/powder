@@ -17,6 +17,7 @@ flag made instances of `Eq` and `Ord` for `Maybe` go missing).
 - `05-modules/<test>/`: every module test is a directory; compile `Main.hs` with the directory as the import root.
 - `ext-<Extension>/`: language extensions, one directory per extension. Each program turns its extension on
   with a `LANGUAGE` pragma, and is otherwise run as Haskell 2010. `ext-pragmas/` is about the pragmas themselves.
+  An extension that takes more than one module to test has its directory under `05-modules/`.
 - `reject/<same dirs>/`: programs a conforming compiler must REJECT (compilation fails). No expected output.
   In `reject/05-modules/` each test is again a directory with `Main.hs`.
 
@@ -28,7 +29,8 @@ flag made instances of `Eq` and `Ord` for `Maybe` go missing).
 - `.lhs` files (`10-syntax/10.4-*`) are literate sources (Report 10.4).
 - Tests write temporary files only under `/tmp/powder-conformance-<testname>`.
 - Only stdout is compared. Each result is printed on its own labelled line.
-- `10-syntax/2.2-unicode-in-literals-and-names.hs` is the only source with non-ASCII characters (UTF-8); its output is ASCII.
+- `10-syntax/2.2-unicode-in-literals-and-names.hs` and the two programs for `UnicodeSyntax` are the only sources with
+  non-ASCII characters (UTF-8); their output is ASCII.
 - `10-syntax/2.7-layout-tabs-are-8-columns.hs` and `10-syntax/2.6-string-gaps-ghc-differs.hs` contain TAB characters on purpose.
 
 ## Files where GHC differs from the Report (`-ghc-differs`)

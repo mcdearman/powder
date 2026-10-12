@@ -1,0 +1,5 @@
+lazy-field: 1
+lazy-record-field: 2
+lazy-constructor: made
+partly-applied: a function
+through-a-function: [1,2]

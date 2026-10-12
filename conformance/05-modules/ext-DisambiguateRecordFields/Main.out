@@ -1,0 +1,5 @@
+Tom
+21
+(Cat {name = "Tom", lives = 9},Dog {name = "Rex", age = 3})
+"Rex"
+(9,"Tom","Rex")

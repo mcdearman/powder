@@ -3,12 +3,13 @@
 
 -- | The forms of a declaration. Import qualified.
 module Powder.Syntax.AST.Decl
-  ( Decl (Data, Clause, PatBind, Signature, Fixity, TypeSynonym, Class, Instance, Import, Default, Foreign, ForeignExport),
+  ( Decl (Data, Clause, PatBind, Signature, Fixity, TypeSynonym, Class, Instance, Import, Default, Foreign, ForeignExport, PatternSynonym, PatternSignature),
     Assoc (..),
     Listed (..),
     Subordinates (..),
     derived,
     isNewtype,
+    patternBuilder,
   )
 where
 
@@ -116,7 +117,9 @@ pattern Import name qualified alias items <- (kindIs [K.ImportDecl] -> Just (imp
 importDecl :: Red.Red -> (Name, Bool, Maybe Name, Maybe (Bool, [Listed]))
 importDecl r = (name, qualified || qualifiedAfter, alias, items)
   where
-    afterImport = drop 1 (spelled r)
+    -- The package a module is said to be from is not looked at: a module
+    -- is found by its name.
+    afterImport = drop 1 [t | t@(k, _) <- spelled r, k /= K.StringLit]
     (qualified, afterQualified) = case afterImport of
       (K.VarId, "qualified") : rest -> (True, rest)
       rest -> (False, rest)
@@ -160,4 +163,30 @@ foreignDecl r = (entity, name, child 0 r)
 pattern ForeignExport :: Maybe String -> Name -> Type -> Decl
 pattern ForeignExport entity name ty <- (kindIs [K.ForeignExportDecl] -> Just (foreignDecl -> (entity, name, ty)))
 
-{-# COMPLETE Data, Clause, PatBind, Signature, Fixity, TypeSynonym, Class, Instance, Import, Default, Foreign, ForeignExport #-}
+-- | A pattern synonym: its name, the variables it is applied to, whether
+-- it is an expression as well as a pattern, and the pattern it stands
+-- for.
+pattern PatternSynonym :: Name -> [Name] -> Bool -> Pat -> Decl
+pattern PatternSynonym name parameters both definition <- (kindIs [K.PatSynDecl] -> Just (patternSynonym -> (name, parameters, both, definition)))
+
+patternSynonym :: Red.Red -> (Name, [Name], Bool, Pat)
+patternSynonym r = (name, parameters, K.Equals `elem` map fst direct, child 0 r)
+  where
+    direct = spelled r
+    name = case [t | (k, t) <- direct, k `elem` [K.ConId, K.ConSym, K.Colon]] of
+      t : _ -> t
+      [] -> ""
+    -- The first is the word pattern.
+    parameters = drop 1 [t | (K.VarId, t) <- direct]
+
+-- | The equations after a pattern synonym's where, which say how it is
+-- built: for each, the synonym applied to patterns, and what that is.
+patternBuilder :: Decl -> [(Pat, Rhs)]
+patternBuilder (syntax -> r) = [(child 0 d, child 0 d) | w <- Red.nodes r, Red.kind w == K.WhereClause, d <- Red.nodes w, Red.kind d == K.PatBind]
+
+-- | The type of a pattern synonym, which is not looked at: the synonym's
+-- type is what its pattern has.
+pattern PatternSignature :: Decl
+pattern PatternSignature <- (kindIs [K.PatSynSig] -> Just _)
+
+{-# COMPLETE Data, Clause, PatBind, Signature, Fixity, TypeSynonym, Class, Instance, Import, Default, Foreign, ForeignExport, PatternSynonym, PatternSignature #-}

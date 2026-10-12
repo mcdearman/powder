@@ -46,7 +46,7 @@ CUSKs, DeepSubsumption. MonoLocalBinds and PolyKinds change what some Haskell
 |---|---|---|
 | M0 | Plumbing: LANGUAGE pragmas, editions, defaults in `Powder.toml` | done |
 | M1 | The library hierarchy | done |
-| M2 | Extensions that are only syntax | in progress |
+| M2 | Extensions that are only syntax | done |
 | M3 | Deriving | not started |
 | M4 | Explicit quantification at rank 1 | not started |
 | M5 | The class system | not started |
@@ -95,24 +95,30 @@ Left for the milestones that make them possible: `Control.Exception`, whose
 - [x] PostfixOperators
 - [x] EmptyDataDeriving
 
-Next, in this order:
+- [x] GADTSyntax
+- [x] ExplicitNamespaces
+- [x] DisambiguateRecordFields
+- [x] StrictData
+- [x] RecordWildCards
+- [x] ViewPatterns
+- [x] BangPatterns on `let` and `where` bindings
+- [x] PatternSynonyms
+- [x] LexicalNegation
+- [x] NumDecimals
+- [x] UnicodeSyntax
+- [x] ParallelListComp
+- [x] PackageImports
 
-- [ ] GADTSyntax
-- [ ] ExplicitNamespaces
-- [ ] DisambiguateRecordFields
-- [ ] StrictData
-- [ ] RecordWildCards
-- [ ] ViewPatterns, once a pattern can hold an expression
-- [ ] BangPatterns on `let` and `where` bindings
-- [ ] PatternSynonyms, the simple ones
+What these do not yet do, each of which is refused where it is met:
 
-And after those, in no order yet:
-
-- [ ] LexicalNegation
-- [ ] NumDecimals
-- [ ] UnicodeSyntax
-- [ ] ParallelListComp
-- [ ] PackageImports
+- A view pattern or a pattern synonym in a pattern that is bound, as in
+  `let (f -> x) = e`: only where patterns are matched, in a function's
+  arguments, a lambda's, a case, a `do` or a comprehension.
+- A pattern synonym with fields, one bundled with a type in an export list,
+  and an equation written infix after a synonym's `where`. A synonym's type
+  signature is read and not checked: its type is what its pattern has.
+- `..` in a pattern bound at the top of a module.
+- `forall` and the star written in Unicode, which wait for M4.
 
 **M3, deriving.** StandaloneDeriving, DerivingStrategies, DeriveFunctor,
 DeriveFoldable, DeriveTraversable, GeneralisedNewtypeDeriving; then
@@ -143,8 +149,8 @@ DeriveDataTypeable. This replaces `src/Powder/Kinds.hs`.
 
 ### On the side
 
-- PatternSynonyms beyond the simple ones, after M2. Powder's own source has 53
-  that go one way.
+- The rest of PatternSynonyms: those with fields, and those bundled with a
+  type.
 - CPP, before any package from elsewhere is compiled.
 - Not planned: Template Haskell (and so DeriveLift), LinearTypes, Arrows,
   ImplicitParams (HasCallStack is to be a constraint that is always solved),

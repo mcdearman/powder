@@ -29,7 +29,8 @@ module Powder.Syntax.AST
     Constructor (Constructor),
     constructorFields,
     constructorInfix,
-    constructorStrict,
+    constructorMarks,
+    constructorResult,
     Rhs (Rhs),
     Type,
     Expr,
@@ -88,20 +89,29 @@ fieldDecls r = [f | f <- Red.nodes r, Red.kind f == K.FieldDecl]
 fieldNames :: Red.Red -> [Name]
 fieldNames f = [x | (k, x) <- takeWhile ((/= K.DoubleColon) . fst) (spelled f), k `elem` [K.VarId, K.VarSym]]
 
--- | Which of a constructor's fields are marked strict, in order.
-constructorStrict :: Constructor -> [Bool]
-constructorStrict (syntax -> r) = case fieldDecls r of
+-- | How each of a constructor's fields is marked, in order: strict, lazy,
+-- or not at all.
+constructorMarks :: Constructor -> [Maybe Bool]
+constructorMarks (syntax -> r) = case fieldDecls r of
   [] -> marked (Red.children r)
-  fs -> concat [replicate (length (fieldNames f)) (or (marked (Red.children f))) | f <- fs]
+  fs -> concat [replicate (length (fieldNames f)) (foldr const Nothing (marked (Red.children f))) | f <- fs]
   where
-    -- Each type, with whether a mark came just before it.
-    marked = go False
+    -- Each type, with the mark that came just before it.
+    marked = go Nothing
     go _ [] = []
-    go flag (c : cs)
-      | Red.kind c == K.Bang || (Red.kind c == K.VarSym && Red.text c == Text.pack "!") = go True cs
-      | Red.isToken c = go flag cs
-      | Red.kind c == K.Operator = go False cs
-      | otherwise = flag : go False cs
+    go mark (c : cs)
+      | Red.kind c == K.Bang || (Red.kind c == K.VarSym && Red.text c == Text.pack "!") = go (Just True) cs
+      | Red.kind c == K.Tilde = go (Just False) cs
+      | Red.isToken c = go mark cs
+      | Red.kind c `elem` [K.Operator, K.GadtResult, K.ConContext] = go Nothing cs
+      | otherwise = mark : go Nothing cs
+
+-- | The type a constructor makes, if the constructor was given by its
+-- type.
+constructorResult :: Constructor -> Maybe Type
+constructorResult (syntax -> r) = case [t | g <- Red.nodes r, Red.kind g == K.GadtResult, t <- children g] of
+  t : _ -> Just t
+  [] -> Nothing
 
 -- | Whether a constructor was declared between its two fields.
 constructorInfix :: Constructor -> Bool

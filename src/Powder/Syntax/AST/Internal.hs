@@ -22,6 +22,7 @@ module Powder.Syntax.AST.Internal
     Subordinates (..),
     itemsOf,
     fieldBinds,
+    fieldWild,
     constructorNameOf,
     spelled,
     children,
@@ -79,7 +80,7 @@ instance Ast Module where
   syntax (ModuleNode r) = r
 
 instance Ast Decl where
-  cast = wrap DeclNode [K.DataDecl, K.TypeDecl, K.ClassDecl, K.InstanceDecl, K.DefaultDecl, K.ForeignDecl, K.ForeignExportDecl, K.ImportDecl, K.TypeSig, K.FixityDecl, K.FunClause, K.InfixClause, K.PatBind]
+  cast = wrap DeclNode [K.PatSynDecl, K.PatSynSig, K.DataDecl, K.TypeDecl, K.ClassDecl, K.InstanceDecl, K.DefaultDecl, K.ForeignDecl, K.ForeignExportDecl, K.ImportDecl, K.TypeSig, K.FixityDecl, K.FunClause, K.InfixClause, K.PatBind]
   syntax (DeclNode r) = r
 
 instance Ast Constructor where
@@ -116,7 +117,7 @@ instance Ast Stmt where
   syntax (StmtNode r) = r
 
 instance Ast Pat where
-  cast = wrap PatNode [K.BangPat, K.VarPat, K.WildPat, K.LitPat, K.NegLitPat, K.ConPat, K.InfixPat, K.AsPat, K.ParenPat, K.TuplePat, K.ListPat, K.LazyPat, K.RecordPat]
+  cast = wrap PatNode [K.ViewPat, K.BangPat, K.VarPat, K.WildPat, K.LitPat, K.NegLitPat, K.ConPat, K.InfixPat, K.AsPat, K.ParenPat, K.TuplePat, K.ListPat, K.LazyPat, K.RecordPat]
   syntax (PatNode r) = r
 
 -- | The children of a node that are of some sort.
@@ -146,6 +147,8 @@ data Listed
     Thing Name Subordinates
   | -- | @module M@, in an export list: all that was imported from it.
     Reexport Name
+  | -- | @pattern P@: a pattern synonym.
+    Pattern Name
   deriving (Eq, Show)
 
 data Subordinates = None | All | Some [Name]
@@ -169,6 +172,10 @@ constructorNameOf r = case nameOf r of
 fieldBinds :: (Ast a) => Red -> [(Name, Maybe a)]
 fieldBinds r = [(nameOf f, listToMaybe (children f)) | f <- Red.nodes r, Red.kind f == K.FieldBind]
 
+-- | Whether a node's field bindings end in @..@, for the fields not named.
+fieldWild :: Red -> Bool
+fieldWild r = any ((== K.FieldWild) . Red.kind) (Red.nodes r)
+
 -- | The tokens of a node that mean something, each with its text.
 spelled :: Red -> [(SyntaxKind, Name)]
 spelled r = [(Red.kind t, Text.unpack (Red.text t)) | t <- Red.tokens r, not (K.isTrivia (Red.kind t))]
@@ -177,6 +184,10 @@ spelled r = [(Red.kind t, Text.unpack (Red.text t)) | t <- Red.tokens r, not (K.
 -- parenthesis.
 itemsOf :: [(SyntaxKind, Name)] -> [Listed]
 itemsOf = \case
+  -- The word pattern with a constructor's name right after it. Before
+  -- anything else it is a variable of that name.
+  (K.VarId, "pattern") : (k, c) : rest | k `elem` constructors -> Pattern c : itemsOf rest
+  (K.VarId, "pattern") : (K.LParen, _) : (k, c) : (K.RParen, _) : rest | k `elem` [K.ConSym, K.Colon] -> Pattern c : itemsOf rest
   (k, x) : rest | k `elem` [K.VarId, K.QVarId] -> Value x : itemsOf rest
   (K.LParen, _) : (k, x) : (K.RParen, _) : rest | k `elem` [K.VarSym, K.QVarSym] -> Value x : itemsOf rest
   (k, c) : (K.LParen, _) : (K.DotDot, _) : (K.RParen, _) : rest | k `elem` constructors -> Thing c All : itemsOf rest
@@ -185,6 +196,8 @@ itemsOf = \case
      in Thing c (Some ([x | (k', x) <- inside, k' `elem` [K.VarId, K.ConId, K.VarSym, K.ConSym]] ++ [plain x | (k', x) <- inside, k' `elem` [K.QVarId, K.QConId]])) : itemsOf (drop 1 after)
   (k, c) : rest | k `elem` constructors -> Thing c None : itemsOf rest
   (K.KwModule, _) : (_, m) : rest -> Reexport m : itemsOf rest
+  -- The word says what the name after it is, which its spelling says too.
+  (K.KwType, _) : rest -> itemsOf rest
   (K.RParen, _) : _ -> []
   _ : rest -> itemsOf rest
   [] -> []

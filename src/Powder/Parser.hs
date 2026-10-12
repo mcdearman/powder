@@ -432,9 +432,10 @@ block1 what starts item = do
   when (n == 0) (problem ("expected " ++ what))
 
 patStarts, atomStarts, declStarts :: [SyntaxKind]
-patStarts = [VarId, Underscore, Tilde, ConId, QConId, IntegerLit, FloatLit, CharLit, StringLit, LParen, LBracket]
-atomStarts = [VarId, QVarId, ConId, QConId, IntegerLit, FloatLit, CharLit, StringLit, LParen, LBracket]
-declStarts = [KwInfix, KwInfixl, KwInfixr] ++ patStarts
+patStarts = [VarId, Underscore, Tilde, ConId, QConId, IntegerLit, FloatLit, CharLit, StringLit, LParen, LBracket, PrefixMinus]
+atomStarts = [VarId, QVarId, ConId, QConId, IntegerLit, FloatLit, CharLit, StringLit, LParen, LBracket, PrefixMinus]
+-- A binding may be marked strict, with BangPatterns.
+declStarts = [KwInfix, KwInfixl, KwInfixr, Bang] ++ patStarts
 
 closers :: [SyntaxKind]
 closers = [RBrace, VRBrace]
@@ -474,12 +475,21 @@ sourceFile = do
     advance
     expectAny [ConId, QConId] "a module name"
     exports <- at LParen
-    when exports balanced
+    when exports (namespaces >> balanced)
     expect_ KwWhere
     close_ h ModuleHeader
   _ <- block False ([KwData, KwNewtype, KwType, KwImport, KwClass, KwInstance, KwForeign, KwDefault] ++ declStarts) topDecl
   leftovers "expected a declaration"
   close_ m Module
+
+-- | In a list of what is imported or exported, the word @type@ before a
+-- name says the name is a type's: allowed if ExplicitNamespaces is on.
+namespaces :: P ()
+namespaces = do
+  allowed <- on ExplicitNamespaces
+  kinds <- ahead 0
+  when (not allowed && KwType `elem` takeWhile (`notElem` Eof : KwWhere : semis) kinds) $
+    problem "`type` before a name in a list of names is allowed only if ExplicitNamespaces is on"
 
 -- | Whatever is left is an error, all of it one.
 leftovers :: String -> P ()
@@ -511,6 +521,10 @@ topDecl = do
       after <- on ImportQualifiedPost
       spelled <- spellings 3
       when (not after && drop 2 spelled == ["qualified"]) (problem "`qualified` goes before the module's name, unless ImportQualifiedPost is on")
+      namespaces
+      packages <- on PackageImports
+      kinds <- ahead 0
+      when (not packages && StringLit `elem` take 3 kinds) (problem "an import names the package its module is from only if PackageImports is on")
       wholeDecl ImportDecl
     KwClass -> classDecl ClassDecl
     KwInstance -> classDecl InstanceDecl
@@ -542,6 +556,19 @@ topDecl = do
               expect_ DoubleColon
               type_
               close_ m (if imported then ForeignDecl else ForeignExportDecl)
+      | k == VarId -> do
+          -- The word pattern is a name like any other, but for where it
+          -- starts a declaration and what follows could not be the
+          -- arguments of a function of that name.
+          synonyms <- on PatternSynonyms
+          word <- atText "pattern"
+          kinds <- ahead 1
+          let heads = case kinds of
+                ConId : _ -> True
+                LParen : op : RParen : _ -> op `elem` [ConSym, Colon]
+                VarId : op : _ -> op `elem` [ConSym, Backquote]
+                _ -> False
+          if synonyms && word && heads then patternSynonym else localDecl
       | otherwise -> localDecl
   where
     wholeDecl kind = do
@@ -549,6 +576,37 @@ topDecl = do
       advance
       restOfDecl
       close_ m kind
+
+-- | A pattern synonym, or the type of one: after the word, the synonym
+-- applied to variables, or between two, and the pattern it stands for.
+-- With @=@ the synonym is an expression too, and with @<-@ a pattern only.
+patternSynonym :: P ()
+patternSynonym = do
+  m <- open
+  advance
+  kinds <- ahead 0
+  if stoppedAt (scan [DoubleColon, Equals, LeftArrow] kinds) == DoubleColon
+    then restOfDecl >> close_ m PatSynSig
+    else do
+      case kinds of
+        ConId : _ -> advance >> whileM (at VarId) advance
+        LParen : _ -> replicateM_ 3 advance >> whileM (at VarId) advance
+        _ -> do
+          expect_ VarId
+          quoted <- eat Backquote
+          if quoted then expect_ ConId >> expect_ Backquote else expectAny [ConSym] "a constructor operator"
+          expect_ VarId
+      expectAny [Equals, LeftArrow] "= or <-"
+      pat
+      -- After a where, how the synonym is built, as equations of it,
+      -- where its pattern does not say.
+      explicit <- at KwWhere
+      when explicit $ do
+        w <- open
+        advance
+        _ <- block True declStarts localDecl
+        close_ w WhereClause
+      close_ m PatSynDecl
 
 -- | A class or an instance: a head, which is a type with perhaps a context
 -- before it, and then perhaps a @where@ and declarations.
@@ -574,10 +632,20 @@ dataDecl = do
   when (stoppedAt (scan [DoubleArrow, Equals] kinds) == DoubleArrow) (btype >> expect_ DoubleArrow)
   expect_ ConId
   whileM (at VarId) advance
-  defined <- eat Equals
-  when defined $ do
-    conDecl
-    whileM (eat Bar) conDecl
+  -- The constructors, each written as one, or after a where each given by
+  -- its type.
+  typed <- at KwWhere
+  if typed
+    then do
+      allowed <- on GADTSyntax
+      unless allowed (problem "constructors are given by their types, after `where`, only if GADTSyntax is on")
+      advance
+      void (block True [ConId, LParen] typedCon)
+    else do
+      defined <- eat Equals
+      when defined $ do
+        conDecl
+        whileM (eat Bar) conDecl
   deriving' <- at KwDeriving
   when deriving' $ do
     d <- open
@@ -605,6 +673,38 @@ dataDecl = do
               expect_ RBrace
             else whileM atField (strictly atype)
       close_ c ConDecl
+    -- @C :: a -> T a@, or with fields named @C :: { f :: a } -> T a@.
+    typedCon = do
+      c <- open
+      kinds <- ahead 0
+      case kinds of
+        LParen : op : RParen : _ | op `elem` [ConSym, Colon] -> replicateM_ 3 advance
+        _ -> expect_ ConId
+      expect_ DoubleColon
+      rest <- ahead 0
+      when (stoppedAt (scan [DoubleArrow] rest) == DoubleArrow) $ do
+        x <- open
+        btype
+        expect_ DoubleArrow
+        close_ x ConContext
+      record <- eat LBrace
+      if record
+        then do
+          empty <- at RBrace
+          unless empty (fieldDecl >> whileM (eat Comma) fieldDecl)
+          expect_ RBrace
+          expect_ RightArrow
+          btype' >>= made
+        else arguments
+      close_ c ConDecl
+    -- The types of the fields, each before an arrow, and then the type
+    -- that is made.
+    arguments = do
+      atStrict >>= (`when` advance)
+      t <- btype'
+      more <- eat RightArrow
+      if more then arguments else made t
+    made t = openBefore t >>= (`close_` GadtResult)
     fieldDecl = do
       f <- open
       fieldName
@@ -614,7 +714,11 @@ dataDecl = do
       type_
       close_ f FieldDecl
     -- The Report lets the mark stand apart from its type.
-    atStrict = (||) <$> at Bang <*> ((&&) <$> at VarSym <*> atText "!")
+    -- With StrictData a field may be marked the other way, as lazy.
+    atStrict = do
+      lazy <- (&&) <$> on StrictData <*> at Tilde
+      strict <- (||) <$> at Bang <*> ((&&) <$> at VarSym <*> atText "!")
+      pure (lazy || strict)
     atField = do
       strict <- atStrict
       (strict ||) <$> atAny [ConId, QConId, VarId, LParen, LBracket]
@@ -984,14 +1088,23 @@ fieldBinds value = do
   unless empty (bind >> whileM (eat Comma) bind)
   expect_ RBrace
   where
-    -- With NamedFieldPuns a field by itself is the variable of its name.
+    -- With NamedFieldPuns a field by itself is the variable of its name,
+    -- and with RecordWildCards two dots are all the fields not named.
     bind = do
       f <- open
-      fieldName
-      puns <- on NamedFieldPuns
-      given <- at Equals
-      when (given || not puns) (expect_ Equals >> value)
-      close_ f FieldBind
+      wild <- at DotDot
+      if wild
+        then do
+          allowed <- on RecordWildCards
+          unless allowed (problem "`..` stands for the fields not named only if RecordWildCards is on")
+          advance
+          close_ f FieldWild
+        else do
+          fieldName
+          puns <- on NamedFieldPuns
+          given <- at Equals
+          when (given || not puns) (expect_ Equals >> value)
+          close_ f FieldBind
 
 atAtomStart :: P Bool
 atAtomStart = atAny atomStarts
@@ -1004,6 +1117,15 @@ atom = do
     k : _ | k `elem` [VarId, QVarId] -> advance >> close m VarExpr
     k : _ | k `elem` [ConId, QConId] -> advance >> close m ConExpr
     k : _ | k `elem` [IntegerLit, FloatLit, CharLit, StringLit] -> advance >> close m LitExpr
+    -- With LexicalNegation a minus that touches what follows it and not
+    -- what comes before is that thing's sign, and binds as tightly as
+    -- anything does.
+    PrefixMinus : _ -> do
+      n <- open
+      advance
+      close_ n Negation
+      _ <- recordAtom
+      close m InfixExpr
     LParen : RParen : _ -> advance >> advance >> close m TupleExpr
     LParen : op : RParen : _
       | op `elem` [VarSym, QVarSym] -> advance >> advance >> advance >> close m VarExpr
@@ -1019,8 +1141,9 @@ atom = do
         else whileM (eat Comma) (pure ()) >> expect_ RParen >> close m ConExpr
     LParen : op : _ | op `elem` operatorKinds -> do
       advance
-      minus <- atMinus
       -- A minus is not the start of a section: it negates what follows.
+      -- With LexicalNegation it is one, when it stands apart from that.
+      minus <- (&&) <$> atMinus <*> (not <$> on LexicalNegation)
       if minus then parenthesised m else operator >> expr >> expect_ RParen >> close m SectionR
     LParen : _ -> advance >> parenthesised m
     LBracket : RBracket : _ -> advance >> advance >> close m ListExpr
@@ -1035,7 +1158,22 @@ atom = do
             close m kind
       case k of
         DotDot -> advance >> upTo RangeExpr
-        Bar -> advance >> qualifier >> whileM (eat Comma) qualifier >> expect_ RBracket >> close m ListComp
+        Bar -> do
+          advance
+          qualifier
+          whileM (eat Comma) qualifier
+          -- With ParallelListComp, more qualifiers after another bar are
+          -- gone through beside these.
+          whileM (at Bar) $ do
+            allowed <- on ParallelListComp
+            unless allowed (problem "a list comprehension has one bar, unless ParallelListComp is on")
+            b <- open
+            advance
+            qualifier
+            whileM (eat Comma) qualifier
+            close_ b ListCompBranch
+          expect_ RBracket
+          close m ListComp
         Comma -> do
           advance
           expr
@@ -1184,6 +1322,7 @@ apat' = do
     k : LBrace : _ | k `elem` [ConId, QConId] -> advance >> fieldBinds pat >> close m RecordPat
     k : _ | k `elem` [ConId, QConId] -> advance >> close m ConPat
     k : _ | k `elem` [IntegerLit, FloatLit, CharLit, StringLit] -> advance >> close m LitPat
+    PrefixMinus : number : _ | number `elem` [IntegerLit, FloatLit] -> advance >> advance >> close m NegLitPat
     LParen : RParen : _ -> advance >> advance >> close m TuplePat
     -- An operator in parentheses: a variable, or a constructor.
     LParen : op : RParen : _
@@ -1191,10 +1330,10 @@ apat' = do
       | op `elem` [ConSym, QConSym, Colon] -> replicateM_ 3 advance >> close m ConPat
     LParen : _ -> do
       advance
-      pat
+      component
       tuple <- at Comma
       if tuple
-        then whileM (eat Comma) pat >> expect_ RParen >> close m TuplePat
+        then whileM (eat Comma) component >> expect_ RParen >> close m TuplePat
         else expect_ RParen >> close m ParenPat
     LBracket : _ -> do
       advance
@@ -1203,6 +1342,21 @@ apat' = do
       expect_ RBracket
       close m ListPat
     _ -> problem "expected a pattern" >> close m ErrorNode
+
+-- | A pattern in parentheses or in a tuple, which with ViewPatterns may
+-- be a function, an arrow, and a pattern for what the function gives.
+component :: P ()
+component = do
+  views <- on ViewPatterns
+  kinds <- ahead 0
+  if views && stoppedAt (scan [RightArrow, Comma] kinds) == RightArrow
+    then do
+      v <- open
+      expr
+      expect_ RightArrow
+      pat
+      close_ v ViewPat
+    else pat
 
 -- The prompt ------------------------------------------------------------------
 

@@ -24,6 +24,9 @@ data SyntaxKind
   | ConSym
   | QVarSym
   | QConSym
+  | -- | A minus with something right after it and nothing right before:
+    -- with LexicalNegation, the sign of what follows.
+    PrefixMinus
   | -- Literals.
     IntegerLit
   | FloatLit
@@ -101,6 +104,13 @@ data SyntaxKind
   | -- Declarations.
     DataDecl
   | ConDecl
+  | -- | The type a constructor makes, where the constructor is given by
+    -- its type: what comes last in @C :: a -> T a@.
+    GadtResult
+  | -- | A context before a constructor's type, which says nothing.
+    ConContext
+  | -- | @..@ among the fields of a record: all the fields not named.
+    FieldWild
   | -- | Fields of a record constructor that share a type: @a, b :: T@.
     FieldDecl
   | -- | @field = value@, in a record expression or pattern.
@@ -119,6 +129,10 @@ data SyntaxKind
     ForeignExportDecl
   | TypeSig
   | FixityDecl
+  | -- | @pattern P x = ...@ or @pattern P x <- ...@: a name for a pattern.
+    PatSynDecl
+  | -- | @pattern P :: type@
+    PatSynSig
   | FunClause
   | InfixClause
   | PatBind
@@ -170,6 +184,9 @@ data SyntaxKind
     RangeStepExpr
   | -- | @[e | qualifiers]@
     ListComp
+  | -- | The qualifiers after a second bar or a later one, in a list
+    -- comprehension whose qualifiers are gone through side by side.
+    ListCompBranch
   | SectionL
   | SectionR
   | -- | @expression :: type@
@@ -198,6 +215,9 @@ data SyntaxKind
     BangPat
   | -- | A constructor and patterns for some of its fields, in braces.
     RecordPat
+  | -- | @function -> pattern@: matches what the pattern does, of the
+    -- function applied to what is matched.
+    ViewPat
   deriving (Eq, Ord, Show, Enum, Bounded)
 
 -- | Whether a kind is a token's rather than a node's.
