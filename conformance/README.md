@@ -9,7 +9,10 @@ flag made instances of `Eq` and `Ord` for `Maybe` go missing).
 
 - `03-expressions/` ... `11-deriving/`: Report Part I, one directory per chapter. `10-syntax/` covers chapters 2 and 10
   (and chapter 12, pragmas). File names start with the Report section number.
-- `lib-<Module>/`: Report Part II libraries, one directory per module.
+- `lib-<Module>/`: Report Part II libraries, one directory per module. The modules that are not the Report's
+  (`Control.Applicative`, `Data.Functor`, `Data.Function`, `Data.Foldable`, `Data.Traversable`, `Data.Monoid`) have
+  directories of the same kind; a program there that needs the Prelude of a later edition says `GHC2021` in a
+  `LANGUAGE` pragma. `lib-Prelude/` is about which names the Prelude has in which edition.
 - `05-modules/<test>/`: every module test is a directory; compile `Main.hs` with the directory as the import root.
 - `ext-<Extension>/`: language extensions, one directory per extension. Each program turns its extension on
   with a `LANGUAGE` pragma, and is otherwise run as Haskell 2010. `ext-pragmas/` is about the pragmas themselves.
@@ -49,13 +52,17 @@ that is what the Report says it prints, and `run.sh` leaves it alone.
   refuse it.
 - `10-syntax/2.6-string-gaps-ghc-differs.hs`: a tab is white space in a string gap; GHC 9.12 refuses it. Its
   `.out` is GHC 9.10's.
+- `lib-Prelude/haskell2010-names-are-free-ghc-differs.hs`: a Haskell 2010 program that calls things of its own
+  `pure`, `<>`, `traverse` and so on. GHC has one Prelude under every language, and calls the names ambiguous.
 
 The three `05-modules/5.7-mutually-recursive-modules-*-ghc-differs/` tests are import cycles, which the Report allows
 but GHC only compiles with `.hs-boot` files; each has a hand-derived `expected-output.txt`.
 
 ## Deliberately not tested
 
-- User-defined `Monad` instances: modern GHC requires `Functor`/`Applicative` superclass instances, which is not Haskell 2010.
+- User-defined `Monad` instances as the Report has them, with no `Applicative` instance and with `fail` among the
+  methods: neither GHC nor Powder takes them. `lib-Control.Applicative/user-monad-instance.hs` has them as they are
+  written now.
 - `Prelude.catch` and `System.IO.Error.catch`/`try`: absent from GHC; `catchIOError`/`tryIOError` are used instead.
 - FFI beyond `foreign import ccall` of numeric C functions (no pointers, `foreign export`, `&`, `dynamic`, `wrapper`),
   and the `Foreign.*` libraries of Part II.

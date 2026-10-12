@@ -7,6 +7,7 @@ module Data.Array
 where
 
 import Data.Ix
+import Powder.Base (Foldable (..), Traversable (..))
 
 infixl 9 !, //
 
@@ -77,6 +78,14 @@ ixmap b f a = array b [(i, a ! f i) | i <- range b]
 
 instance Functor (Array i) where
   fmap f (MkArray b n t) = MkArray b n (mapTree f t)
+
+instance Foldable (Array i) where
+  foldr f z a = foldr f z (elems a)
+  toList = elems
+  length (MkArray _ n _) = n
+
+instance Ix i => Traversable (Array i) where
+  traverse f a = fmap (listArray (bounds a)) (traverse f (elems a))
 
 instance (Ix i, Eq e) => Eq (Array i e) where
   a == b = assocs a == assocs b

@@ -1,0 +1,29 @@
+list: (3,6,True,'o',[1,2])
+list-long: (5000050000,100000)
+maybe: (1,0,3,"x",False)
+maybe-search: (True,[1,2],'m')
+either: (0,3,[])
+pair: (1,"b",5)
+array: (150,5,50,10,True,[10,20,30,40,50])
+array-folds: ([10,20,30,40,50],-150,"1020304050")
+list-functions: (Just 4,(2,'c'))
+mapM_-maybe: once
+forM_-array: 10
+forM_-array: 20
+forM_-array: 30
+forM_-array: 40
+forM_-array: 50
+for_: 1
+for_: 2
+traverse_-either: 3
+sequence_: abc
+sequenceA_: ran
+traverse_-maybe: (Just (),Nothing)
+foldrM: Just 6
+foldlM: (Just (-6),Nothing)
+foldlM-io: 1
+foldlM-io: 2
+foldlM-io: 3
+foldlM-io-result: 6
+asum: (Just 1,[1,2,3])
+msum: [1,2]

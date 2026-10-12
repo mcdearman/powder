@@ -1,0 +1,15 @@
+functor: (Just 2,"xx")
+applicative: (Just 1,Just 3,Just 'b',Just 'a')
+liftA2: Pair 11 22
+semigroup: ("abcd",Just [1],Longest "abc")
+monoid: ("","ab",Longest "abc")
+foldable: (2,3,True,'z',False)
+foldable-folds: ([1,2],7,"12",2)
+foldable-functions: (True,False,"12",False,True)
+traversable: (Just (Pair 1 2),Nothing)
+traversable-monadic: ([Pair 1 2,Pair 1 4,Pair 2 2,Pair 2 4],[Just 'a',Just 'b'])
+mapM_: first
+mapM_: second
+sequence_: ran
+monadfail: Checked (Left "no match")
+monadfail-direct: Nothing

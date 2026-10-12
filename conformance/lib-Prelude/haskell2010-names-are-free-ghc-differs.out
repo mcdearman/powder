@@ -1,0 +1,9 @@
+operators: (33,2,3)
+pure: "xx"
+monoid: ("nothing","a+b","a+b+nothing")
+folds: ("123",[2,3],"cba",3)
+types: (Semigroup,Monoid,Applicative)
+classes: ("True","cc")
+report: (3,6,True,Just 2)
+"ab"
+fail: ('j',Nothing)

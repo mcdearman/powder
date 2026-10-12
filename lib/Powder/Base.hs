@@ -12,9 +12,12 @@ infixl 9 !!
 infixr 8 ^, ^^, **
 infixl 7 *, /, %, `quot`, `rem`, `div`, `mod`
 infixl 6 +, -
+infixr 6 <>
 infixr 5 :, ++
 infix 4 ==, /=, <, <=, >, >=, `elem`, `notElem`
+infixl 4 <$>, <$, <*>, *>, <*
 infixr 3 &&
+infixl 3 <|>
 infixr 2 ||
 infixl 1 >>, >>=
 infixr 1 =<<
@@ -152,14 +155,166 @@ class Bounded a where
 
 class Functor f where
   fmap :: (a -> b) -> f a -> f b
+  (<$) :: a -> f b -> f a
+  x <$ m = fmap (\_ -> x) m
 
-class Monad m where
+-- The classes of actions are the ones programs are written against today,
+-- not the Report's: a monad is an applicative functor, and what a monad
+-- does when a pattern fails to match is a class of its own.
+class Functor f => Applicative f where
+  pure :: a -> f a
+  (<*>) :: f (a -> b) -> f a -> f b
+  liftA2 :: (a -> b -> c) -> f a -> f b -> f c
+  (*>) :: f a -> f b -> f b
+  (<*) :: f a -> f b -> f a
+  fs <*> xs = liftA2 id fs xs
+  liftA2 f x y = fmap f x <*> y
+  a *> b = liftA2 (\_ y -> y) a b
+  a <* b = liftA2 const a b
+
+class Applicative m => Monad m where
   (>>=) :: m a -> (a -> m b) -> m b
   (>>) :: m a -> m b -> m b
   return :: a -> m a
-  fail :: String -> m a
   m >> k = m >>= \_ -> k
-  fail s = error s
+  return = pure
+
+class Monad m => MonadFail m where
+  fail :: String -> m a
+
+class Applicative f => Alternative f where
+  empty :: f a
+  (<|>) :: f a -> f a -> f a
+  some :: f a -> f [a]
+  many :: f a -> f [a]
+  some v = liftA2 (:) v (many v)
+  many v = some v <|> pure []
+
+(<$>) :: Functor f => (a -> b) -> f a -> f b
+(<$>) = fmap
+
+-- What can be folded: gone through an element at a time, in order. An
+-- instance gives foldMap or foldr, and the rest come from that one.
+class Foldable t where
+  fold :: Monoid m => t m -> m
+  foldMap :: Monoid m => (a -> m) -> t a -> m
+  foldr :: (a -> b -> b) -> b -> t a -> b
+  foldr' :: (a -> b -> b) -> b -> t a -> b
+  foldl :: (b -> a -> b) -> b -> t a -> b
+  foldl' :: (b -> a -> b) -> b -> t a -> b
+  foldr1 :: (a -> a -> a) -> t a -> a
+  foldl1 :: (a -> a -> a) -> t a -> a
+  toList :: t a -> [a]
+  null :: t a -> Bool
+  length :: t a -> Int
+  elem :: Eq a => a -> t a -> Bool
+  maximum :: Ord a => t a -> a
+  minimum :: Ord a => t a -> a
+  sum :: Num a => t a -> a
+  product :: Num a => t a -> a
+  fold = foldMap id
+  foldMap f = foldr (\x acc -> f x <> acc) mempty
+  foldr f z t = appEndo (foldMap (\x -> Endo (f x)) t) z
+  foldr' f z t = listFoldl' (\acc x -> f x acc) z (reverse (toList t))
+  foldl f z t = listFoldl f z (toList t)
+  foldl' f z t = listFoldl' f z (toList t)
+  foldr1 f t = listFoldr1 f (toList t)
+  foldl1 f t = listFoldl1 f (toList t)
+  toList = foldr (:) []
+  null = foldr (\_ _ -> False) True
+  length = foldl' (\n _ -> n + 1) 0
+  elem x = foldr (\y acc -> x == y || acc) False
+  maximum t = case toList t of
+    [] -> error "maximum: empty structure"
+    x : xs -> listFoldl' max x xs
+  minimum t = case toList t of
+    [] -> error "minimum: empty structure"
+    x : xs -> listFoldl' min x xs
+  sum = foldl' (+) 0
+  product = foldl' (*) 1
+
+-- The functions from a type to itself, under composition: what a fold
+-- from the right is, when all there is to fold with is a monoid.
+newtype Endo a = Endo {appEndo :: a -> a}
+
+instance Semigroup (Endo a) where
+  Endo f <> Endo g = Endo (\x -> f (g x))
+
+instance Monoid (Endo a) where
+  mempty = Endo (\x -> x)
+
+-- What can be gone through with an action for each element, keeping its
+-- shape.
+class (Functor t, Foldable t) => Traversable t where
+  traverse :: Applicative f => (a -> f b) -> t a -> f (t b)
+  sequenceA :: Applicative f => t (f a) -> f (t a)
+  mapM :: Monad m => (a -> m b) -> t a -> m (t b)
+  sequence :: Monad m => t (m a) -> m (t a)
+  traverse f t = sequenceA (fmap f t)
+  sequenceA = traverse id
+  mapM = traverse
+  sequence = mapM id
+
+class Semigroup a where
+  (<>) :: a -> a -> a
+
+class Semigroup a => Monoid a where
+  mempty :: a
+  mappend :: a -> a -> a
+  mconcat :: [a] -> a
+  mappend = (<>)
+  mconcat = foldr mappend mempty
+
+instance Semigroup Ordering where
+  LT <> _ = LT
+  EQ <> o = o
+  GT <> _ = GT
+
+instance Monoid Ordering where
+  mempty = EQ
+
+instance Semigroup () where
+  _ <> _ = ()
+
+instance Monoid () where
+  mempty = ()
+
+instance Semigroup [a] where
+  (<>) = (++)
+
+instance Monoid [a] where
+  mempty = []
+  mconcat = concat
+
+instance Semigroup a => Semigroup (Maybe a) where
+  Nothing <> m = m
+  m <> Nothing = m
+  Just x <> Just y = Just (x <> y)
+
+instance Semigroup a => Monoid (Maybe a) where
+  mempty = Nothing
+
+instance Semigroup b => Semigroup (a -> b) where
+  f <> g = \x -> f x <> g x
+
+instance Monoid b => Monoid (a -> b) where
+  mempty = \_ -> mempty
+
+instance (Semigroup a, Semigroup b) => Semigroup (a, b) where
+  (a, b) <> (c, d) = (a <> c, b <> d)
+
+instance (Monoid a, Monoid b) => Monoid (a, b) where
+  mempty = (mempty, mempty)
+
+instance (Semigroup a, Semigroup b, Semigroup c) => Semigroup (a, b, c) where
+  (a, b, c) <> (d, e, f) = (a <> d, b <> e, c <> f)
+
+instance (Monoid a, Monoid b, Monoid c) => Monoid (a, b, c) where
+  mempty = (mempty, mempty, mempty)
+
+instance Semigroup (Either a b) where
+  Left _ <> b = b
+  a <> _ = a
 
 -- Integers ----------------------------------------------------------------
 
@@ -882,11 +1037,61 @@ instance Functor Maybe where
   fmap _ Nothing = Nothing
   fmap f (Just x) = Just (f x)
 
+instance Applicative Maybe where
+  pure = Just
+  Just f <*> m = fmap f m
+  Nothing <*> _ = Nothing
+  liftA2 f (Just x) (Just y) = Just (f x y)
+  liftA2 _ _ _ = Nothing
+  Just _ *> m = m
+  Nothing *> _ = Nothing
+
 instance Monad Maybe where
   Nothing >>= _ = Nothing
   Just x >>= k = k x
-  return = Just
+
+instance MonadFail Maybe where
   fail _ = Nothing
+
+instance Alternative Maybe where
+  empty = Nothing
+  Nothing <|> m = m
+  m <|> _ = m
+
+instance Functor (Either e) where
+  fmap _ (Left e) = Left e
+  fmap f (Right x) = Right (f x)
+
+instance Applicative (Either e) where
+  pure = Right
+  Left e <*> _ = Left e
+  Right f <*> m = fmap f m
+
+instance Monad (Either e) where
+  Left e >>= _ = Left e
+  Right x >>= k = k x
+
+instance Functor ((->) r) where
+  fmap f g = \x -> f (g x)
+
+instance Applicative ((->) r) where
+  pure x = \_ -> x
+  f <*> g = \x -> f x (g x)
+  liftA2 h f g = \x -> h (f x) (g x)
+
+instance Monad ((->) r) where
+  f >>= k = \x -> k (f x) x
+
+instance Functor ((,) a) where
+  fmap f (a, b) = (a, f b)
+
+instance Monoid a => Applicative ((,) a) where
+  pure x = (mempty, x)
+  (u, f) <*> (v, x) = (u <> v, f x)
+
+instance Monoid a => Monad ((,) a) where
+  (u, a) >>= k = case k a of
+    (v, b) -> (u <> v, b)
 
 maybe :: b -> (a -> b) -> Maybe a -> b
 maybe d _ Nothing = d
@@ -917,10 +1122,21 @@ instance Show a => Show [a] where
 instance Functor [] where
   fmap = map
 
+instance Applicative [] where
+  pure x = [x]
+  fs <*> xs = concatMap (\f -> map f xs) fs
+  liftA2 f xs ys = concatMap (\x -> map (f x) ys) xs
+  xs *> ys = concatMap (\_ -> ys) xs
+
 instance Monad [] where
   xs >>= f = concatMap f xs
-  return x = [x]
+
+instance MonadFail [] where
   fail _ = []
+
+instance Alternative [] where
+  empty = []
+  (<|>) = (++)
 
 map :: (a -> b) -> [a] -> [b]
 map _ [] = []
@@ -930,26 +1146,29 @@ filter :: (a -> Bool) -> [a] -> [a]
 filter _ [] = []
 filter p (x : xs) = if p x then x : filter p xs else filter p xs
 
-foldr :: (a -> b -> b) -> b -> [a] -> b
-foldr _ z [] = z
-foldr f z (x : xs) = f x (foldr f z xs)
+-- The folds of a list, which are what Foldable's are for a list. They are
+-- apart from the class so that each goes round without asking the class
+-- again what a fold of a list is.
+listFoldr :: (a -> b -> b) -> b -> [a] -> b
+listFoldr _ z [] = z
+listFoldr f z (x : xs) = f x (listFoldr f z xs)
 
-foldr1 :: (a -> a -> a) -> [a] -> a
-foldr1 _ [x] = x
-foldr1 f (x : xs) = f x (foldr1 f xs)
-foldr1 _ [] = error "foldr1: empty list"
+listFoldr1 :: (a -> a -> a) -> [a] -> a
+listFoldr1 _ [x] = x
+listFoldr1 f (x : xs) = f x (listFoldr1 f xs)
+listFoldr1 _ [] = error "foldr1: empty list"
 
-foldl :: (b -> a -> b) -> b -> [a] -> b
-foldl _ z [] = z
-foldl f z (x : xs) = foldl f (f z x) xs
+listFoldl :: (b -> a -> b) -> b -> [a] -> b
+listFoldl _ z [] = z
+listFoldl f z (x : xs) = listFoldl f (f z x) xs
 
-foldl1 :: (a -> a -> a) -> [a] -> a
-foldl1 f (x : xs) = foldl f x xs
-foldl1 _ [] = error "foldl1: empty list"
+listFoldl1 :: (a -> a -> a) -> [a] -> a
+listFoldl1 f (x : xs) = listFoldl f x xs
+listFoldl1 _ [] = error "foldl1: empty list"
 
-foldl' :: (b -> a -> b) -> b -> [a] -> b
-foldl' _ z [] = z
-foldl' f z (x : xs) = let z' = f z x in z' `seq` foldl' f z' xs
+listFoldl' :: (b -> a -> b) -> b -> [a] -> b
+listFoldl' _ z [] = z
+listFoldl' f z (x : xs) = let z' = f z x in z' `seq` listFoldl' f z' xs
 
 scanl :: (b -> a -> b) -> b -> [a] -> [b]
 scanl f z xs = z : case xs of
@@ -986,53 +1205,93 @@ unzip3 = foldr (\(a, b, c) ~(as, bs, cs) -> (a : as, b : bs, c : cs)) ([], [], [
 (++) :: [a] -> [a] -> [a]
 xs ++ ys = foldr (:) ys xs
 
-concat :: [[a]] -> [a]
+concat :: Foldable t => t [a] -> [a]
 concat = foldr (++) []
 
-concatMap :: (a -> [b]) -> [a] -> [b]
+concatMap :: Foldable t => (a -> [b]) -> t a -> [b]
 concatMap f = foldr (\x acc -> f x ++ acc) []
 
 reverse :: [a] -> [a]
 reverse = foldl (flip (:)) []
 
-length :: [a] -> Int
-length = foldl' (\n _ -> n + 1) 0
-
-sum :: Num a => [a] -> a
-sum = foldl' (+) 0
-
-product :: Num a => [a] -> a
-product = foldl' (*) 1
-
-and :: [Bool] -> Bool
+and :: Foldable t => t Bool -> Bool
 and = foldr (&&) True
 
-or :: [Bool] -> Bool
+or :: Foldable t => t Bool -> Bool
 or = foldr (||) False
 
-any :: (a -> Bool) -> [a] -> Bool
+any :: Foldable t => (a -> Bool) -> t a -> Bool
 any p = foldr (\x acc -> p x || acc) False
 
-all :: (a -> Bool) -> [a] -> Bool
+all :: Foldable t => (a -> Bool) -> t a -> Bool
 all p = foldr (\x acc -> p x && acc) True
 
-elem :: Eq a => a -> [a] -> Bool
-elem x = any (== x)
-
-notElem :: Eq a => a -> [a] -> Bool
+notElem :: (Foldable t, Eq a) => a -> t a -> Bool
 notElem x xs = not (elem x xs)
 
-maximum :: Ord a => [a] -> a
-maximum (x : xs) = foldl' max x xs
-maximum [] = error "maximum: empty list"
+find :: Foldable t => (a -> Bool) -> t a -> Maybe a
+find p = foldr (\x rest -> if p x then Just x else rest) Nothing
 
-minimum :: Ord a => [a] -> a
-minimum (x : xs) = foldl' min x xs
-minimum [] = error "minimum: empty list"
+maximumBy :: Foldable t => (a -> a -> Ordering) -> t a -> a
+maximumBy cmp = foldl1 (\x y -> case cmp x y of GT -> x; _ -> y)
 
-null :: [a] -> Bool
-null [] = True
-null _ = False
+minimumBy :: Foldable t => (a -> a -> Ordering) -> t a -> a
+minimumBy cmp = foldl1 (\x y -> case cmp x y of GT -> y; _ -> x)
+
+instance Foldable [] where
+  foldMap f = listFoldr (\x acc -> f x <> acc) mempty
+  foldr = listFoldr
+  foldl = listFoldl
+  foldl' = listFoldl'
+  foldr1 = listFoldr1
+  foldl1 = listFoldl1
+  toList xs = xs
+  null [] = True
+  null _ = False
+  length = listFoldl' (\n _ -> n + 1) 0
+  elem x = listFoldr (\y acc -> x == y || acc) False
+  sum = listFoldl' (+) 0
+  product = listFoldl' (*) 1
+  maximum (x : xs) = listFoldl' max x xs
+  maximum [] = error "maximum: empty list"
+  minimum (x : xs) = listFoldl' min x xs
+  minimum [] = error "minimum: empty list"
+
+instance Traversable [] where
+  traverse f = listFoldr (\x ys -> liftA2 (:) (f x) ys) (pure [])
+  mapM f = go
+    where
+      go [] = return []
+      go (x : xs) = f x >>= \y -> go xs >>= \ys -> return (y : ys)
+
+instance Foldable Maybe where
+  foldMap _ Nothing = mempty
+  foldMap f (Just x) = f x
+  foldr _ z Nothing = z
+  foldr f z (Just x) = f x z
+  toList Nothing = []
+  toList (Just x) = [x]
+
+instance Traversable Maybe where
+  traverse _ Nothing = pure Nothing
+  traverse f (Just x) = fmap Just (f x)
+
+instance Foldable (Either a) where
+  foldMap _ (Left _) = mempty
+  foldMap f (Right x) = f x
+  foldr _ z (Left _) = z
+  foldr f z (Right x) = f x z
+
+instance Traversable (Either a) where
+  traverse _ (Left e) = pure (Left e)
+  traverse f (Right x) = fmap Right (f x)
+
+instance Foldable ((,) a) where
+  foldMap f (_, x) = f x
+  foldr f z (_, x) = f x z
+
+instance Traversable ((,) a) where
+  traverse f (a, x) = fmap (\y -> (a, y)) (f x)
 
 head :: [a] -> a
 head (x : _) = x
@@ -1303,30 +1562,40 @@ unwords (w : ws) = w ++ ' ' : unwords ws
 instance Functor IO where
   fmap f m = m >>= \x -> return (f x)
 
+instance Applicative IO where
+  pure = primReturn
+  mf <*> m = mf >>= \f -> m >>= \x -> return (f x)
+  liftA2 f m n = m >>= \x -> n >>= \y -> return (f x y)
+  m *> n = m >>= \_ -> n
+  m <* n = m >>= \x -> n >>= \_ -> return x
+
 instance Monad IO where
   (>>=) = primBind
   return = primReturn
+
+instance MonadFail IO where
   fail s = ioError (userError s)
+
+instance Semigroup a => Semigroup (IO a) where
+  (<>) = liftA2 (<>)
+
+instance Monoid a => Monoid (IO a) where
+  mempty = pure mempty
 
 (=<<) :: Monad m => (a -> m b) -> m a -> m b
 f =<< m = m >>= f
 
-mapM_ :: Monad m => (a -> m b) -> [a] -> m ()
-mapM_ _ [] = return ()
-mapM_ f (x : xs) = f x >> mapM_ f xs
+mapM_ :: (Foldable t, Monad m) => (a -> m b) -> t a -> m ()
+mapM_ f = foldr (\x rest -> f x >> rest) (return ())
 
-mapM :: Monad m => (a -> m b) -> [a] -> m [b]
-mapM _ [] = return []
-mapM f (x : xs) = do
-  y <- f x
-  ys <- mapM f xs
-  return (y : ys)
+sequence_ :: (Foldable t, Monad m) => t (m a) -> m ()
+sequence_ = foldr (>>) (return ())
 
-sequence_ :: Monad m => [m a] -> m ()
-sequence_ = mapM_ id
+traverse_ :: (Foldable t, Applicative f) => (a -> f b) -> t a -> f ()
+traverse_ f = foldr (\x rest -> f x *> rest) (pure ())
 
-sequence :: Monad m => [m a] -> m [a]
-sequence = mapM id
+sequenceA_ :: (Foldable t, Applicative f) => t (f a) -> f ()
+sequenceA_ = foldr (*>) (pure ())
 
 when :: Monad m => Bool -> m () -> m ()
 when c m = if c then m else return ()

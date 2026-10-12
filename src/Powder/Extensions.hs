@@ -20,6 +20,7 @@ module Powder.Extensions
     defaultSettings,
     haskell2010,
     implemented,
+    reportPrelude,
     editionExtensions,
     editionNamed,
     change,
@@ -79,6 +80,8 @@ data Extension
   | PostfixOperators
   | RankNTypes
   | RecordWildCards
+  | -- | Powder's own: the Prelude is the Report's names and no others.
+    ReportPrelude
   | RoleAnnotations
   | ScopedTypeVariables
   | StandaloneDeriving
@@ -97,7 +100,8 @@ data Extension
 type Extensions = Set.Set Extension
 
 data Edition
-  = -- | The Report, and nothing else.
+  = -- | The Report's language, and of the Prelude only the names the
+    -- Report gives it.
     Haskell2010
   | GHC2021
   | GHC2024
@@ -119,6 +123,10 @@ defaultSettings = Settings Powder2026 []
 haskell2010 :: Settings
 haskell2010 = Settings Haskell2010 []
 
+-- | The module that is the Prelude where 'ReportPrelude' is on.
+reportPrelude :: String
+reportPrelude = "Powder.Prelude2010"
+
 -- | Whether the compiler does what an extension asks.
 implemented :: Extension -> Bool
 implemented =
@@ -135,6 +143,7 @@ implemented =
         NamedFieldPuns,
         NumericUnderscores,
         PostfixOperators,
+        ReportPrelude,
         TupleSections
       ]
   )
@@ -144,7 +153,7 @@ implemented =
 -- not listed.
 editionExtensions :: Edition -> [Extension]
 editionExtensions = \case
-  Haskell2010 -> []
+  Haskell2010 -> [ReportPrelude]
   GHC2021 ->
     [ BangPatterns,
       BinaryLiterals,

@@ -1,0 +1,8 @@
+on: 3
+on-compare: [(2,'a'),(3,'b'),(1,'c')]
+on-equal: True
+fix: 3628800
+fix-lazy: [1,1,1,1,1]
+ampersand: "6"
+ampersand-low: 12
+prelude: ('i','c',True,1,-1)

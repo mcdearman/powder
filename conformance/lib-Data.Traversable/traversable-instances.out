@@ -1,0 +1,25 @@
+list-traverse: (Just [1,2,3],Nothing)
+list-in-list: [[1,2],[1,12],[11,2],[11,12]]
+list-sequenceA: (Just [1,2],Nothing)
+list-sequence: ([[1,3],[2,3]],Left "stop")
+list-mapM: (Just [3,2,1],Right "abc")
+functions: [11,20,7]
+maybe: ([Just 1,Just 2],Just Nothing,[Just 1,Just 2])
+either: (Just (Right 1),Just (Left "l"),[Right 'a',Right 'b'])
+pair: (Just ('k',5),[('k',1),('k',2)])
+tree: Just (Node (Node Leaf 1 Leaf) 2 (Node Leaf 3 Leaf))
+tree-fails: Nothing
+tree-lists: [[1,2],[1,-2],[-1,2],[-1,-2]]
+tree-io: 1
+tree-io: 2
+tree-io: 3
+tree-io-result: [2,4,6]
+for: Just [2,3]
+forM-maybe: q
+forM-result: Just 'r'
+forM-array: a
+forM-array: b
+forM-array: c
+array: ((1,3),[97,98,99])
+array-maybe: (Just [1,2,3],Nothing)
+mapAccum: ((6,[0,2,9]),(6,[5,6,0]))

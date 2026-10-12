@@ -33,7 +33,7 @@ import Data.Maybe (catMaybes, fromMaybe, isNothing, listToMaybe, mapMaybe)
 import qualified Data.Set as Set
 import Numeric (readFloat)
 import Powder.Core (ConInfo (..), Name, Prim (MatchFail), primName)
-import Powder.Extensions (Extension (..), Extensions)
+import Powder.Extensions (Extension (..), Extensions, reportPrelude)
 import Powder.Diagnostics (Problem (..))
 import Powder.HIR hiding (mine)
 import qualified Powder.HIR.Pat as Pat
@@ -199,7 +199,9 @@ resolveAfter seed languages lenient sources extra = case reverse (problems final
       Just s ->
         St
           (seedFloor s)
-          (seedNames s)
+          -- The arrow is no package's own, and so is in none's names: an
+          -- instance for functions is named by it in every package.
+          (IntMap.insert (-1) arrow (seedNames s))
           (seedOrigins s)
           (seedSignatures s)
           (seedSynonyms s)
@@ -228,8 +230,14 @@ resolveAfter seed languages lenient sources extra = case reverse (problems final
     sourcesOf n = [(file, m) | (file, n', m) <- sources, n' == n]
     importsOf n =
       -- An import of the module itself is an error, and brings in nothing.
-      [(name, qualified, alias, items) | (_, m) <- sourcesOf n, Decl.Import name qualified alias items <- moduleDecls m, name /= n]
-        ++ [("Prelude", False, Nothing, Nothing) | hasPrelude, n /= "Prelude", null [() | (_, m) <- sourcesOf n, Decl.Import "Prelude" _ _ _ <- moduleDecls m]]
+      [prelude file (name, qualified, alias, items) | (file, m) <- sourcesOf n, Decl.Import name qualified alias items <- moduleDecls m, name /= n]
+        ++ [prelude file ("Prelude", False, Nothing, Nothing) | hasPrelude, n `notElem` ["Prelude", reportPrelude], null [() | (_, m) <- sourcesOf n, Decl.Import "Prelude" _ _ _ <- moduleDecls m], (file, _) <- take 1 (sourcesOf n)]
+    -- The prelude of a module written with ReportPrelude, as the Haskell2010
+    -- edition is, is another module, which lets out the Report's names
+    -- only. It is still the Prelude to the module that imports it.
+    prelude file (name, qualified, alias, items)
+      | name == "Prelude", maybe False (Set.member ReportPrelude) (Map.lookup file languages), reportPrelude `elem` moduleNames || Map.member reportPrelude (linkExports before) = (reportPrelude, qualified, Just (fromMaybe "Prelude" alias), items)
+      | otherwise = (name, qualified, alias, items)
 
     run = do
       (wiredTypes, wiredConstructors, wiredBuiltins) <- maybe wiredIn pure (linkWired before)
@@ -712,6 +720,10 @@ placedOnce c given = fmap catMaybes . forM given $ \(f, a) -> do
     Just i -> pure (Just (i, a))
     Nothing -> Nothing <$ complain (f ++ " is not a field of this constructor")
 
+-- | The type of functions, whose identity is fixed beforehand.
+arrow :: NameInfo
+arrow = NameInfo "->" TypeConstructor ""
+
 -- | The types and constructors that are there before any are declared:
 -- those of literals and of what syntax builds, as the names they go by,
 -- with the ones the language itself refers to.
@@ -720,7 +732,7 @@ wiredIn = do
   integer <- newName "Integer" TypeConstructor
   int <- newName "Int" TypeConstructor
   -- The arrow has an identity fixed beforehand, which the checker knows.
-  modify (\st -> st {names = IntMap.insert (-1) (NameInfo "->" TypeConstructor "") (names st)})
+  modify (\st -> st {names = IntMap.insert (-1) arrow (names st)})
   argument <- newName "a" TypeVariable
   result <- newName "b" TypeVariable
   addDataType (DataType (NameId (-1)) [argument, result] [])

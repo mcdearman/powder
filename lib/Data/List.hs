@@ -13,7 +13,7 @@ module Data.List
   )
 where
 
-import Powder.Base (foldl')
+import Powder.Base (Foldable (..), find, maximumBy, minimumBy)
 
 infix 5 \\
 
@@ -96,11 +96,6 @@ isSuffixOf xs ys = isPrefixOf (reverse xs) (reverse ys)
 isInfixOf :: Eq a => [a] -> [a] -> Bool
 isInfixOf needle haystack = any (isPrefixOf needle) (tails haystack)
 
-find :: (a -> Bool) -> [a] -> Maybe a
-find p xs = case filter p xs of
-  [] -> Nothing
-  x : _ -> Just x
-
 partition :: (a -> Bool) -> [a] -> ([a], [a])
 partition p xs = (filter p xs, filter (not . p) xs)
 
@@ -180,12 +175,6 @@ insertBy _ x [] = [x]
 insertBy cmp x ys@(y : ys') = case cmp x y of
   GT -> y : insertBy cmp x ys'
   _ -> x : ys
-
-maximumBy :: (a -> a -> Ordering) -> [a] -> a
-maximumBy cmp = foldl1 (\x y -> case cmp x y of GT -> x; _ -> y)
-
-minimumBy :: (a -> a -> Ordering) -> [a] -> a
-minimumBy cmp = foldl1 (\x y -> case cmp x y of GT -> y; _ -> x)
 
 genericLength :: Num i => [a] -> i
 genericLength [] = 0

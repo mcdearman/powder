@@ -1,0 +1,9 @@
+fmap-infix: (Just 2,["1","2"])
+replace-left: (Just 'x',[0,0,0])
+replace-right: (Just 'x',[0,0,0])
+flipped: (Just 4,[False,True])
+void: (Just (),[(),(),()])
+either: (Right 4,Left "no")
+function: 11
+pair: ("a",4)
+io: 4
