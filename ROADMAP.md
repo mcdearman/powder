@@ -47,7 +47,7 @@ CUSKs, DeepSubsumption. MonoLocalBinds and PolyKinds change what some Haskell
 | M0 | Plumbing: LANGUAGE pragmas, editions, defaults in `Powder.toml` | done |
 | M1 | The library hierarchy | done |
 | M2 | Extensions that are only syntax | done |
-| M3 | Deriving | not started |
+| M3 | Deriving | done |
 | M4 | Explicit quantification at rank 1 | not started |
 | M5 | The class system | not started |
 | M6 | Higher ranks and existentials | not started |
@@ -120,9 +120,24 @@ What these do not yet do, each of which is refused where it is met:
 - `..` in a pattern bound at the top of a module.
 - `forall` and the star written in Unicode, which wait for M4.
 
-**M3, deriving.** StandaloneDeriving, DerivingStrategies, DeriveFunctor,
-DeriveFoldable, DeriveTraversable, GeneralisedNewtypeDeriving; then
-DefaultSignatures and DeriveAnyClass.
+**M3, deriving.**
+
+- [x] DeriveFunctor, DeriveFoldable, DeriveTraversable
+- [x] StandaloneDeriving
+- [x] DerivingStrategies: `stock`, `newtype` and `anyclass`
+- [x] GeneralisedNewtypeDeriving
+- [x] DeriveAnyClass
+
+What these do not yet do:
+
+- An instance derived apart from a type is for a type its own module
+  declares. The context it gives is used for a newtype's instance, and for
+  any other the context is worked out as it is beside the type.
+- A newtype's instance asks of the newtype's parameters what the instance it
+  is taken from asks, which is found from the instances declared above it.
+  For one declared below, in the same module, it asks the class of each
+  parameter, which may be more than is needed.
+- DefaultSignatures goes with DeriveGeneric in M7, which is what it is for.
 
 **M4, explicit quantification at rank 1.** ExplicitForAll,
 ScopedTypeVariables, InstanceSigs, ConstrainedClassMethods, KindSignatures,

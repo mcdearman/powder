@@ -344,6 +344,10 @@ compiled as if it did not. Implemented so far, all of them in
 | `ParallelListComp` | `[e \| x <- xs \| y <- ys]`: rows of qualifiers gone through side by side |
 | `PackageImports` | `import "base" Data.List`. The package is not looked at |
 | `UnicodeSyntax` | `→`, `←`, `⇒` and `∷` for `->`, `<-`, `=>` and `::` |
+| `DeriveFunctor`, `DeriveFoldable`, `DeriveTraversable` | `deriving (Functor, Foldable, Traversable)`, over a type's last parameter: through lists, tuples and other functors, and for `Functor` what a function gives |
+| `StandaloneDeriving` | `deriving instance Show T`, apart from the declaration of `T`, which is in the same module |
+| `DerivingStrategies` | `deriving stock (Eq)`, `deriving newtype (Num)`, `deriving anyclass (C)`: how, said |
+| `GeneralisedNewtypeDeriving` | A newtype has the instances of what it is a newtype of: `newtype Age = Age Int deriving (Num)`. For a class of type constructors too, where the newtype is of something applied to its last parameter |
 
 Implemented and in no edition, since each changes what a program already
 means:
@@ -353,6 +357,7 @@ means:
 | `StrictData` | A constructor's fields are strict unless marked lazy, `~T` |
 | `LexicalNegation` | A minus that touches what follows it and not what comes before is that thing's sign: `f -1` is `f (-1)`, and `(- 1)` is a section |
 | `NumDecimals` | `1e6 :: Int`: a number written with an exponent, if it is whole, is a whole number |
+| `DeriveAnyClass` | `deriving (C)` for a class that cannot be derived is an instance with no methods |
 
 And one of Powder's own, which only `Haskell2010` has on:
 

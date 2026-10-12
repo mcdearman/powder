@@ -1,0 +1,13 @@
+([Red,Green,Blue],True,Green,True)
+(Box 'b',Empty,True,Box 2)
+something, nameless, something
+True
+(Age 31,Age 12,True,[Age 1,Age 2,Age 3],3,5.5)
+(3.5,1.5,True)
+("abcd","",True)
+(Count 5,Count 24,Count 6)
+(Wrapped "abcd",Wrapped [1,2],True)
+(Meters 7,True)
+(Opt (Just 2),Opt (Just 'p'),Opt (Just 6))
+Opt Nothing
+<5>

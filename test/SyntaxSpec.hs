@@ -261,7 +261,7 @@ astTests =
     ("a literal that means nothing", fmap sketch (exprOf "'\\q'") == Just "Malformed \"'\\\\q'\""),
     ("declarations", map declSketch (declsOf "import M\ntype T = Int\ndata D a = A | B a Int\ninfixr 5 +++, `op`\nf, g :: Int\nf 0 = 1\nx +++ y = x\n(a, b) = p") == ["import M", "type", "data D [A/0,B/2]", "infixr 5 +++ op", "sig f g", "clause f/1", "clause +++/2", "bind tuple[\"a\",\"b\"]"]),
     ("a class and an instance", map declSketch (declsOf "class Eq a => C a where\n  op :: a -> a\n  op x = x\ninstance C Int where\n  op = id\nclass D a") == ["class/2", "instance/1", "class/0"]),
-    ("deriving", concatMap Decl.derived (declsOf "data T = A | B deriving (Eq, Show)\ndata U = U deriving Ord\ndata V = V") == ["Eq", "Show", "Ord"]),
+    ("deriving", map snd (concatMap Decl.derived (declsOf "data T = A | B deriving (Eq, Show)\ndata U = U deriving Ord\ndata V = V")) == ["Eq", "Show", "Ord"]),
     ("a list comprehension", fmap sketch (exprOf "[x | x <- xs, let y = x, p y]") == Just "[x | 3]"),
     ("ranges with a step", (fmap sketch (exprOf "[a, b ..]"), fmap sketch (exprOf "[a, b .. c]")) == (Just "range(a,b)", Just "range(a,b..c)")),
     ("a guard of several qualifiers", [map (length . fst) alts | Decl.Clause _ _ (Syntax.Rhs alts _) <- declsOf "f x | Just y <- x, y = 1 | otherwise = 2"] == [[2, 1]]),

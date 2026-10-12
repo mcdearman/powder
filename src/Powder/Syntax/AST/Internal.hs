@@ -80,7 +80,7 @@ instance Ast Module where
   syntax (ModuleNode r) = r
 
 instance Ast Decl where
-  cast = wrap DeclNode [K.PatSynDecl, K.PatSynSig, K.DataDecl, K.TypeDecl, K.ClassDecl, K.InstanceDecl, K.DefaultDecl, K.ForeignDecl, K.ForeignExportDecl, K.ImportDecl, K.TypeSig, K.FixityDecl, K.FunClause, K.InfixClause, K.PatBind]
+  cast = wrap DeclNode [K.StandaloneDerivingDecl, K.PatSynDecl, K.PatSynSig, K.DataDecl, K.TypeDecl, K.ClassDecl, K.InstanceDecl, K.DefaultDecl, K.ForeignDecl, K.ForeignExportDecl, K.ImportDecl, K.TypeSig, K.FixityDecl, K.FunClause, K.InfixClause, K.PatBind]
   syntax (DeclNode r) = r
 
 instance Ast Constructor where

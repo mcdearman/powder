@@ -29,11 +29,11 @@ import Data.List (intercalate, isSuffixOf, nub, (\\))
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map as Map
 import Data.Char (isAlphaNum, isUpper)
-import Data.Maybe (catMaybes, fromMaybe, isNothing, listToMaybe, mapMaybe)
+import Data.Maybe (catMaybes, fromMaybe, isJust, isNothing, listToMaybe, mapMaybe)
 import Data.Ratio (denominator, numerator)
 import qualified Data.Set as Set
 import Numeric (readFloat)
-import Powder.Core (ConInfo (..), Name, Prim (MatchFail), primName)
+import Powder.Core (ConInfo (..), Name, Prim (Coerce, MatchFail), primName)
 import Powder.Extensions (Extension (..), Extensions, reportPrelude)
 import Powder.Diagnostics (Problem (..))
 import Powder.HIR hiding (mine)
@@ -443,7 +443,7 @@ resolveAfter seed languages lenient sources extra = case reverse (problems final
         case d of
           Decl.Default named -> within d (mapM type' named) >>= \found -> modify (\st -> st {defaults = (file, found) : defaults st})
           _ -> pure ()
-        deriving' (Map.fromList [(t, x) | (t, x, _, _) <- ts]) d
+        deriving' (Map.fromList [(t, x) | (t, x, _, _) <- ts]) (moduleDecls m) d
       resolved <- forM sources $ \(file, n, m) -> inModule n file $ do
         let gs = grouped (moduleDecls m)
         conflicts (concatMap defines gs) gs
@@ -1252,11 +1252,28 @@ instanceDecl d = within d $ case d of
 enabled :: Extension -> M Bool
 enabled extension = asks (\env -> maybe False (Set.member extension) (Map.lookup (envFile env) (envLanguages env)))
 
--- | The instances a data declaration asks to have derived, given the
--- names this module's types were given.
-deriving' :: Map.Map Name NameId -> Syntax.Decl -> M ()
-deriving' own d = within d $ case d of
-  Decl.Data t parameters cs -> forM_ (Decl.derived d) $ \c -> do
+-- | The instances a data declaration asks to have derived, or one asked
+-- for apart from it, given the names this module's types were given and
+-- the module's declarations.
+deriving' :: Map.Map Name NameId -> [Syntax.Decl] -> Syntax.Decl -> M ()
+deriving' own decls d = within d $ case d of
+  Decl.Data {} -> forM_ (Decl.derived d) (\(how, c) -> derive own d how Nothing c)
+  Decl.StandaloneDeriving how hd -> case classHead hd of
+    Just (context, c, target)
+      | Just (t, vs) <- typedShape target,
+        declared : _ <- [x | x@(Decl.Data t' _ _) <- decls, t' == t] ->
+          derive own declared how (Just (vs, context)) c
+    _ -> complain "an instance is derived apart from a type's declaration for a type this module declares, applied to variables"
+  _ -> pure ()
+
+-- | Derive an instance of a class for the type a declaration declares:
+-- as the Report says, for its classes and the few like them; as the
+-- instance of what a newtype is of; or with no methods. Which may be
+-- said. Where the instance was asked for apart from the type, the
+-- variables it named and the context it gave are here too.
+derive :: Map.Map Name NameId -> Syntax.Decl -> Maybe Name -> Maybe ([Name], [SType.Type]) -> Name -> M ()
+derive own d said apart c = case d of
+  Decl.Data t parameters cs -> do
     -- Whether a field's type is the type being declared, as it is declared.
     let itself = \case
           SType.Paren inner -> itself inner
@@ -1276,10 +1293,48 @@ deriving' own d = within d $ case d of
             mentioned = concat [map (named con) (concatMap typeVariables tys) | con@(Syntax.Constructor _ tys) <- cs]
             constrained = filter (`elem` mentioned) (nub parameters)
         allowed <- enabled EmptyDataDeriving
+        strategies <- enabled DerivingStrategies
+        when (isJust said && not strategies) (complain "how an instance is derived is said only if DerivingStrategies is on")
+        generalised <- enabled GeneralisedNewtypeDeriving
+        anyclass <- enabled DeriveAnyClass
+        -- Left unsaid, it is as the Report derives where the class is one
+        -- that can be; and failing that with no methods, or as a
+        -- newtype's is, whichever is asked for, and as GHC does the first
+        -- if both are. Where newtypes' instances are asked for, a newtype
+        -- has those of the Report's classes too that are of its values
+        -- and not of how it is written: all but Read and Show.
+        let stock = unqualified c `elem` ["Eq", "Ord", "Show", "Read", "Enum", "Bounded", "Ix", "Functor", "Foldable", "Traversable"]
+            how = case said of
+              Just s -> s
+              Nothing
+                | Decl.isNewtype d && generalised && unqualified c `elem` ["Eq", "Ord", "Enum", "Bounded", "Ix"] -> "newtype"
+                | stock -> "stock"
+                | anyclass -> "anyclass"
+                | Decl.isNewtype d && generalised -> "newtype"
+                | otherwise -> "stock"
+            -- A type that takes a parameter may be a functor in its last.
+            last' = case (reverse (nub parameters), cs) of
+              (a : _, _) -> Just (a, [(prefixed name, [(maybe a (\(_, vs) -> last (a : vs)) (Syntax.constructorResult con >>= typedShape), ty) | ty <- tys]) | con@(Syntax.Constructor name tys) <- cs])
+              ([], _) -> Nothing
+            prefixed name = if take 1 name == ":" then "(" ++ name ++ ")" else name
+            functorial extension make = do
+              on <- enabled extension
+              unless on (complain ("an instance of " ++ c ++ " is derived only if " ++ show extension ++ " is on"))
+              case last' >>= \(_, shapes) -> make shapes of
+                Just equations -> written ("instance " ++ functorContext c parameters cs ++ c ++ " (" ++ unwords (t : reverse (drop 1 (reverse (nub parameters)))) ++ ") where { " ++ intercalate "; " equations ++ " }")
+                Nothing -> complain ("an instance of " ++ c ++ " cannot be derived for " ++ t ++ ": it is not a functor in its last parameter")
         methods <- case unqualified c of
+          _ | how == "anyclass" -> do
+            variables <- mapM (`newName` TypeVariable) (nub parameters)
+            n <- node
+            Nothing <$ addInstance (Instance n k (own Map.! t) variables [] [])
+          _ | how == "newtype" -> Nothing <$ newtypeDerived own d apart k
           -- A type with no constructors has no values to tell apart, to
           -- show or to read.
           _ | null cs, not allowed -> Nothing <$ complain "an instance can be derived for a type with no constructors only with EmptyDataDeriving"
+          "Functor" -> Nothing <$ functorial DeriveFunctor functorEquations
+          "Foldable" -> Nothing <$ functorial DeriveFoldable foldableEquations
+          "Traversable" -> Nothing <$ functorial DeriveTraversable traversableEquations
           "Eq" | null cs -> Nothing <$ written (instanceHead c t (nub parameters) constrained ++ "{ _ == _ = True }")
           "Ord" | null cs -> Nothing <$ written (instanceHead c t (nub parameters) constrained ++ "{ compare _ _ = EQ }")
           "Show" | null cs -> Nothing <$ written (instanceHead c t (nub parameters) constrained ++ "{ showsPrec _ v = seq v id }")
@@ -1308,6 +1363,189 @@ deriving' own d = within d $ case d of
           n <- node
           addInstance (Instance n k (own Map.! t) variables context bs)
   _ -> pure ()
+
+-- | The context of a derived instance of a class of functors: the class
+-- for each type variable that is applied to something in a field.
+functorContext :: Name -> [Name] -> [Syntax.Constructor] -> String
+functorContext c parameters cs = case nub (concat [heads ty | Syntax.Constructor _ tys <- cs, ty <- tys]) of
+  [] -> ""
+  hs -> "(" ++ intercalate ", " [c ++ " " ++ h | h <- hs] ++ ") => "
+  where
+    heads = \case
+      SType.App f arguments -> [h | SType.Var h <- [f], h `elem` parameters] ++ concatMap heads (f : arguments)
+      SType.Fun a b -> heads a ++ heads b
+      SType.Tuple ts -> concatMap heads ts
+      SType.List e -> heads e
+      SType.Paren inner -> heads inner
+      _ -> []
+
+-- | How a type that may mention a variable is gone over, as one of three
+-- things is done at the variable: a function for the type, written out,
+-- or nothing if the type does not mention the variable; or failure, if
+-- the variable is where it cannot be reached. Given what is done at the
+-- variable, at something a type constructor is applied to, in a tuple,
+-- and behind a function, which may not be allowed.
+over :: Name -> String -> (String -> String) -> ([Maybe String] -> Maybe String) -> Maybe (String -> String) -> SType.Type -> Maybe (Maybe String)
+over a at inside tuple behind = go
+  where
+    go ty
+      | a `notElem` typeVariables ty = Just Nothing
+      | otherwise = case ty of
+          SType.Var _ -> Just (Just at)
+          SType.Paren inner -> go inner
+          SType.List element -> fmap inside <$> go element
+          SType.Tuple ts -> tuple <$> mapM go ts
+          SType.Fun from to | a `notElem` typeVariables from, Just wrap <- behind -> fmap wrap <$> go to
+          SType.App f arguments
+            | a `notElem` concatMap typeVariables (f : drop 1 (reverse arguments)), last' : _ <- reverse arguments -> fmap inside <$> go last'
+          _ -> Nothing
+
+-- | The names a generated function gives the parts of a tuple.
+parts :: [a] -> [String]
+parts xs = ["t" ++ show i | i <- [1 .. length xs]]
+
+-- | A derived fmap: each constructor, with the function applied wherever
+-- the last parameter is. A constructor is its name and its fields, each
+-- its name for that parameter and its type.
+functorEquations :: [(String, [(Name, SType.Type)])] -> Maybe [String]
+functorEquations [] = Just ["fmap _ v = seq v undefined"]
+functorEquations shapes = forM shapes $ \(con, fields) -> do
+  mapped <- forM fields (\(a, ty) -> over a "f" (\m -> "(fmap " ++ m ++ ")") tuple (Just (\m -> "((.) " ++ m ++ ")")) ty)
+  let xs = ["x" ++ show i | i <- [1 .. length fields]]
+  Just ("fmap f (" ++ unwords (con : xs) ++ ") = " ++ unwords (con : [maybe x (\m -> "(" ++ m ++ " " ++ x ++ ")") m | (x, m) <- zip xs mapped]))
+  where
+    tuple ms = Just ("(\\(" ++ intercalate ", " (parts ms) ++ ") -> (" ++ intercalate ", " [maybe x (\m -> m ++ " " ++ x) m | (x, m) <- zip (parts ms) ms] ++ "))")
+
+-- | A derived foldr: the function applied to each of the last parameter's
+-- values, from the right.
+foldableEquations :: [(String, [(Name, SType.Type)])] -> Maybe [String]
+foldableEquations [] = Just ["foldr _ z _ = z"]
+foldableEquations shapes = forM shapes $ \(con, fields) -> do
+  folded <- forM fields (\(a, ty) -> over a "f" (\m -> "(\\c z' -> foldr " ++ m ++ " z' c)") tuple Nothing ty)
+  let xs = ["x" ++ show i | i <- [1 .. length fields]]
+  Just ("foldr f z (" ++ unwords (con : xs) ++ ") = " ++ nest "z" (zip xs folded))
+  where
+    nest = foldr (\(x, m) rest -> maybe rest (\m' -> m' ++ " " ++ x ++ " (" ++ rest ++ ")") m)
+    tuple ms = Just ("(\\(" ++ intercalate ", " (parts ms) ++ ") z' -> " ++ nest "z'" (zip (parts ms) ms) ++ ")")
+
+-- | A derived traverse: the constructor again, of what the action gives
+-- for each of the last parameter's values, from the left.
+traversableEquations :: [(String, [(Name, SType.Type)])] -> Maybe [String]
+traversableEquations [] = Just ["traverse _ v = seq v undefined"]
+traversableEquations shapes = forM shapes $ \(con, fields) -> do
+  traversed <- forM fields (\(a, ty) -> over a "f" (\m -> "(traverse " ++ m ++ ")") tuple Nothing ty)
+  let xs = ["x" ++ show i | i <- [1 .. length fields]]
+  Just ("traverse f (" ++ unwords (con : xs) ++ ") = " ++ chain con (zip xs traversed))
+  where
+    chain con fields = "pure " ++ con ++ concat [" <*> " ++ maybe ("pure " ++ x) (\m -> m ++ " " ++ x) m | (x, m) <- fields]
+    tuple ms = Just ("(\\(" ++ intercalate ", " (parts ms) ++ ") -> " ++ chain ("(" ++ replicate (length ms - 1) ',' ++ ")") (zip (parts ms) ms) ++ ")")
+
+-- | An instance for a newtype that is the instance of the type it is a
+-- newtype of: each method is that type's, taken as this one's, which it
+-- can be since a newtype and what it is of are kept the same way. The
+-- instance asks of the newtype's parameters what it would ask if derived
+-- as the Report derives, unless a context was given with the request.
+newtypeDerived :: Map.Map Name NameId -> Syntax.Decl -> Maybe ([Name], [SType.Type]) -> NameId -> M ()
+newtypeDerived own d apart k = case d of
+  Decl.Data t parameters [con@(Syntax.Constructor _ [field])] | Decl.isNewtype d -> do
+    variables <- mapM (`newName` TypeVariable) (nub parameters)
+    let scope = zip (nub parameters) variables
+    scope' <- maybe (pure scope) (typedScope t scope) (Syntax.constructorResult con)
+    whole <- withTypeVariables scope' (type' field)
+    cls <- gets (IntMap.lookup (nameKey k) . classes)
+    known <- gets signatures
+    let methods = [(m, s) | m <- maybe [] classMethods cls, Just s <- [IntMap.lookup (nameKey m) known]]
+        -- A class of type constructors is one whose variable is applied
+        -- to something: then the instance is for the newtype without its
+        -- last parameter, and of what it is of without that too.
+        higher = or [applies a (signatureType s) | (_, s@(Signature (a : _) _ _)) <- methods]
+        reduced = case (reverse variables, Type.typeForm whole) of
+          (lastV : _, Type.App f (Type.Type _ (Type.Var v))) | v == lastV, not (mentions lastV f) -> Just f
+          _ -> Nothing
+    case (higher, reduced) of
+      (True, Nothing) -> complain "an instance of a class of type constructors is derived for a newtype of something applied to its last parameter, and to nothing else of that parameter"
+      _ -> do
+        let of' = if higher then fromMaybe whole reduced else whole
+            instanceVariables' = if higher then take (length variables - 1) variables else variables
+        bs <- forM methods $ \(m, s) -> case s of
+          Signature (a : others) context ty -> do
+            ty' <- substituted a of' ty
+            context' <- forM context (\(Constraint c' u) -> Constraint c' <$> substituted a of' u)
+            taken <- mk (Var m) >>= \inner -> mk (Annotated inner (Signature others context' ty'))
+            body <- mk (Prim Coerce) >>= (`apply` [taken]) >>= plain
+            b <- node
+            (\c' -> Binding b (Function m [Clause c' [] body])) <$> node
+          _ -> error "Powder.Resolve: a method's signature does not start with its class's variable"
+        -- What the instance asks of the newtype's parameters is what the
+        -- instance it is taken from asks of them, as far as the instances
+        -- known here say; and failing that, the class of each parameter
+        -- the type mentions.
+        needed <- needs k of'
+        context <- case (apart, needed) of
+          (Just (vs, given), _) -> withTypeVariables (zip vs variables) (catMaybes <$> mapM constraint given)
+          (Nothing, Just asked) -> forM (nub asked) (\(c', v) -> Constraint c' . (`Type.Type` Type.Var v) <$> node)
+          (Nothing, Nothing)
+            | higher -> pure []
+            | otherwise -> forM [v | v <- variables, mentions v whole] (\v -> Constraint k . (`Type.Type` Type.Var v) <$> node)
+        n <- node
+        addInstance (Instance n k (own Map.! t) instanceVariables' context bs)
+  _ -> complain "an instance is derived as a newtype's only for a newtype"
+  where
+    mentions v ty = case Type.typeForm ty of
+      Type.Var x -> x == v
+      Type.App f x -> mentions v f || mentions v x
+      Type.Fun a b -> mentions v a || mentions v b
+      _ -> False
+    applies v ty = case Type.typeForm ty of
+      Type.App f x -> (case Type.typeForm f of Type.Var y -> y == v; _ -> applies v f) || applies v x
+      Type.Fun a b -> applies v a || applies v b
+      _ -> False
+
+-- | What a type's being an instance of a class comes to, of the type's
+-- variables: the classes each must be an instance of, as the instances
+-- known so far say. Nothing where they do not say, which is so for an
+-- instance declared further down.
+needs :: NameId -> Type.Type -> M (Maybe [(NameId, NameId)])
+needs cls whole = do
+  known <- gets instances
+  aliases <- gets synonyms
+  let go :: Int -> NameId -> Type.Type -> Maybe [(NameId, NameId)]
+      go depth c ty
+        | depth > 32 = Nothing
+        | otherwise = case Type.typeForm ty of
+            Type.Var v -> Just [(c, v)]
+            _ -> case spine ty [] of
+              (Just t, arguments)
+                | Just (Synonym parameters body) <- IntMap.lookup (nameKey t) aliases ->
+                    if length parameters == length arguments then go (depth + 1) c (replaced (zip parameters arguments) body) else Nothing
+                | inst : _ <- [i | i <- known, instanceClass i == c, instanceType i == t, length (instanceVariables i) == length arguments] ->
+                    concat <$> forM (instanceContext inst) (\(Constraint c' u) -> go (depth + 1) c' (replaced (zip (instanceVariables inst) arguments) u))
+              _ -> Nothing
+      spine ty arguments = case Type.typeForm ty of
+        Type.App f x -> spine f (x : arguments)
+        Type.Fun a b | null arguments -> (Just (NameId (-1)), [a, b])
+        Type.Con t -> (Just t, arguments)
+        _ -> (Nothing, arguments)
+      -- Only looked at, so it keeps the nodes it has.
+      replaced with ty = case Type.typeForm ty of
+        Type.Var v | Just other <- lookup v with -> other
+        Type.App f x -> Type.Type (Type.typeId ty) (Type.App (replaced with f) (replaced with x))
+        Type.Fun a b -> Type.Type (Type.typeId ty) (Type.Fun (replaced with a) (replaced with b))
+        _ -> ty
+  pure (go 0 cls whole)
+
+-- | A type with another in place of a variable, as new syntax.
+substituted :: NameId -> Type.Type -> Type.Type -> M Type.Type
+substituted a by ty = case Type.typeForm ty of
+  Type.Var v | v == a -> substituted a by by'
+    where
+      -- What is put in is copied too, and has none of the variable.
+      by' = by
+  Type.App f x -> (Type.App <$> substituted a by f <*> substituted a by x) >>= fresh'
+  Type.Fun x y -> (Type.Fun <$> substituted a by x <*> substituted a by y) >>= fresh'
+  form -> fresh' form
+  where
+    fresh' form = (`Type.Type` form) <$> node
 
 -- | Take an instance written out here as if the source had it. What it
 -- refers to is the prelude's, whatever the module has of the same names,
@@ -1612,6 +1850,7 @@ grouped ds = map gather (NE.groupBy sameFunction (concatMap binds ds))
       Decl.ForeignExport {} -> []
       Decl.PatternSynonym {} -> []
       Decl.PatternSignature -> []
+      Decl.StandaloneDeriving {} -> []
     sameFunction (Left (_, f, _, _)) (Left (_, g, _, _)) = f == g
     sameFunction _ _ = False
     gather group = case NE.head group of
