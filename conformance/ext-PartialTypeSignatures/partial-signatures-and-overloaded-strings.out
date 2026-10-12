@@ -1,0 +1,8 @@
+(2,(True,'c'),Just "5",True,6)
+(Name "ann",Upper "SHOUT")
+hello, world
+hi bob
+[1,2,0]
+plain strings
+(4,["a","b","c"],[97,98])
+(True,Just 1)

@@ -40,6 +40,7 @@ module Powder.Syntax.AST
     Stmt,
     Pat,
     Literal (..),
+    Kind (..),
     fixityDecls,
   )
 where

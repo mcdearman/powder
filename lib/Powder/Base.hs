@@ -193,6 +193,24 @@ class Applicative f => Alternative f where
 (<$>) :: Functor f => (a -> b) -> f a -> f b
 (<$>) = fmap
 
+-- The types a string written in a program may be of, where
+-- OverloadedStrings is on.
+class IsString a where
+  fromString :: String -> a
+
+-- A list of characters is one, and of nothing else: said by way of a
+-- class that only Char is in, so that a string written where a list is
+-- wanted is a list of something, and that something is then found to be
+-- Char. (GHC says it with an equality of types.)
+class IsChar c where
+  fromChar :: Char -> c
+
+instance IsChar Char where
+  fromChar c = c
+
+instance IsChar c => IsString [c] where
+  fromString = map fromChar
+
 -- What can be folded: gone through an element at a time, in order. An
 -- instance gives foldMap or foldr, and the rest come from that one.
 class Foldable t where

@@ -18,6 +18,9 @@ module Powder.Syntax.AST.Internal
     Stmt,
     Pat,
     Literal (..),
+    Kind (..),
+    kindOf,
+    kindedBinders,
     Listed (..),
     Subordinates (..),
     itemsOf,
@@ -32,6 +35,7 @@ module Powder.Syntax.AST.Internal
   )
 where
 
+import Data.Bifunctor (first)
 import Data.Char (digitToInt)
 import Data.Maybe (fromMaybe, listToMaybe, mapMaybe)
 import qualified Data.Text as Text
@@ -80,7 +84,7 @@ instance Ast Module where
   syntax (ModuleNode r) = r
 
 instance Ast Decl where
-  cast = wrap DeclNode [K.StandaloneDerivingDecl, K.PatSynDecl, K.PatSynSig, K.DataDecl, K.TypeDecl, K.ClassDecl, K.InstanceDecl, K.DefaultDecl, K.ForeignDecl, K.ForeignExportDecl, K.ImportDecl, K.TypeSig, K.FixityDecl, K.FunClause, K.InfixClause, K.PatBind]
+  cast = wrap DeclNode [K.KindSigDecl, K.StandaloneDerivingDecl, K.PatSynDecl, K.PatSynSig, K.DataDecl, K.TypeDecl, K.ClassDecl, K.InstanceDecl, K.DefaultDecl, K.ForeignDecl, K.ForeignExportDecl, K.ImportDecl, K.TypeSig, K.FixityDecl, K.FunClause, K.InfixClause, K.PatBind]
   syntax (DeclNode r) = r
 
 instance Ast Constructor where
@@ -92,7 +96,7 @@ instance Ast Rhs where
   syntax (RhsNode r) = r
 
 instance Ast Type where
-  cast = wrap TypeNode [K.TyVar, K.TyCon, K.TyApp, K.TyFun, K.TyTuple, K.TyList, K.TyParen, K.TyQual]
+  cast = wrap TypeNode [K.TyVar, K.TyCon, K.TyApp, K.TyFun, K.TyTuple, K.TyList, K.TyParen, K.TyQual, K.TyForall, K.TyWild, K.TyKinded, K.TyInfix]
   syntax (TypeNode r) = r
 
 instance Ast Expr where
@@ -117,7 +121,7 @@ instance Ast Stmt where
   syntax (StmtNode r) = r
 
 instance Ast Pat where
-  cast = wrap PatNode [K.ViewPat, K.BangPat, K.VarPat, K.WildPat, K.LitPat, K.NegLitPat, K.ConPat, K.InfixPat, K.AsPat, K.ParenPat, K.TuplePat, K.ListPat, K.LazyPat, K.RecordPat]
+  cast = wrap PatNode [K.SigPat, K.ViewPat, K.BangPat, K.VarPat, K.WildPat, K.LitPat, K.NegLitPat, K.ConPat, K.InfixPat, K.AsPat, K.ParenPat, K.TuplePat, K.ListPat, K.LazyPat, K.RecordPat]
   syntax (PatNode r) = r
 
 -- | The children of a node that are of some sort.
@@ -176,6 +180,36 @@ fieldBinds r = [(nameOf f, listToMaybe (children f)) | f <- Red.nodes r, Red.kin
 fieldWild :: Red -> Bool
 fieldWild r = any ((== K.FieldWild) . Red.kind) (Red.nodes r)
 
+-- | A kind as it is written.
+data Kind = Star | Arrow Kind Kind
+  deriving (Eq, Show)
+
+-- | The kind a node gives: that of the first kind under it. A kind is
+-- stars with arrows between them, grouping to the right.
+kindOf :: Red -> Maybe Kind
+kindOf r = case [k | k <- Red.nodes r, Red.kind k == K.KindSig] of
+  k : _ -> fst <$> arrows (map fst (spelled k))
+  [] -> Nothing
+  where
+    arrows ts = do
+      (left, rest) <- atom ts
+      case rest of
+        K.RightArrow : more -> first (Arrow left) <$> arrows more
+        _ -> Just (left, rest)
+    atom = \case
+      K.LParen : more -> do
+        (inner, rest) <- arrows more
+        case rest of
+          K.RParen : after -> Just (inner, after)
+          _ -> Nothing
+      t : more | t `elem` [K.VarSym, K.ConId, K.QConId] -> Just (Star, more)
+      _ -> Nothing
+
+-- | The type variables directly under a node that are given kinds, each
+-- with its kind.
+kindedBinders :: Red -> [(Name, Kind)]
+kindedBinders r = [(nameOf b, k) | b <- Red.nodes r, Red.kind b == K.KindedBinder, Just k <- [kindOf b]]
+
 -- | The tokens of a node that mean something, each with its text.
 spelled :: Red -> [(SyntaxKind, Name)]
 spelled r = [(Red.kind t, Text.unpack (Red.text t)) | t <- Red.tokens r, not (K.isTrivia (Red.kind t))]
@@ -184,12 +218,17 @@ spelled r = [(Red.kind t, Text.unpack (Red.text t)) | t <- Red.tokens r, not (K.
 -- parenthesis.
 itemsOf :: [(SyntaxKind, Name)] -> [Listed]
 itemsOf = \case
+  -- After the word type an operator in parentheses is a type's name.
+  (K.KwType, _) : (K.LParen, _) : (k, c) : (K.RParen, _) : (K.LParen, _) : (K.DotDot, _) : (K.RParen, _) : rest | k `elem` operators -> Thing c All : itemsOf rest
+  (K.KwType, _) : (K.LParen, _) : (k, c) : (K.RParen, _) : rest | k `elem` operators -> Thing c None : itemsOf rest
   -- The word pattern with a constructor's name right after it. Before
   -- anything else it is a variable of that name.
   (K.VarId, "pattern") : (k, c) : rest | k `elem` constructors -> Pattern c : itemsOf rest
   (K.VarId, "pattern") : (K.LParen, _) : (k, c) : (K.RParen, _) : rest | k `elem` [K.ConSym, K.Colon] -> Pattern c : itemsOf rest
   (k, x) : rest | k `elem` [K.VarId, K.QVarId] -> Value x : itemsOf rest
   (K.LParen, _) : (k, x) : (K.RParen, _) : rest | k `elem` [K.VarSym, K.QVarSym] -> Value x : itemsOf rest
+  (K.LParen, _) : (k, c) : (K.RParen, _) : (K.LParen, _) : (K.DotDot, _) : (K.RParen, _) : rest | k `elem` [K.ConSym, K.QConSym] -> Thing c All : itemsOf rest
+  (K.LParen, _) : (k, c) : (K.RParen, _) : rest | k `elem` [K.ConSym, K.QConSym] -> Thing c None : itemsOf rest
   (k, c) : (K.LParen, _) : (K.DotDot, _) : (K.RParen, _) : rest | k `elem` constructors -> Thing c All : itemsOf rest
   (k, c) : (K.LParen, _) : rest | k `elem` constructors ->
     let (inside, after) = break ((== K.RParen) . fst) rest
@@ -203,6 +242,7 @@ itemsOf = \case
   [] -> []
   where
     constructors = [K.ConId, K.QConId]
+    operators = [K.VarSym, K.QVarSym, K.ConSym, K.QConSym]
     -- What belongs to a type may be named with its module, which says
     -- nothing more than its name does.
     plain = reverse . takeWhile (/= '.') . reverse

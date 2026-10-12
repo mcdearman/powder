@@ -69,6 +69,10 @@ kindcheck program = runST $ do
     inSignature (Signature _ context t) = map constraintClass context ++ concatMap (mentioned . constraintType) context ++ mentioned t
 
     run = do
+      -- What was said of kinds is so before any is found.
+      forM_ (IntMap.toList (programKinds program)) $ \(n, said) -> do
+        k <- kindOf (NameId n)
+        void (lift (unify k (written said)))
       forM_ groups $ \group -> do
         mapM_ declaration group
         settle
@@ -76,7 +80,12 @@ kindcheck program = runST $ do
         unless (isMethod (NameId n)) (signed s)
       mapM_ instance' (programInstances program)
       mapM_ signed (concatMap annotations (allBindings program))
+      forM_ (programKinded program) (\(t, said) -> check t (written said))
       settle
+
+    written = \case
+      KindStar -> Star
+      KindArrow a r -> Arrow (written a) (written r)
 
     isMethod n = case nameSort <$> nameInfo program n of
       Just (Method _) -> True
@@ -111,6 +120,7 @@ annotations = binding
       If c t f -> expr c ++ expr t ++ expr f
       Case scrutinee alts -> expr scrutinee ++ concatMap (rhs . altRhs) alts
       Annotated inner s -> s : expr inner
+      Applied inner _ -> expr inner
       _ -> []
 
 -- Plumbing ------------------------------------------------------------------

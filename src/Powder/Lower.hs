@@ -254,6 +254,8 @@ dsExpr e = case HIR.exprKind e of
     clauses <- forM alts $ \a -> (\p -> ([p], dsRhs (HIR.altRhs a))) <$> dsPat (HIR.altPat a)
     Let (NonRec u scrut) <$> match [u] clauses matchFail
   HIR.Annotated inner _ -> dsExpr inner >>= taking (HIR.exprId e) >>= given (HIR.exprId e)
+  -- The types said what the name's dictionaries are, which are at the name.
+  HIR.Applied inner _ -> dsExpr inner
   HIR.Foreign _ -> err (HIR.exprId e) "a C function is only ever what a name is declared to be"
   HIR.Error -> err (HIR.exprId e) "this expression could not be resolved"
 

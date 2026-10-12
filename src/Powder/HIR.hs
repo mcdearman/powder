@@ -15,6 +15,7 @@
 module Powder.HIR
   ( module Powder.HIR.Id,
     Program (..),
+    KindSyntax (..),
     chunk,
     mine,
     NameInfo (..),
@@ -89,8 +90,19 @@ data Program = Program
     -- package compiled after others: what is below, or a 'chunk' or more
     -- above, is another package's, here to be known about and not to be
     -- compiled. Negative when the program is all there is.
-    programFloor :: Int
+    programFloor :: Int,
+    -- | The types names were said to have with parts left out: each has
+    -- the type that is found for it, which must be of that shape. By
+    -- 'NameId'. Every variable of one stands for a part left out.
+    programPartials :: Table Signature,
+    -- | The kinds type variables and types were said to have, by 'NameId'.
+    programKinds :: Table KindSyntax,
+    -- | The types said to have a kind, where they are written.
+    programKinded :: [(Type, KindSyntax)]
   }
+
+-- | A kind as a program writes it.
+data KindSyntax = KindStar | KindArrow KindSyntax KindSyntax
 
 -- | How many identities a package may make: each package's are in a run
 -- of this many, so that packages compiled apart do not make the same ones.
@@ -250,6 +262,9 @@ data ExprKind
   | Case Expr [Alt]
   | -- | An expression said to have a type.
     Annotated Expr Signature
+  | -- | A name applied to types: what the first of its type variables
+    -- are, each unless it is left out.
+    Applied Expr [Maybe Type]
   | -- | A C function, by what C calls it. What it takes and gives is in
     -- the signature of the name it is bound to.
     Foreign String
@@ -305,6 +320,7 @@ nodeIds = concatMap binding . allBindings
       If c t f -> expr c ++ expr t ++ expr f
       Case scrutinee alts -> expr scrutinee ++ concatMap alt alts
       Annotated inner _ -> expr inner
+      Applied inner _ -> expr inner
       _ -> []
 
 -- | The variables a binding refers to, its own among them if it is
@@ -329,6 +345,7 @@ mentions = binding
       If c t f -> expr c ++ expr t ++ expr f
       Case scrutinee alts -> expr scrutinee ++ concatMap (rhs . altRhs) alts
       Annotated inner _ -> expr inner
+      Applied inner _ -> expr inner
       _ -> []
 
 -- Pretty printing -----------------------------------------------------------
@@ -392,5 +409,6 @@ pretty program = unlines (map (binding 0) (programBindings program))
       If c t f -> parens atomic ("if " ++ expr False c ++ " then " ++ expr False t ++ " else " ++ expr False f)
       Case scrutinee alts -> parens atomic ("case " ++ expr False scrutinee ++ " of { " ++ intercalate "; " [pat False (altPat a) ++ rhs 0 " ->" (altRhs a) | a <- alts] ++ " }")
       Annotated inner _ -> expr atomic inner
+      Applied inner _ -> expr atomic inner
       Foreign symbol -> "<foreign " ++ symbol ++ ">"
       Error -> "<error>"

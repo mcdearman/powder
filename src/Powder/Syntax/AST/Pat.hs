@@ -3,7 +3,7 @@
 
 -- | The forms of a pattern. Import qualified.
 module Powder.Syntax.AST.Pat
-  ( Pat (Var, Wild, Lit, NegLit, Con, Infix, As, Paren, Tuple, List, Lazy, Record, Bang, View),
+  ( Pat (Var, Wild, Lit, NegLit, Con, Infix, As, Paren, Tuple, List, Lazy, Record, Bang, View, Sig),
     recordWild,
   )
 where
@@ -89,4 +89,11 @@ pattern View function inner <- (kindIs K.ViewPat -> Just (view -> (function, inn
 view :: Red.Red -> (Expr, Pat)
 view r = (child 0 r, child 0 r)
 
-{-# COMPLETE Var, Wild, Lit, NegLit, Con, Infix, As, Paren, Tuple, List, Lazy, Record, Bang, View #-}
+-- | @pattern :: type@
+pattern Sig :: Pat -> Type -> Pat
+pattern Sig inner ty <- (kindIs K.SigPat -> Just (sig -> (inner, ty)))
+
+sig :: Red.Red -> (Pat, Type)
+sig r = (child 0 r, child 0 r)
+
+{-# COMPLETE Var, Wild, Lit, NegLit, Con, Infix, As, Paren, Tuple, List, Lazy, Record, Bang, View, Sig #-}

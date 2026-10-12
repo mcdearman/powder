@@ -476,6 +476,14 @@ settle = do
         chosen <- filterM fits candidates
         forM_ (take 1 chosen) (lift . Unify.unify still)
       _ -> pure ()
+  -- And a type that has to be what a string written out is a list of is
+  -- Char, there being nothing else it could be.
+  let character c = fmap (\i -> (nameText i, nameModule i)) (nameInfo program c) == Just ("IsChar", "Powder.Base")
+  forM_ placed $ \(w, at') -> forM_ at' $ \v -> when (character (wantedClass w)) $ do
+    still <- lift (Unify.shallow (Meta v))
+    case still of
+      Meta _ -> void (lift (Unify.unify still (Con (builtinChar builtins))))
+      _ -> pure ()
   unsettled <- solve waiting
   forM_ unsettled $ \w -> local (\env -> env {envNode = wantedNode w}) $ do
     let cls = maybe "?" nameText (nameInfo program (wantedClass w))
@@ -695,6 +703,11 @@ group bs inner = do
   let unsigned = [x | b <- bs, x <- bound b, IntMap.notMember (nameKey x) (envSchemes env)]
       inferring e = e {envInferring = IntSet.union (IntSet.fromList (map nameKey unsigned)) (envInferring e)}
   monos <- forM unsigned (\x -> (,) x <$> unknown)
+  -- One said to have a type with parts left out has a type of that
+  -- shape, whatever goes where the parts are.
+  forM_ monos $ \(x, t) -> forM_ (IntMap.lookup (nameKey x) (programPartials (envProgram env))) $ \(Signature vs _ said) -> do
+    blanks <- IntMap.fromList <$> forM vs (\v -> (,) (nameKey v) <$> unknown)
+    at (Syntax.typeId said) (fromSyntaxIn blanks said >>= unify t)
   ((), wanted) <- capture (local inferring (withMonos monos (mapM_ binding bs)))
   waiting <- solve wanted
   -- A function is generalised. What a pattern binds is not: its one
@@ -936,10 +949,32 @@ infer e = at (exprId e) $ do
         ((), wanted) <- capture (check inner t)
         solve wanted >>= defer
       instantiate (Poly vs preds t)
+    -- A name applied to types is the name with the first of its type
+    -- variables those, and the rest found as ever. What it needs of them
+    -- is noted at the name, where what it is given is looked for.
+    HIR.Applied inner types -> case exprKind inner of
+      HIR.Var x -> appliedTo inner x types
+      HIR.Con c -> appliedTo inner c types
+      _ -> infer inner
     -- It is whatever it was declared to be.
     HIR.Foreign _ -> unknown
     HIR.Error -> unknown
   t <$ record (exprId e) t
+
+-- | The type of a name applied to types, at the node of the name.
+appliedTo :: Expr -> NameId -> [Maybe Syntax.Type] -> Tc s (Type s)
+appliedTo inner x types = at (exprId inner) $ do
+  inferring <- asks (IntSet.member (nameKey x) . envInferring)
+  when inferring (note refUses ((x, exprId inner) :))
+  Poly vs context t <- schemeOfName x
+  when (length types > length vs) (complain "this is applied to more types than it has type variables")
+  said <- forM (zip vs types) (\(v, ty) -> (,) (nameKey v) <$> maybe unknown fromSyntax ty)
+  rest <- forM (drop (length types) vs) (\v -> (,) (nameKey v) <$> unknown)
+  let scope = IntMap.fromList (said ++ rest)
+  evidence <- forM context (\(Pred c a) -> lift (Unify.substitute scope a) >>= want c)
+  recordEvidence (exprId inner) evidence
+  found <- lift (Unify.substitute scope t)
+  found <$ record (exprId inner) found
 
 -- | Check an expression against a type it is to have.
 --

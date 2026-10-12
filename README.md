@@ -348,6 +348,13 @@ compiled as if it did not. Implemented so far, all of them in
 | `StandaloneDeriving` | `deriving instance Show T`, apart from the declaration of `T`, which is in the same module |
 | `DerivingStrategies` | `deriving stock (Eq)`, `deriving newtype (Num)`, `deriving anyclass (C)`: how, said |
 | `GeneralisedNewtypeDeriving` | A newtype has the instances of what it is a newtype of: `newtype Age = Age Int deriving (Num)`. For a class of type constructors too, where the newtype is of something applied to its last parameter |
+| `ExplicitForAll` | `f :: forall a b. a -> b -> a`: a signature names its type variables |
+| `ScopedTypeVariables` | The variables a `forall` names are in scope in the definition, an instance's in its methods and a class's in its defaults; and a pattern may be said to have a type, `(x :: Int)` |
+| `TypeApplications` | `read @Int "5"`: what the first of a name's type variables are. `@_` leaves one to be found |
+| `InstanceSigs` | An instance may say a method's type again |
+| `ConstrainedClassMethods` | A method's context may ask more of the class's variable |
+| `KindSignatures`, `StandaloneKindSignatures` | `data T (f :: Type -> Type) a`, `(t :: Type)`, and `type T :: Type -> Type` apart from the declaration. A kind is `*` or `Type`, with arrows |
+| `TypeOperators` | `data a :+: b`, `type a ~> b = a -> b`, and `Int :+: Bool` in a type: tighter than the arrow, and grouped by their fixities |
 
 Implemented and in no edition, since each changes what a program already
 means:
@@ -358,6 +365,9 @@ means:
 | `LexicalNegation` | A minus that touches what follows it and not what comes before is that thing's sign: `f -1` is `f (-1)`, and `(- 1)` is a section |
 | `NumDecimals` | `1e6 :: Int`: a number written with an exponent, if it is whole, is a whole number |
 | `DeriveAnyClass` | `deriving (C)` for a class that cannot be derived is an instance with no methods |
+| `OverloadedStrings` | A string written in a program is of any type in the class `IsString`, of `Data.String` |
+| `PartialTypeSignatures`, `NamedWildCards` | `f :: _ -> Int`: a type with parts left out, which are found |
+| `AllowAmbiguousTypes` | A method's type need not mention its class's variable: applying it to a type says which instance is meant |
 
 And one of Powder's own, which only `Haskell2010` has on:
 

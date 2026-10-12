@@ -120,6 +120,8 @@ data SyntaxKind
     -- the type's declaration.
     StandaloneDerivingDecl
   | TypeDecl
+  | -- | @type T :: kind@
+    KindSigDecl
   | -- | A class: its head, a type, and the declarations in its @where@.
     ClassDecl
   | InstanceDecl
@@ -156,6 +158,18 @@ data SyntaxKind
   | TyParen
   | -- | @context => type@
     TyQual
+  | -- | @forall a b. type@
+    TyForall
+  | -- | @_@ in a type: whatever type it turns out to be.
+    TyWild
+  | -- | @(type :: kind)@
+    TyKinded
+  | -- | Types with operators between them: @a :+: b@.
+    TyInfix
+  | -- | A kind, as its tokens.
+    KindSig
+  | -- | @(a :: kind)@, where a type variable is named.
+    KindedBinder
   | -- Expressions.
     VarExpr
   | ConExpr
@@ -190,6 +204,9 @@ data SyntaxKind
   | -- | The qualifiers after a second bar or a later one, in a list
     -- comprehension whose qualifiers are gone through side by side.
     ListCompBranch
+  | -- | @\@type@ among a function's arguments: the type one of its type
+    -- variables is.
+    TypeArg
   | SectionL
   | SectionR
   | -- | @expression :: type@
@@ -221,6 +238,8 @@ data SyntaxKind
   | -- | @function -> pattern@: matches what the pattern does, of the
     -- function applied to what is matched.
     ViewPat
+  | -- | @pattern :: type@
+    SigPat
   deriving (Eq, Ord, Show, Enum, Bounded)
 
 -- | Whether a kind is a token's rather than a node's.
