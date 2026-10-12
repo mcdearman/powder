@@ -45,7 +45,7 @@ CUSKs, DeepSubsumption. MonoLocalBinds and PolyKinds change what some Haskell
 | | Milestone | State |
 |---|---|---|
 | M0 | Plumbing: LANGUAGE pragmas, editions, defaults in `Powder.toml` | done |
-| M1 | The library hierarchy | in progress |
+| M1 | The library hierarchy | done |
 | M2 | Extensions that are only syntax | in progress |
 | M3 | Deriving | not started |
 | M4 | Explicit quantification at rank 1 | not started |
@@ -68,11 +68,16 @@ what GHC's Prelude has in the rest.
 - [x] Foldable and Traversable, and the Prelude's folds over them
 - [x] `Control.Applicative`, `Data.Functor`, `Data.Function`, `Data.Foldable`,
       `Data.Traversable`, `Data.Monoid`, `Data.Semigroup`
-- [ ] Num without Eq and Show above it, as GHC has it
-- [ ] What else GHC's Prelude and `base` have that programs lean on:
-      `Word` in the Prelude, `Data.List.NonEmpty` with `sconcat` and `stimes`,
-      `Data.Functor.Identity`, `Data.Coerce`, `Data.Either`, `Data.Ord`,
-      `Data.Tuple`, `Data.Bifunctor`, `Data.IORef`, `Control.Exception`
+- [x] Num without Eq and Show above it, as GHC has it
+- [x] What else of `base` programs lean on: `Word` in the Prelude,
+      `Data.List.NonEmpty` with `sconcat` and `stimes`, `Data.Functor.Identity`
+      and `Data.Functor.Const`, `Data.Either`, `Data.Ord`, `Data.Tuple`,
+      `Data.Bool`, `Data.Bifunctor`, `Data.IORef`
+
+Left for the milestones that make them possible: `Control.Exception`, whose
+`SomeException` is an existential type over a class with `Typeable` above it
+(M6 and M8); `Data.Coerce` (M7); `Data.Kind`, `Data.Proxy` and `Data.Void`'s
+`absurd` over an empty case are small and come with M4.
 
 **M2, extensions that are only syntax.**
 

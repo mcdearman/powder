@@ -1,9 +1,9 @@
 module Data.Semigroup
-  ( Semigroup (..), Min (..), Max (..), Dual (..), Endo (..), All (..), Any (..), Sum (..), Product (..)
+  ( Semigroup (..), NonEmpty (..), Min (..), Max (..), First (..), Last (..), Dual (..), Endo (..), All (..), Any (..), Sum (..), Product (..)
   )
 where
 
-import Data.Monoid
+import Data.Monoid hiding (First (..), Last (..))
 import Powder.Base
 
 newtype Min a = Min {getMin :: a} deriving (Eq, Ord, Show, Read, Bounded)
@@ -21,3 +21,14 @@ instance Ord a => Semigroup (Max a) where
 
 instance (Ord a, Bounded a) => Monoid (Max a) where
   mempty = Max minBound
+
+-- The first of them, and the last: not Data.Monoid's, which are of Maybe.
+newtype First a = First {getFirst :: a} deriving (Eq, Ord, Show, Read, Bounded)
+
+instance Semigroup (First a) where
+  a <> _ = a
+
+newtype Last a = Last {getLast :: a} deriving (Eq, Ord, Show, Read, Bounded)
+
+instance Semigroup (Last a) where
+  _ <> b = b

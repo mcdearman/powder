@@ -13,7 +13,7 @@ infixr 8 ^, ^^, **
 infixl 7 *, /, %, `quot`, `rem`, `div`, `mod`
 infixl 6 +, -
 infixr 6 <>
-infixr 5 :, ++
+infixr 5 :, ++, :|
 infix 4 ==, /=, <, <=, >, >=, `elem`, `notElem`
 infixl 4 <$>, <$, <*>, *>, <*
 infixr 3 &&
@@ -68,7 +68,7 @@ class Show a where
   show x = showsPrec 0 x ""
   showList = showListWith shows
 
-class (Eq a, Show a) => Num a where
+class Num a where
   (+), (-), (*) :: a -> a -> a
   negate, abs, signum :: a -> a
   fromInteger :: Integer -> a
@@ -257,6 +257,46 @@ class (Functor t, Foldable t) => Traversable t where
 
 class Semigroup a where
   (<>) :: a -> a -> a
+  sconcat :: NonEmpty a -> a
+  stimes :: Integral b => b -> a -> a
+  sconcat (a :| as) = go a as
+    where
+      go b (c : cs) = b <> go c cs
+      go b [] = b
+  stimes n x
+    | n <= 0 = error "stimes: positive multiplier expected"
+    | n == 1 = x
+    | even n = let y = stimes (n `quot` 2) x in y <> y
+    | otherwise = x <> stimes (n - 1) x
+
+-- A list that has at least one element.
+data NonEmpty a = a :| [a] deriving (Eq, Ord)
+
+instance Show a => Show (NonEmpty a) where
+  showsPrec d (x :| xs) = showParen (d > 5) (showsPrec 6 x . showString " :| " . showsPrec 6 xs)
+
+instance Semigroup (NonEmpty a) where
+  (a :| as) <> (b :| bs) = a :| (as ++ b : bs)
+
+instance Functor NonEmpty where
+  fmap f (a :| as) = f a :| map f as
+
+instance Applicative NonEmpty where
+  pure a = a :| []
+  fs <*> xs = fs >>= \f -> fmap f xs
+
+instance Monad NonEmpty where
+  (a :| as) >>= f = case f a of
+    b :| bs -> b :| (bs ++ concatMap (\x -> case f x of c :| cs -> c : cs) as)
+
+instance Foldable NonEmpty where
+  foldr f z (a :| as) = f a (listFoldr f z as)
+  toList (a :| as) = a : as
+  length (_ :| as) = 1 + length as
+  null _ = False
+
+instance Traversable NonEmpty where
+  traverse f (a :| as) = liftA2 (:|) (f a) (traverse f as)
 
 class Semigroup a => Monoid a where
   mempty :: a
@@ -492,7 +532,7 @@ instance Integral a => Enum (Ratio a) where
   enumFromTo = numericFromTo
   enumFromThenTo = numericFromThenTo
 
-instance Integral a => Show (Ratio a) where
+instance Show a => Show (Ratio a) where
   showsPrec p (x :% y) = showParen (p > 7) (showsPrec 8 x . showString " % " . showsPrec 8 y)
 
 -- Floating point ----------------------------------------------------------
@@ -1597,11 +1637,11 @@ traverse_ f = foldr (\x rest -> f x *> rest) (pure ())
 sequenceA_ :: (Foldable t, Applicative f) => t (f a) -> f ()
 sequenceA_ = foldr (*>) (pure ())
 
-when :: Monad m => Bool -> m () -> m ()
-when c m = if c then m else return ()
+when :: Applicative f => Bool -> f () -> f ()
+when c m = if c then m else pure ()
 
-unless :: Monad m => Bool -> m () -> m ()
-unless c m = if c then return () else m
+unless :: Applicative f => Bool -> f () -> f ()
+unless c m = if c then pure () else m
 
 -- Cells ---------------------------------------------------------------------
 

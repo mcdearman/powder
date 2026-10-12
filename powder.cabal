@@ -10,6 +10,8 @@ data-files:
   lib/*.hs
   lib/Control/*.hs
   lib/Data/*.hs
+  lib/Data/Functor/*.hs
+  lib/Data/List/*.hs
   lib/Powder/*.hs
   lib/System/*.hs
   lib/Foreign/*.hs

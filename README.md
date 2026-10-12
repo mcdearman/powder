@@ -205,7 +205,10 @@ Haskell 2010, less what is listed under it:
 - beyond the Report's libraries: `Applicative`, `Alternative`, `MonadFail`,
   `Semigroup`, `Monoid`, `Foldable` and `Traversable`, in the Prelude and
   in `Control.Applicative`, `Data.Functor`, `Data.Function`,
-  `Data.Foldable`, `Data.Traversable`, `Data.Monoid` and `Data.Semigroup`
+  `Data.Foldable`, `Data.Traversable`, `Data.Monoid` and `Data.Semigroup`;
+  and `Data.List.NonEmpty`, `Data.Functor.Identity`, `Data.Functor.Const`,
+  `Data.Bifunctor`, `Data.Either`, `Data.Ord`, `Data.Tuple`, `Data.Bool`
+  and `Data.IORef`
 
 A program is kind and type checked before it is compiled (see
 [Types](#types)), and one that is not well typed does not run.
@@ -272,11 +275,12 @@ something of its own `pure`, `<>` or `traverse`. In every other edition
 it is [Prelude](lib/Prelude.hs), which has these classes too, as GHC's
 does. The extension
 `ReportPrelude`, which is Powder's own and which `Haskell2010` turns on,
-is what says which. So three things in a Haskell 2010 program are not as
+is what says which. So four things in a Haskell 2010 program are not as
 the Report has them: an instance of `Monad` needs one of `Applicative`,
-`fail` cannot be defined in an instance of `Monad`, and the types of the
-Prelude's folds are more general. `Num` still has `Eq` and `Show` above
-it, as in the Report and not as in GHC.
+`fail` cannot be defined in an instance of `Monad`, the types of the
+Prelude's folds are more general, and `Num` has neither `Eq` nor `Show`
+above it, so a function that compares or shows the numbers it is given
+says so in its type.
 
 `Prelude` and
 `Powder.Base` import each other, which is the first use the compiler

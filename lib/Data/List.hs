@@ -9,13 +9,45 @@ module Data.List
     unzip, unzip3, unzip4, unzip5, unzip6, unzip7, lines, words, unlines, unwords, foldl1',
     nub, delete, (\\), union, intersect, sort, insert, nubBy, deleteBy, deleteFirstsBy, unionBy,
     intersectBy, groupBy, sortBy, insertBy, maximumBy, minimumBy,
-    genericLength, genericTake, genericDrop, genericSplitAt, genericIndex, genericReplicate
+    genericLength, genericTake, genericDrop, genericSplitAt, genericIndex, genericReplicate,
+    sortOn, uncons, unsnoc, singleton, dropWhileEnd, isSubsequenceOf, scanl', iterate'
   )
 where
 
 import Powder.Base (Foldable (..), find, maximumBy, minimumBy)
 
 infix 5 \\
+
+sortOn :: Ord b => (a -> b) -> [a] -> [a]
+sortOn f = map snd . sortBy (\a b -> compare (fst a) (fst b)) . map (\x -> let y = f x in y `seq` (y, x))
+
+uncons :: [a] -> Maybe (a, [a])
+uncons [] = Nothing
+uncons (x : xs) = Just (x, xs)
+
+unsnoc :: [a] -> Maybe ([a], a)
+unsnoc = foldr (\x acc -> Just (maybe ([], x) (\(a, b) -> (x : a, b)) acc)) Nothing
+
+singleton :: a -> [a]
+singleton x = [x]
+
+dropWhileEnd :: (a -> Bool) -> [a] -> [a]
+dropWhileEnd p = foldr (\x xs -> if p x && null xs then [] else x : xs) []
+
+isSubsequenceOf :: Eq a => [a] -> [a] -> Bool
+isSubsequenceOf [] _ = True
+isSubsequenceOf _ [] = False
+isSubsequenceOf a@(x : a') (y : b)
+  | x == y = isSubsequenceOf a' b
+  | otherwise = isSubsequenceOf a b
+
+scanl' :: (b -> a -> b) -> b -> [a] -> [b]
+scanl' f q ls = q `seq` (q : case ls of
+  [] -> []
+  x : xs -> scanl' f (f q x) xs)
+
+iterate' :: (a -> a) -> a -> [a]
+iterate' f x = let x' = f x in x' `seq` (x : iterate' f x')
 
 intersperse :: a -> [a] -> [a]
 intersperse _ [] = []

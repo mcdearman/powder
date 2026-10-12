@@ -1,7 +1,8 @@
 module Control.Monad
   ( Functor (..), Applicative (..), Monad (..), MonadFail (..), MonadPlus (..), mapM, mapM_, forM, forM_, sequence, sequence_, (=<<), (>=>), (<=<),
     forever, void, join, msum, filterM, mapAndUnzipM, zipWithM, zipWithM_, foldM, foldM_,
-    replicateM, replicateM_, guard, when, unless, liftM, liftM2, liftM3, liftM4, liftM5, ap
+    replicateM, replicateM_, guard, when, unless, liftM, liftM2, liftM3, liftM4, liftM5, ap,
+    Alternative (..), mfilter, (<$!>), fmap, (<$>)
   )
 where
 
@@ -9,6 +10,14 @@ import Data.Functor (void)
 import Powder.Base
 
 infixr 1 >=>, <=<
+infixl 4 <$!>
+
+mfilter :: MonadPlus m => (a -> Bool) -> m a -> m a
+mfilter p ma = ma >>= \a -> if p a then return a else mzero
+
+-- fmap, with the result worked out before it is given back.
+(<$!>) :: Monad m => (a -> b) -> m a -> m b
+f <$!> m = m >>= \x -> let z = f x in z `seq` return z
 
 class (Alternative m, Monad m) => MonadPlus m where
   mzero :: m a
