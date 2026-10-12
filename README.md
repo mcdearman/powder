@@ -335,6 +335,16 @@ compiled as if it did not. Implemented so far, all of them in
 | `BangPatterns` | `!pattern`: what is matched is worked out first. In a function's, a lambda's or a case's patterns; not yet on a `let` |
 | `PostfixOperators` | `(e op)` is `op e`, so `op` may take one argument. It is so with the extension off too |
 | `EmptyDataDeriving` | `data Void deriving (Eq, Show)` |
+| `GADTSyntax` | `data T a where C :: a -> T a`: constructors given by their types. Each must make the type applied to variables, which is all that is not a GADT |
+| `RecordWildCards` | `C {..}`: the fields not named, each as the variable of its name. Not in a pattern bound at the top of a module |
+| `DisambiguateRecordFields` | A field that two modules have is the constructor's, where a record is built or matched |
+| `ExplicitNamespaces` | `import M (type T)`: `type` before a name in a list of names |
+
+Implemented and in no edition, since it changes what a program means:
+
+| Extension | What it does |
+| --- | --- |
+| `StrictData` | A constructor's fields are strict unless marked lazy, `~T` |
 
 And one of Powder's own, which only `Haskell2010` has on:
 

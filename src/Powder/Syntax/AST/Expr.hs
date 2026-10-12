@@ -5,6 +5,7 @@
 module Powder.Syntax.AST.Expr
   ( Expr (Var, Con, Lit, App, Infix, Lam, Let, If, Case, Do, Paren, Tuple, List, Range, SectionL, SectionR, Typed, Comprehension, Record, LamCase, MultiIf, TupleSection),
     Item (..),
+    recordWild,
   )
 where
 
@@ -98,6 +99,11 @@ range (syntax -> r)
 -- else a record with some fields changed.
 pattern Record :: Expr -> [(Name, Maybe Expr)] -> Expr
 pattern Record subject fields <- (kindIs K.RecordExpr -> Just (record -> (subject, fields)))
+
+-- | Whether a record's fields end in @..@: each field not named is given
+-- the variable of its name, where there is one.
+recordWild :: Expr -> Bool
+recordWild = fieldWild . syntax
 
 record :: Red.Red -> (Expr, [(Name, Maybe Expr)])
 record r = (child 0 r, fieldBinds r)

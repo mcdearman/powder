@@ -101,6 +101,13 @@ data SyntaxKind
   | -- Declarations.
     DataDecl
   | ConDecl
+  | -- | The type a constructor makes, where the constructor is given by
+    -- its type: what comes last in @C :: a -> T a@.
+    GadtResult
+  | -- | A context before a constructor's type, which says nothing.
+    ConContext
+  | -- | @..@ among the fields of a record: all the fields not named.
+    FieldWild
   | -- | Fields of a record constructor that share a type: @a, b :: T@.
     FieldDecl
   | -- | @field = value@, in a record expression or pattern.

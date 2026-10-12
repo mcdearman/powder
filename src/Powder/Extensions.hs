@@ -134,8 +134,11 @@ implemented =
       [ BangPatterns,
         BinaryLiterals,
         BlockArguments,
+        DisambiguateRecordFields,
         EmptyCase,
         EmptyDataDeriving,
+        ExplicitNamespaces,
+        GADTSyntax,
         HexFloatLiterals,
         ImportQualifiedPost,
         LambdaCase,
@@ -143,7 +146,9 @@ implemented =
         NamedFieldPuns,
         NumericUnderscores,
         PostfixOperators,
+        RecordWildCards,
         ReportPrelude,
+        StrictData,
         TupleSections
       ]
   )
@@ -202,8 +207,11 @@ editionExtensions = \case
     [ BangPatterns,
       BinaryLiterals,
       BlockArguments,
+      DisambiguateRecordFields,
       EmptyCase,
       EmptyDataDeriving,
+      ExplicitNamespaces,
+      GADTSyntax,
       HexFloatLiterals,
       ImportQualifiedPost,
       LambdaCase,
@@ -211,6 +219,7 @@ editionExtensions = \case
       NamedFieldPuns,
       NumericUnderscores,
       PostfixOperators,
+      RecordWildCards,
       TupleSections
     ]
 

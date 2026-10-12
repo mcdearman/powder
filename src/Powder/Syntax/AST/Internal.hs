@@ -22,6 +22,7 @@ module Powder.Syntax.AST.Internal
     Subordinates (..),
     itemsOf,
     fieldBinds,
+    fieldWild,
     constructorNameOf,
     spelled,
     children,
@@ -169,6 +170,10 @@ constructorNameOf r = case nameOf r of
 fieldBinds :: (Ast a) => Red -> [(Name, Maybe a)]
 fieldBinds r = [(nameOf f, listToMaybe (children f)) | f <- Red.nodes r, Red.kind f == K.FieldBind]
 
+-- | Whether a node's field bindings end in @..@, for the fields not named.
+fieldWild :: Red -> Bool
+fieldWild r = any ((== K.FieldWild) . Red.kind) (Red.nodes r)
+
 -- | The tokens of a node that mean something, each with its text.
 spelled :: Red -> [(SyntaxKind, Name)]
 spelled r = [(Red.kind t, Text.unpack (Red.text t)) | t <- Red.tokens r, not (K.isTrivia (Red.kind t))]
@@ -185,6 +190,8 @@ itemsOf = \case
      in Thing c (Some ([x | (k', x) <- inside, k' `elem` [K.VarId, K.ConId, K.VarSym, K.ConSym]] ++ [plain x | (k', x) <- inside, k' `elem` [K.QVarId, K.QConId]])) : itemsOf (drop 1 after)
   (k, c) : rest | k `elem` constructors -> Thing c None : itemsOf rest
   (K.KwModule, _) : (_, m) : rest -> Reexport m : itemsOf rest
+  -- The word says what the name after it is, which its spelling says too.
+  (K.KwType, _) : rest -> itemsOf rest
   (K.RParen, _) : _ -> []
   _ : rest -> itemsOf rest
   [] -> []

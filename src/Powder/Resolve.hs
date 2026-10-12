@@ -78,6 +78,10 @@ data Env = Env
     -- nearer: a field's name is looked up here, where a variable of the
     -- same name does not hide it.
     envTop :: Map.Map Name NameId,
+    -- | Everything the module has at its top by each name, where there
+    -- may be more than one: a field is told from another of its name by
+    -- the constructor it is used with.
+    envTopAll :: Map.Map Name [NameId],
     -- | The extensions each file is written with.
     envLanguages :: Map.Map FilePath Extensions,
     -- | Whether what is being resolved was made up here, so that it is
@@ -192,7 +196,7 @@ resolveAfter seed languages lenient sources extra = case reverse (problems final
     program = Program (bindings ++ reverse (generated final)) (names final) (origins final) (signatures final) (reverse (dataTypes final)) (synonyms final) (classes final) (reverse (instances final)) builtins spelled (defaults final) (newtypes final) (maybe [] seedModules seed ++ [(file, n) | (file, n, _) <- sources] ++ [(file, root) | Just (_, _, file, _) <- [extra]]) (maybe [] seedImports seed ++ [(n, [name | (name, _, _, _) <- importsOf n]) | n <- moduleNames]) (maybe (-1) seedFloor seed)
     ((linked, (bindings, builtins)), final) =
       runState
-        (runReaderT run (Env Map.empty Map.empty Map.empty Map.empty Map.empty Map.empty "" Nothing "" spelled Set.empty Map.empty Map.empty Map.empty languages False))
+        (runReaderT run (Env Map.empty Map.empty Map.empty Map.empty Map.empty Map.empty "" Nothing "" spelled Set.empty Map.empty Map.empty Map.empty Map.empty languages False))
         initial
     initial = case seed of
       Nothing -> St 0 IntMap.empty IntMap.empty IntMap.empty IntMap.empty [] IntMap.empty [] IntMap.empty [] [] IntMap.empty [] IntMap.empty []
@@ -328,6 +332,7 @@ resolveAfter seed languages lenient sources extra = case reverse (problems final
               env
                 { envValues = one (scopeValues (scopeOf n)),
                   envTop = one (scopeValues (scopeOf n)),
+                  envTopAll = scopeValues (scopeOf n),
                   envGlobals = one (scopeValues (basis n)),
                   envConstructors = one (scopeConstructors (scopeOf n)),
                   envTypes = one (scopeTypes (scopeOf n)),
@@ -694,7 +699,24 @@ constructor name = do
   pure found
 
 construct :: Name -> M Expr
-construct name = constructor name >>= mk . maybe Error Con
+construct name = constructor name >>= maybe (mk Error) constructing
+
+-- | A constructor, to be applied to its fields. One with strict fields is
+-- a function that works those out before it makes anything: the Report's
+-- @C $! x@ for each of them (4.2.1). A newtype's constructor is not there
+-- to be strict.
+constructing :: NameId -> M Expr
+constructing k = do
+  musts <- gets (IntMap.findWithDefault [] (nameKey k) . strict)
+  new <- gets (elem k . newtypes)
+  if new || not (or musts)
+    then mk (Con k)
+    else do
+      xs <- mapM (const (newName "x" Local)) musts
+      ps <- mapM (mkPat . Pat.Var) xs
+      whole <- mk (Con k) >>= \c -> mapM (mk . Var) xs >>= apply c
+      body <- foldM (\rest (x, must) -> if must then mk (Var x) >>= \v -> call "seq" [v, rest] else pure rest) whole (reverse (zip xs musts))
+      mk (Lam ps body)
 
 -- Types ----------------------------------------------------------------------
 
@@ -714,11 +736,28 @@ placed c given = do
 
 placedOnce :: NameId -> [(Name, a)] -> M [(Int, a)]
 placedOnce c given = fmap catMaybes . forM given $ \(f, a) -> do
-  field <- asks (Map.lookup f . envTop)
-  places <- gets (\st -> maybe [] (\x -> IntMap.findWithDefault [] (nameKey x) (fields st)) field)
-  case lookup c places of
-    Just i -> pure (Just (i, a))
-    Nothing -> Nothing <$ complain (f ++ " is not a field of this constructor")
+  -- Of the fields that go by the name, the constructor's.
+  candidates <- asks (Map.findWithDefault [] f . envTopAll)
+  known <- gets fields
+  disambiguates <- enabled DisambiguateRecordFields
+  case [i | x <- candidates, Just i <- [lookup c (IntMap.findWithDefault [] (nameKey x) known)]] of
+    i : _
+      | length candidates > 1 && not disambiguates ->
+          Nothing <$ complain (f ++ " is the name of more than one thing here: the constructor says which only if DisambiguateRecordFields is on")
+      | otherwise -> pure (Just (i, a))
+    [] -> Nothing <$ complain (f ++ " is not a field of this constructor")
+
+-- | The names of a constructor's fields, by where they are in it, given
+-- the constructor as it is spelled. It has none if it is not known, or
+-- was not declared with fields.
+fieldsOfConstructor :: M (Name -> [(Int, Name)])
+fieldsOfConstructor = do
+  constructors <- asks envConstructors
+  known <- gets fields
+  named <- gets names
+  pure $ \c -> case Map.lookup c constructors of
+    Nothing -> []
+    Just k -> [(i, nameText info) | (f, places) <- IntMap.toList known, (k', i) <- places, k' == k, Just info <- [IntMap.lookup f named]]
 
 -- | The type of functions, whose identity is fixed beforehand.
 arrow :: NameInfo
@@ -793,16 +832,44 @@ constructorsAs ids t parameters cs = do
     modify (\st -> st {names = IntMap.insert n (NameInfo c (Constructor (ConInfo spelling tag (length fields) (length cs)) ids) home) (names st)})
   addDataType (DataType t parameters (zip ids (map snd cs)))
 
+-- | The type variables in scope in the type of a constructor that is
+-- given by its type: the ones its result applies the type to, each
+-- standing for the parameter in its place. The result has to be the type
+-- applied to variables, all different, since anything else is a GADT.
+typedScope :: Name -> [(Name, NameId)] -> Syntax.Type -> M [(Name, NameId)]
+typedScope t scope result = case typedShape result of
+  Just (t', vs) | t' == t, length vs == length scope, nub vs == vs -> pure (zip vs (map snd scope))
+  _ -> scope <$ complain ("the type of a constructor of " ++ t ++ " must end in " ++ unwords (t : map fst scope) ++ ", with any variables for its parameters so long as they are different")
+
+-- | A type that is a constructor applied to variables: the two.
+typedShape :: Syntax.Type -> Maybe (Name, [Name])
+typedShape = \case
+  SType.Paren inner -> typedShape inner
+  SType.Con c -> Just (c, [])
+  SType.App (SType.Con c) arguments -> (,) c <$> mapM variable' arguments
+  _ -> Nothing
+  where
+    variable' = \case
+      SType.Var v -> Just v
+      SType.Paren inner -> variable' inner
+      _ -> Nothing
+
 -- | What a declaration of a type says it is, given the names this module's
 -- types were given. Gives the constructors it declares.
 typeDecl :: Map.Map Name (NameId, [NameId]) -> Syntax.Decl -> M ()
 typeDecl own d = within d $ case d of
   Decl.Data t parameters cs -> do
     scope <- typeParameters parameters
-    declared <- withTypeVariables scope . forM cs $ \c@(Syntax.Constructor name tys) -> within c ((,) name <$> mapM type' tys)
+    declared <- forM cs $ \c@(Syntax.Constructor name tys) -> within c $ do
+      -- A constructor given by its type names the type's parameters as
+      -- it likes.
+      scope' <- maybe (pure scope) (typedScope t scope) (Syntax.constructorResult c)
+      withTypeVariables scope' ((,) name <$> mapM type' tys)
     let (name, ids) = own Map.! t
     constructorsAs ids name (map snd scope) declared
-    modify (\st -> st {strict = IntMap.union (IntMap.fromList (zip (map nameKey ids) (map Syntax.constructorStrict cs))) (strict st)})
+    -- With StrictData a field is strict unless it is marked lazy.
+    strictly <- enabled StrictData
+    modify (\st -> st {strict = IntMap.union (IntMap.fromList (zip (map nameKey ids) (map (map (fromMaybe strictly) . Syntax.constructorMarks) cs))) (strict st)})
     when (Decl.isNewtype d) $
       if map (length . snd) declared == [1]
         then modify (\st -> st {newtypes = ids ++ newtypes st})
@@ -1048,7 +1115,11 @@ deriving' own d = within d $ case d of
         constructors <- fmap catMaybes . forM cs $ \(Syntax.Constructor name fields) ->
           asks (fmap (name,,length fields) . Map.lookup name . envConstructors)
         -- Only a parameter that a field mentions is asked to be an instance.
-        let mentioned = concat [concatMap typeVariables tys | Syntax.Constructor _ tys <- cs]
+        -- A constructor given by its type has its own names for them.
+        let named con v = case Syntax.constructorResult con >>= typedShape of
+              Just (_, vs) | Just p <- lookup v (zip vs parameters) -> p
+              _ -> v
+            mentioned = concat [map (named con) (concatMap typeVariables tys) | con@(Syntax.Constructor _ tys) <- cs]
             constrained = filter (`elem` mentioned) (nub parameters)
         allowed <- enabled EmptyDataDeriving
         methods <- case unqualified c of
@@ -1393,23 +1464,30 @@ grouped ds = map gather (NE.groupBy sameFunction (concatMap binds ds))
 
 -- | The names a group brings into scope.
 defines :: Group -> [Name]
-defines = \case
+defines = definesWith (const [])
+
+-- | The same, given the fields of each constructor, which a pattern that
+-- ends in two dots binds.
+definesWith :: (Name -> [(Int, Name)]) -> Group -> [Name]
+definesWith wild = \case
   Equations _ f _ -> [f]
-  Destructuring _ p _ -> patternNames p
+  Destructuring _ p _ -> patternNames wild p
 
 -- | The variables a pattern binds, as they are spelled.
-patternNames :: SPat.Pat -> [Name]
-patternNames = \case
+patternNames :: (Name -> [(Int, Name)]) -> SPat.Pat -> [Name]
+patternNames wild = \case
   SPat.Var x -> [x]
-  SPat.As x p -> x : patternNames p
-  SPat.Con _ ps -> concatMap patternNames ps
-  SPat.Infix a _ b -> patternNames a ++ patternNames b
-  SPat.Record _ fs -> concat [maybe [unqualified f] patternNames p | (f, p) <- fs]
-  SPat.Bang p -> patternNames p
-  SPat.Paren p -> patternNames p
-  SPat.Lazy p -> patternNames p
-  SPat.Tuple ps -> concatMap patternNames ps
-  SPat.List ps -> concatMap patternNames ps
+  SPat.As x p -> x : patternNames wild p
+  SPat.Con _ ps -> concatMap (patternNames wild) ps
+  SPat.Infix a _ b -> patternNames wild a ++ patternNames wild b
+  p@(SPat.Record c fs) ->
+    concat [maybe [unqualified f] (patternNames wild) q | (f, q) <- fs]
+      ++ (if SPat.recordWild p then map snd (wild c) \\ map (unqualified . fst) fs else [])
+  SPat.Bang p -> patternNames wild p
+  SPat.Paren p -> patternNames wild p
+  SPat.Lazy p -> patternNames wild p
+  SPat.Tuple ps -> concatMap (patternNames wild) ps
+  SPat.List ps -> concatMap (patternNames wild) ps
   SPat.Wild -> []
   SPat.Lit _ -> []
   SPat.NegLit _ -> []
@@ -1431,8 +1509,9 @@ declOf = \case
 -- in their scope.
 bindings' :: [Syntax.Decl] -> M a -> M ([Binding], a)
 bindings' ds inner = do
+  wild <- fieldsOfConstructor
   let groups = grouped ds
-      defined = concatMap defines groups
+      defined = concatMap (definesWith wild) groups
   conflicts defined groups
   scope <- forM (nub defined) (\x -> (,) x <$> newName x Local)
   local (\env -> env {envValues = Map.union (Map.fromList scope) (envValues env)}) $ do
@@ -1502,7 +1581,8 @@ qualifiers (s : rest) inner = within s $ case s of
 -- name may be bound only once among them.
 patterns :: [SPat.Pat] -> M ([Pat], [(Name, NameId)])
 patterns ps = do
-  let spelled = concatMap patternNames ps
+  wild <- fieldsOfConstructor
+  let spelled = concatMap (patternNames wild) ps
   forM_ (nub (spelled \\ nub spelled)) $ \x ->
     forM_ (take 1 ps) (\p -> within p (complain (x ++ " is bound more than once in these patterns")))
   scope <- forM (nub spelled) (\x -> (,) x <$> newName x Local)
@@ -1553,7 +1633,15 @@ patternOf p = within p $ case p of
         given <- placed k [(f, (f, p)) | (f, p) <- fs]
         -- A field with no pattern is the variable of its name.
         let field (f, p) = maybe (binder (unqualified f) >>= mkPat . Pat.Var) patternOf p
-        ps <- forM [0 .. arity - 1] (\i -> maybe (mkPat Pat.Wild) field (lookup i given))
+        -- And so is each field not named, if they are asked for with two
+        -- dots, where a variable was made for it.
+        others <- if SPat.recordWild p then ($ c) <$> fieldsOfConstructor else pure []
+        scope <- asks envValues
+        let other i = case lookup i others of
+              Just f | Just x <- Map.lookup f scope -> mkPat (Pat.Var x)
+              Just _ -> complain "`..` binds no variables in a pattern at the top of a module" >> mkPat Pat.Wild
+              Nothing -> mkPat Pat.Wild
+        ps <- forM [0 .. arity - 1] (\i -> maybe (other i) field (lookup i given))
         whole <- mkPat (Pat.Con k ps)
         -- Fields are matched in the order they are written.
         let order = map fst given
@@ -1652,17 +1740,23 @@ expr e = within e $ case e of
   Expr.Comprehension element qs -> comprehension element qs
   -- A record built: the constructor applied, with a field not given
   -- being an error to look at.
-  Expr.Record (Expr.Con c) fs ->
+  e0@(Expr.Record (Expr.Con c) fs) ->
     constructor c >>= \case
       Nothing -> mk Error
       Just k -> do
         arity <- arityOf k
-        given <- placed k [(f, (f, e)) | (f, e) <- fs]
+        named <- placed k [(f, (f, e)) | (f, e) <- fs]
+        -- With two dots, each field not named is given the variable of
+        -- its name, if there is one that is not the field itself.
+        others <- if Expr.recordWild e0 then ($ c) <$> fieldsOfConstructor else pure []
+        scope <- asks envValues
+        top <- asks envTop
+        let given = named ++ [(i, (f, Nothing)) | (i, f) <- others, i `notElem` map fst named, Just x <- [Map.lookup f scope], Just x /= Map.lookup f top]
         musts <- gets (IntMap.findWithDefault [] (nameKey k) . strict)
         when (or [must | (i, must) <- zip [0 ..] musts, i `notElem` map fst given]) $
           complain ("a strict field of " ++ c ++ " is not given")
         arguments <- forM [0 .. arity - 1] (\i -> maybe (mk (Prim MatchFail)) fieldValue (lookup i given))
-        mk (Con k) >>= (`apply` arguments)
+        constructing k >>= (`apply` arguments)
   -- A record changed: for each constructor that has all the fields, the
   -- same constructor with those fields replaced.
   Expr.Record subject fs -> do

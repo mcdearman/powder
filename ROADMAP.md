@@ -97,11 +97,11 @@ Left for the milestones that make them possible: `Control.Exception`, whose
 
 Next, in this order:
 
-- [ ] GADTSyntax
-- [ ] ExplicitNamespaces
-- [ ] DisambiguateRecordFields
-- [ ] StrictData
-- [ ] RecordWildCards
+- [x] GADTSyntax
+- [x] ExplicitNamespaces
+- [x] DisambiguateRecordFields
+- [x] StrictData
+- [x] RecordWildCards
 - [ ] ViewPatterns, once a pattern can hold an expression
 - [ ] BangPatterns on `let` and `where` bindings
 - [ ] PatternSynonyms, the simple ones

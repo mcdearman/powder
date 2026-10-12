@@ -4,6 +4,7 @@
 -- | The forms of a pattern. Import qualified.
 module Powder.Syntax.AST.Pat
   ( Pat (Var, Wild, Lit, NegLit, Con, Infix, As, Paren, Tuple, List, Lazy, Record, Bang),
+    recordWild,
   )
 where
 
@@ -46,6 +47,11 @@ infixPat r = case children r of
 -- | A constructor and patterns for the fields named.
 pattern Record :: Name -> [(Name, Maybe Pat)] -> Pat
 pattern Record name fields <- (kindIs K.RecordPat -> Just (recordPat -> (name, fields)))
+
+-- | Whether a pattern with fields ends in @..@: the fields not named are
+-- each bound to the variable of its name.
+recordWild :: Pat -> Bool
+recordWild = fieldWild . syntax
 
 recordPat :: Red.Red -> (Name, [(Name, Maybe Pat)])
 recordPat r = (nameOf r, fieldBinds r)

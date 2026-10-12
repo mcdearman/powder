@@ -474,12 +474,21 @@ sourceFile = do
     advance
     expectAny [ConId, QConId] "a module name"
     exports <- at LParen
-    when exports balanced
+    when exports (namespaces >> balanced)
     expect_ KwWhere
     close_ h ModuleHeader
   _ <- block False ([KwData, KwNewtype, KwType, KwImport, KwClass, KwInstance, KwForeign, KwDefault] ++ declStarts) topDecl
   leftovers "expected a declaration"
   close_ m Module
+
+-- | In a list of what is imported or exported, the word @type@ before a
+-- name says the name is a type's: allowed if ExplicitNamespaces is on.
+namespaces :: P ()
+namespaces = do
+  allowed <- on ExplicitNamespaces
+  kinds <- ahead 0
+  when (not allowed && KwType `elem` takeWhile (`notElem` Eof : KwWhere : semis) kinds) $
+    problem "`type` before a name in a list of names is allowed only if ExplicitNamespaces is on"
 
 -- | Whatever is left is an error, all of it one.
 leftovers :: String -> P ()
@@ -511,6 +520,7 @@ topDecl = do
       after <- on ImportQualifiedPost
       spelled <- spellings 3
       when (not after && drop 2 spelled == ["qualified"]) (problem "`qualified` goes before the module's name, unless ImportQualifiedPost is on")
+      namespaces
       wholeDecl ImportDecl
     KwClass -> classDecl ClassDecl
     KwInstance -> classDecl InstanceDecl
@@ -574,10 +584,20 @@ dataDecl = do
   when (stoppedAt (scan [DoubleArrow, Equals] kinds) == DoubleArrow) (btype >> expect_ DoubleArrow)
   expect_ ConId
   whileM (at VarId) advance
-  defined <- eat Equals
-  when defined $ do
-    conDecl
-    whileM (eat Bar) conDecl
+  -- The constructors, each written as one, or after a where each given by
+  -- its type.
+  typed <- at KwWhere
+  if typed
+    then do
+      allowed <- on GADTSyntax
+      unless allowed (problem "constructors are given by their types, after `where`, only if GADTSyntax is on")
+      advance
+      void (block True [ConId, LParen] typedCon)
+    else do
+      defined <- eat Equals
+      when defined $ do
+        conDecl
+        whileM (eat Bar) conDecl
   deriving' <- at KwDeriving
   when deriving' $ do
     d <- open
@@ -605,6 +625,38 @@ dataDecl = do
               expect_ RBrace
             else whileM atField (strictly atype)
       close_ c ConDecl
+    -- @C :: a -> T a@, or with fields named @C :: { f :: a } -> T a@.
+    typedCon = do
+      c <- open
+      kinds <- ahead 0
+      case kinds of
+        LParen : op : RParen : _ | op `elem` [ConSym, Colon] -> replicateM_ 3 advance
+        _ -> expect_ ConId
+      expect_ DoubleColon
+      rest <- ahead 0
+      when (stoppedAt (scan [DoubleArrow] rest) == DoubleArrow) $ do
+        x <- open
+        btype
+        expect_ DoubleArrow
+        close_ x ConContext
+      record <- eat LBrace
+      if record
+        then do
+          empty <- at RBrace
+          unless empty (fieldDecl >> whileM (eat Comma) fieldDecl)
+          expect_ RBrace
+          expect_ RightArrow
+          btype' >>= made
+        else arguments
+      close_ c ConDecl
+    -- The types of the fields, each before an arrow, and then the type
+    -- that is made.
+    arguments = do
+      atStrict >>= (`when` advance)
+      t <- btype'
+      more <- eat RightArrow
+      if more then arguments else made t
+    made t = openBefore t >>= (`close_` GadtResult)
     fieldDecl = do
       f <- open
       fieldName
@@ -614,7 +666,11 @@ dataDecl = do
       type_
       close_ f FieldDecl
     -- The Report lets the mark stand apart from its type.
-    atStrict = (||) <$> at Bang <*> ((&&) <$> at VarSym <*> atText "!")
+    -- With StrictData a field may be marked the other way, as lazy.
+    atStrict = do
+      lazy <- (&&) <$> on StrictData <*> at Tilde
+      strict <- (||) <$> at Bang <*> ((&&) <$> at VarSym <*> atText "!")
+      pure (lazy || strict)
     atField = do
       strict <- atStrict
       (strict ||) <$> atAny [ConId, QConId, VarId, LParen, LBracket]
@@ -984,14 +1040,23 @@ fieldBinds value = do
   unless empty (bind >> whileM (eat Comma) bind)
   expect_ RBrace
   where
-    -- With NamedFieldPuns a field by itself is the variable of its name.
+    -- With NamedFieldPuns a field by itself is the variable of its name,
+    -- and with RecordWildCards two dots are all the fields not named.
     bind = do
       f <- open
-      fieldName
-      puns <- on NamedFieldPuns
-      given <- at Equals
-      when (given || not puns) (expect_ Equals >> value)
-      close_ f FieldBind
+      wild <- at DotDot
+      if wild
+        then do
+          allowed <- on RecordWildCards
+          unless allowed (problem "`..` stands for the fields not named only if RecordWildCards is on")
+          advance
+          close_ f FieldWild
+        else do
+          fieldName
+          puns <- on NamedFieldPuns
+          given <- at Equals
+          when (given || not puns) (expect_ Equals >> value)
+          close_ f FieldBind
 
 atAtomStart :: P Bool
 atAtomStart = atAny atomStarts
