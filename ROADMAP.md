@@ -49,7 +49,7 @@ CUSKs, DeepSubsumption. MonoLocalBinds and PolyKinds change what some Haskell
 | M2 | Extensions that are only syntax | done |
 | M3 | Deriving | done |
 | M4 | Explicit quantification at rank 1 | done |
-| M5 | The class system | not started |
+| M5 | The class system | done |
 | M6 | Higher ranks and existentials | not started |
 | M7 | GADTs, type families and what needs an implication solver | not started |
 | M8 | Kinds | not started |
@@ -169,11 +169,30 @@ What these do not yet do:
   types, which waits for classes of more than one parameter in M5.
 - MonoLocalBinds goes with M7, which is what needs it.
 
-**M5, the class system.** FlexibleContexts, FlexibleInstances,
-TypeSynonymInstances, MultiParamTypeClasses, ConstraintKinds; then
-FunctionalDependencies, UndecidableInstances and the overlap pragmas. A
-predicate comes to hold a list of types and the solver becomes a worklist: the
-first redesign of the checker.
+**M5, the class system.** The first redesign of the checker: a class is
+asked of as many types as it has variables, and an instance is found by
+fitting its types to those wanted, not by the one type constructor it is
+for.
+
+- [x] MultiParamTypeClasses, classes of no types among them
+- [x] FunctionalDependencies
+- [x] FlexibleInstances and TypeSynonymInstances
+- [x] FlexibleContexts
+- [x] The overlap pragmas: OVERLAPPING, OVERLAPPABLE, OVERLAPS
+- [x] ConstraintKinds
+- [x] UndecidableInstances
+
+What these do not yet do:
+
+- No instance is checked to be one whose use must end: UndecidableInstances
+  is as good as always on, and the search for an instance has no depth at
+  which it gives up.
+- A class's dependencies are used to find types, and instances are not
+  checked to agree with them.
+- A name given to constraints is known in the package that gives it, and
+  not in another compiled apart. `Constraint` as a kind is read as `Type`.
+- INCOHERENT is not read.
+- A newtype's instance of a class of several types is not derived.
 
 **M6, higher ranks and existentials.** RankNTypes, ExistentialQuantification;
 QuantifiedConstraints perhaps.

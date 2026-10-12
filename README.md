@@ -355,6 +355,11 @@ compiled as if it did not. Implemented so far, all of them in
 | `ConstrainedClassMethods` | A method's context may ask more of the class's variable |
 | `KindSignatures`, `StandaloneKindSignatures` | `data T (f :: Type -> Type) a`, `(t :: Type)`, and `type T :: Type -> Type` apart from the declaration. A kind is `*` or `Type`, with arrows |
 | `TypeOperators` | `data a :+: b`, `type a ~> b = a -> b`, and `Int :+: Bool` in a type: tighter than the arrow, and grouped by their fixities |
+| `MultiParamTypeClasses` | `class Convert a b`: a class of several types, or of none |
+| `FunctionalDependencies` | `class Container f a \| f -> a`: some of a class's types say what others are |
+| `FlexibleInstances`, `TypeSynonymInstances` | `instance C [Char]`, `instance C (Maybe Int)`, `instance C String`: an instance at any type. Where two fit, `{-# OVERLAPPING #-}`, `{-# OVERLAPPABLE #-}` and `{-# OVERLAPS #-}` say the more particular is taken |
+| `FlexibleContexts` | `Show [a] => ...`: a class asked of any type |
+| `ConstraintKinds` | `type Stringy a = (Show a, Read a)`: a name for constraints |
 
 Implemented and in no edition, since each changes what a program already
 means:
@@ -368,6 +373,7 @@ means:
 | `OverloadedStrings` | A string written in a program is of any type in the class `IsString`, of `Data.String` |
 | `PartialTypeSignatures`, `NamedWildCards` | `f :: _ -> Int`: a type with parts left out, which are found |
 | `AllowAmbiguousTypes` | A method's type need not mention its class's variable: applying it to a type says which instance is meant |
+| `UndecidableInstances` | Accepted, and says nothing: no instance is checked to be one whose use must end |
 
 And one of Powder's own, which only `Haskell2010` has on:
 

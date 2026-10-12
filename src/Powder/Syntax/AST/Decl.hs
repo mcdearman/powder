@@ -11,6 +11,8 @@ module Powder.Syntax.AST.Decl
     isNewtype,
     patternBuilder,
     kinds,
+    dependencies,
+    overlap,
   )
 where
 
@@ -90,6 +92,25 @@ pattern Class hd methods <- (kindIs [K.ClassDecl] -> Just (classDecl -> (hd, met
 -- perhaps a context before it; and the definitions of its methods.
 pattern Instance :: Type -> [Decl] -> Decl
 pattern Instance hd methods <- (kindIs [K.InstanceDecl] -> Just (classDecl -> (hd, methods)))
+
+-- | A class's functional dependencies: for each, the variables that
+-- decide, and the ones they decide.
+dependencies :: Decl -> [([Name], [Name])]
+dependencies (syntax -> r) = concat [parts (drop 1 (spelled f)) | f <- Red.nodes r, Red.kind f == K.FunDeps]
+  where
+    parts ts = case break ((== K.Comma) . fst) ts of
+      ([], []) -> []
+      (one, rest) ->
+        let (from, to) = break ((== K.RightArrow) . fst) one
+         in ([x | (K.VarId, x) <- from], [x | (K.VarId, x) <- to]) : parts (drop 1 rest)
+
+-- | What an instance says of other instances that fit the same types, in
+-- a pragma after the word instance: OVERLAPPING, OVERLAPPABLE or
+-- OVERLAPS.
+overlap :: Decl -> Maybe Name
+overlap (syntax -> r) = case [w | t <- Red.descendants r, Red.kind t == K.Pragma, w <- words (map (\c -> if c `elem` "{-#}" then ' ' else c) (Text.unpack (Red.text t))), w `elem` ["OVERLAPPING", "OVERLAPPABLE", "OVERLAPS"]] of
+  w : _ -> Just w
+  [] -> Nothing
 
 classDecl :: Red.Red -> (Type, [Decl])
 classDecl r = (child 0 r, concat [children w | w <- Red.nodes r, Red.kind w == K.WhereClause])

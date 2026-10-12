@@ -65,8 +65,9 @@ kindcheck program = runST $ do
     uses = \case
       OfData d -> concatMap mentioned (concatMap snd (dataConstructors d))
       OfSynonym _ s -> mentioned (synonymType s)
-      OfClass c -> classSupers c ++ concat [inSignature s | m <- classMethods c, Just s <- [signature program m]]
-    inSignature (Signature _ context t) = map constraintClass context ++ concatMap (mentioned . constraintType) context ++ mentioned t
+      OfClass c -> concatMap inConstraint (classSupers c) ++ concat [inSignature s | m <- classMethods c, Just s <- [signature program m]]
+    inSignature (Signature _ context t) = concatMap inConstraint context ++ mentioned t
+    inConstraint (Constraint c ts) = c : concatMap mentioned ts
 
     run = do
       -- What was said of kinds is so before any is found.
@@ -237,10 +238,12 @@ check t wanted = do
     needs <- lift (render wanted)
     complainAt (typeId t) ("this type has kind " ++ has ++ ", but one of kind " ++ needs ++ " is needed here")
 
--- | A class asked of a type: the type has the kind of the class's
--- instances.
+-- | A class asked of types: each has the kind of the class's variable at
+-- its place.
 constraint :: Constraint -> K s ()
-constraint (Constraint c t) = kindOf c >>= check t
+constraint (Constraint c ts) = do
+  program <- asks envProgram
+  forM_ (classOf program c) $ \cls -> zipWithM_ (\t v -> kindOf v >>= check t) ts (classVariables cls)
 
 -- Declarations --------------------------------------------------------------
 
@@ -256,13 +259,13 @@ declaration = \case
     parameters <- mapM kindOf (synonymParameters s)
     body <- infer (synonymType s)
     kindOf n >>= \k -> void (lift (unify k (foldr Arrow body parameters)))
-  -- A class's kind is its variable's, which its superclasses and the
+  -- A class takes its variables, whose kinds its superclasses and the
   -- types of its methods say.
   OfClass c -> do
     program <- asks envProgram
-    variable <- kindOf (classVariable c)
-    kindOf (className c) >>= \k -> void (lift (unify k variable))
-    forM_ (classSupers c) (kindOf >=> (\k -> void (lift (unify k variable))))
+    variables <- mapM kindOf (classVariables c)
+    kindOf (className c) >>= \k -> void (lift (unify k (foldr Arrow Star variables)))
+    mapM_ constraint (classSupers c)
     forM_ (classMethods c) (mapM_ signed . signature program)
 
 -- | A signature: what its context asks is of the right kinds, and what
@@ -270,16 +273,17 @@ declaration = \case
 signed :: Signature -> K s ()
 signed (Signature _ context t) = mapM_ constraint context >> check t Star
 
--- | An instance: its type is of the kind of the class's instances.
+-- | An instance: each of its types is of the kind of the class's
+-- variable at its place.
 instance' :: Instance -> K s ()
 instance' inst = do
-  variables <- mapM kindOf (instanceVariables inst)
-  constructor <- kindOf (instanceType inst)
-  result <- unknown
-  wanted <- kindOf (instanceClass inst)
-  applies <- lift (unify constructor (foldr Arrow result variables))
-  fits <- if applies then lift (unify result wanted) else pure False
-  unless fits $ do
-    needs <- lift (render wanted)
-    complainAt (instanceId inst) ("the type of this instance is not of the kind the class's instances are, which is " ++ needs)
+  program <- asks envProgram
+  forM_ (classOf program (instanceClass inst)) $ \cls ->
+    forM_ (zip (instanceHead inst) (classVariables cls)) $ \(t, v) -> do
+      wanted <- kindOf v
+      found <- infer t
+      fits <- lift (unify found wanted)
+      unless fits $ do
+        needs <- lift (render wanted)
+        complainAt (instanceId inst) ("the type of this instance is not of the kind the class's instances are, which is " ++ needs)
   mapM_ constraint (instanceContext inst)

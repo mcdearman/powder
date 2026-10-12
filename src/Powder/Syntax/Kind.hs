@@ -125,6 +125,9 @@ data SyntaxKind
   | -- | A class: its head, a type, and the declarations in its @where@.
     ClassDecl
   | InstanceDecl
+  | -- | @| a -> b, c -> d@ after a class's head: which of its variables
+    -- say what others are.
+    FunDeps
   | ImportDecl
   | -- | @default (types)@
     DefaultDecl

@@ -30,8 +30,8 @@ data Type
     Meta Int
   deriving (Eq, Show)
 
--- | A class asked of a type.
-data Pred = Pred NameId Type
+-- | A class asked of types: one for each variable the class has.
+data Pred = Pred NameId [Type]
   deriving (Eq, Show)
 
 -- | A type for all types its variables could be that are instances of
@@ -97,7 +97,7 @@ prettyScheme program (Forall vs context t) = constraints ++ render program names
   where
     names = letters program (nub (vs ++ rigids t))
     name v = maybe "?" nameText (nameInfo program v)
-    shown = [name c ++ " " ++ render program names 2 a | Pred c a <- nub context]
+    shown = [unwords (name c : map (render program names 2) as) | Pred c as <- nub context]
     constraints = case shown of
       [] -> ""
       [one] -> one ++ " => "

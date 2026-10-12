@@ -141,8 +141,28 @@ parameter d = "dict#" ++ show d
 defaultName :: Name -> Name
 defaultName m = "default#" ++ m
 
+-- | What an instance is called: its class, and the types it is at, a
+-- variable written as nothing more than that it is one. An instance at a
+-- type constructor applied to variables is called by the constructor.
 instanceName :: HIR.Program -> HIR.Instance -> Name
-instanceName program inst = "inst#" ++ spelling program (HIR.instanceClass inst) ++ "#" ++ spelling program (HIR.instanceType inst)
+instanceName program inst = "inst#" ++ spelling program (HIR.instanceClass inst) ++ concatMap (('#' :) . spelt) (HIR.instanceHead inst)
+  where
+    spelt t = case spine t [] of
+      (hd, arguments)
+        | all variable arguments -> form hd
+        | otherwise -> "(" ++ unwords (form hd : map spelt arguments) ++ ")"
+    spine t arguments = case HIR.Type.typeForm t of
+      HIR.Type.App f a -> spine f (a : arguments)
+      form' -> (form', arguments)
+    variable t = case HIR.Type.typeForm t of
+      HIR.Type.Var _ -> True
+      _ -> False
+    form = \case
+      HIR.Type.Con c -> spelling program c
+      HIR.Type.Var _ -> "_"
+      HIR.Type.Fun a b -> "(-> " ++ spelt a ++ " " ++ spelt b ++ ")"
+      HIR.Type.App f a -> "(" ++ spelt f ++ " " ++ spelt a ++ ")"
+      HIR.Type.Error -> "?"
 
 -- | The dictionary that evidence says to use.
 evidence :: Evidence -> M Core

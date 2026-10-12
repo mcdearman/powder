@@ -641,6 +641,15 @@ classDecl kind = do
   m <- open
   advance
   qualifiedType
+  -- After a bar, which of a class's variables say what others are.
+  dependent <- at Bar
+  when dependent $ do
+    f <- open
+    allowed <- on FunctionalDependencies
+    unless allowed (problem "a class says which of its variables decide others only if FunctionalDependencies is on")
+    advance
+    whileM (atAny [VarId, RightArrow, Comma]) advance
+    close_ f FunDeps
   wheres <- at KwWhere
   when wheres $ do
     w <- open

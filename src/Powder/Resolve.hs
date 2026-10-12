@@ -25,7 +25,7 @@ import Control.Monad
 import Control.Monad.Reader
 import Control.Monad.State.Strict
 import qualified Data.IntMap.Strict as IntMap
-import Data.List (intercalate, isSuffixOf, nub, (\\))
+import Data.List (elemIndex, intercalate, isSuffixOf, nub, (\\))
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map as Map
 import Data.Char (isAlphaNum, isUpper)
@@ -134,7 +134,10 @@ data St = St
     -- | The kinds type variables and types were said to have, by 'NameId',
     -- and the types said to have one where they are written.
     kindsSaid :: Table KindSyntax,
-    kindedTypes :: [(Type.Type, KindSyntax)]
+    kindedTypes :: [(Type.Type, KindSyntax)],
+    -- | The names constraints were given, by 'NameId': each its
+    -- parameters and the constraints it stands for.
+    constraintSynonyms :: Table ([NameId], [Constraint])
   }
 
 type M = ReaderT Env (State St)
@@ -223,7 +226,7 @@ resolveAfter seed languages lenient sources extra = case reverse (problems final
         (runReaderT run (Env Map.empty Map.empty Map.empty Map.empty Map.empty Map.empty "" Nothing "" spelled Set.empty Map.empty Map.empty Map.empty Map.empty languages False))
         initial
     initial = case seed of
-      Nothing -> St 0 IntMap.empty IntMap.empty IntMap.empty IntMap.empty [] IntMap.empty [] IntMap.empty [] [] IntMap.empty [] IntMap.empty [] [] [] [] IntMap.empty IntMap.empty [] IntMap.empty []
+      Nothing -> St 0 IntMap.empty IntMap.empty IntMap.empty IntMap.empty [] IntMap.empty [] IntMap.empty [] [] IntMap.empty [] IntMap.empty [] [] [] [] IntMap.empty IntMap.empty [] IntMap.empty [] IntMap.empty
       Just s ->
         St
           (seedFloor s)
@@ -251,6 +254,7 @@ resolveAfter seed languages lenient sources extra = case reverse (problems final
           []
           IntMap.empty
           []
+          IntMap.empty
     -- What the packages before this one let be known.
     before = maybe mempty seedLinkage seed
     -- In a package every name is spelled with its module's: no module is
@@ -446,7 +450,7 @@ resolveAfter seed languages lenient sources extra = case reverse (problems final
                 x : rest
                   | x `elem` seen -> go seen rest
                   | otherwise -> go (x : seen) (next x ++ rest)
-          supers c = maybe [] (map nameKey . classSupers) (IntMap.lookup c (classes known))
+          supers c = maybe [] (map (nameKey . constraintClass) . classSupers) (IntMap.lookup c (classes known))
           inSynonym c = maybe [] (typesIn . synonymType) (IntMap.lookup c (synonyms known))
           typesIn ty = case Type.typeForm ty of
             Type.Con c -> [nameKey c]
@@ -1074,8 +1078,22 @@ typeDecl own d = within d $ case d of
         modify (\st -> st {signatures = IntMap.insert (nameKey field) (Signature (map snd scope) [] whole) (signatures st)})
   Decl.TypeSynonym t parameters ty -> do
     scope <- typeParameters parameters
-    body <- withTypeVariables scope (type' ty)
-    modify (\st -> st {synonyms = IntMap.insert (nameKey (fst (own Map.! t))) (Synonym (map snd scope) body) (synonyms st)})
+    -- With ConstraintKinds what it stands for may be constraints: each
+    -- of its parts a class, or another such name, applied to types.
+    kinds <- enabled ConstraintKinds
+    classes' <- asks envClasses
+    types <- asks envTypes
+    known <- gets constraintSynonyms
+    let asks' = \case
+          Just ([], c, _) -> Map.member c classes' || maybe False (\n -> IntMap.member (nameKey n) known) (Map.lookup c types)
+          _ -> False
+    if kinds && all (asks' . classHead) (assertionsOf ty) && not (null (assertionsOf ty))
+      then do
+        stands <- withTypeVariables scope (concat <$> mapM constraints (assertionsOf ty))
+        modify (\st -> st {constraintSynonyms = IntMap.insert (nameKey (fst (own Map.! t))) (map snd scope, stands) (constraintSynonyms st)})
+      else do
+        body <- withTypeVariables scope (type' ty)
+        modify (\st -> st {synonyms = IntMap.insert (nameKey (fst (own Map.! t))) (Synonym (map snd scope) body) (synonyms st)})
   -- The kind of a type or a class, said apart from it.
   Decl.KindSignature t k -> do
     types <- asks envTypes
@@ -1238,7 +1256,7 @@ signatureFull given whole = do
   forM_ (SType.forallKinds whole) (\(x, k) -> forM_ (lookup x own) (sayKind k))
   let scope = given ++ own
   modify (\st -> st {wildcards = []})
-  (constrained, resolved) <- withTypeVariables (scope ++ around) ((,) . catMaybes <$> mapM constraint assertions <*> type' body)
+  (constrained, resolved) <- withTypeVariables (scope ++ around) ((,) . concat <$> mapM constraints assertions <*> type' body)
   blanks <- gets wildcards
   modify (\st -> st {wildcards = []})
   namedWild <- enabled NamedWildCards
@@ -1282,11 +1300,12 @@ scopedIf scope inner = do
 
 -- | The head of a class or an instance taken apart: the assertions of its
 -- context, the class, and what the class is applied to.
-classHead :: SType.Type -> Maybe ([SType.Type], Name, SType.Type)
+classHead :: SType.Type -> Maybe ([SType.Type], Name, [SType.Type])
 classHead = \case
-  SType.Qualified context inner -> (\(_, c, t) -> (assertionsOf context, c, t)) <$> classHead inner
-  SType.App (SType.Con c) [SType.Kinded t _] -> Just ([], c, t)
-  SType.App (SType.Con c) [t] -> Just ([], c, t)
+  SType.Qualified context inner -> (\(_, c, ts) -> (assertionsOf context, c, ts)) <$> classHead inner
+  SType.App (SType.Con c) ts -> Just ([], c, ts)
+  SType.Con c -> Just ([], c, [])
+  SType.Paren inner -> classHead inner
   -- Its variables may be named, which says nothing more.
   SType.Forall _ inner -> classHead inner
   _ -> Nothing
@@ -1295,36 +1314,78 @@ classHead = \case
 assertionsOf :: SType.Type -> [SType.Type]
 assertionsOf = \case
   SType.Tuple ts -> ts
-  SType.Paren t -> [t]
+  SType.Paren t -> assertionsOf t
   t -> [t]
 
--- | Resolve one assertion of a context, whose type variables are in scope.
-constraint :: SType.Type -> M (Maybe Constraint)
-constraint t = within t $ case t of
-  SType.App (SType.Con c) [argument] ->
-    asks (Map.lookup c . envClasses) >>= \case
-      Just k -> Just . Constraint k <$> type' argument
-      Nothing -> Nothing <$ complain ("unknown class " ++ c)
-  _ -> Nothing <$ complain "a context is made of classes, each applied to a type"
+-- | Resolve one assertion of a context, whose type variables are in
+-- scope: a class applied to as many types as it has variables. As the
+-- Report has it that is one type, which is a variable or a variable
+-- applied to types: any other needs FlexibleContexts, and more or fewer
+-- than one MultiParamTypeClasses. With ConstraintKinds it may also be a
+-- name some constraints were given, and so be several.
+constraints :: SType.Type -> M [Constraint]
+constraints t = within t $ case classHead t of
+  Just ([], c, arguments) -> do
+    found <- asks (Map.lookup c . envClasses)
+    alias <- asks (Map.lookup c . envTypes) >>= \x -> gets (\st -> x >>= \n -> IntMap.lookup (nameKey n) (constraintSynonyms st))
+    case (found, alias) of
+      (Just k, _) -> do
+        flexible <- enabled FlexibleContexts
+        several <- enabled MultiParamTypeClasses
+        let plain = \case
+              SType.Var _ -> True
+              SType.App (SType.Var _) _ -> True
+              SType.Paren inner -> plain inner
+              SType.Kinded inner _ -> plain inner
+              _ -> False
+        unless (flexible || all plain arguments) (complain "a class is asked of something other than a type variable, or one applied to types, only if FlexibleContexts is on")
+        unless (several || length arguments == 1) (complain "a class is asked of one type, unless MultiParamTypeClasses is on")
+        pure . Constraint k <$> mapM type' arguments
+      (Nothing, Just (parameters, stands)) -> do
+        given <- mapM type' arguments
+        if length given /= length parameters
+          then [] <$ complain (c ++ " stands for constraints on " ++ show (length parameters) ++ " types, and is given " ++ show (length given))
+          else forM stands $ \(Constraint k us) -> Constraint k <$> mapM (\u -> foldM (\acc (v, by) -> substituted v by acc) u (zip parameters given)) us
+      (Nothing, Nothing) -> [] <$ complain ("unknown class " ++ c)
+  _ -> [] <$ complain "a context is made of classes, each applied to types"
+
+-- | A class asked of one type variable.
+constraintOn :: NameId -> NameId -> M Constraint
+constraintOn c v = (\t -> Constraint c [t]) . (`Type.Type` Type.Var v) <$> node
+
+-- | A type constructor applied to type variables.
+appliedTo :: NameId -> [NameId] -> M Type.Type
+appliedTo t vs = do
+  hd <- (`Type.Type` Type.Con t) <$> node
+  foldM applied' hd vs
+  where
+    applied' f v = do
+      a <- (`Type.Type` Type.Var v) <$> node
+      (`Type.Type` Type.App f a) <$> node
 
 -- | What a class declaration says the class is, given the names this
 -- module's classes were given. Its methods are in scope already.
 classDecl :: Map.Map Name NameId -> Syntax.Decl -> M ()
 classDecl own d = within d $ case d of
-  Decl.Class hd@(classHead -> Just (context, c, SType.Var a)) ds -> do
-    v <- newName a TypeVariable
-    -- The class's variable may be given a kind.
-    let kindSaid = \case
-          SType.Qualified _ inner -> kindSaid inner
-          SType.Forall _ inner -> kindSaid inner
-          SType.App _ [SType.Kinded _ k] -> Just k
-          _ -> Nothing
-    forM_ (kindSaid hd) (`sayKind` v)
-    supers <- withTypeVariables [(a, v)] (catMaybes <$> mapM constraint context)
+  Decl.Class (classHead -> Just (context, c, parameters)) ds | Just named <- mapM variableOf parameters -> do
+    several <- enabled MultiParamTypeClasses
+    unless (several || length named == 1) (complain "a class has one type variable, unless MultiParamTypeClasses is on")
+    forM_ (nub (map fst named \\ nub (map fst named))) (\a -> complain ("the type variable " ++ a ++ " is given twice"))
+    scope <- forM named (\(a, _) -> (,) a <$> newName a TypeVariable)
+    -- A variable of the class may be given a kind.
+    forM_ (zip named scope) (\((_, k), (_, v)) -> forM_ k (`sayKind` v))
+    supers <- withTypeVariables scope (concat <$> mapM constraints context)
+    -- What decides what: each a place among the class's variables.
+    dependencies <- fmap catMaybes . forM (Decl.dependencies d) $ \(from, to) -> do
+      let place a = elemIndex a (map fst named)
+      case (mapM place from, mapM place to) of
+        (Just is, Just js) -> pure (Just (is, js))
+        _ -> Nothing <$ complain "a functional dependency is between the class's own type variables"
     let methods = [x | Decl.Signature xs _ <- ds, x <- xs]
         groups = grouped ds
-    -- A method's type is about the class's variable, and may not ask
-    -- more of it than the class does.
+        variables = map fst named
+    -- A method's type is about the class's variables, and may not ask
+    -- more of them than the class does.
     forM_ ds $ \m -> case m of
       Decl.Signature _ ty -> within m $ do
         let (asked, body) = case ty of
@@ -1333,33 +1394,49 @@ classDecl own d = within d $ case d of
         -- With AllowAmbiguousTypes it need not: then only applying the
         -- method to a type says which instance is meant.
         ambiguous <- enabled AllowAmbiguousTypes
-        unless (ambiguous || a `elem` typeVariables body) (complain ("the type of a method must mention the class's variable, " ++ a))
+        unless (ambiguous || null variables || any (`elem` typeVariables body) variables) (complain ("the type of a method must mention the class's variable, " ++ unwords variables))
         more <- enabled ConstrainedClassMethods
         forM_ asked $ \case
-          SType.App _ [SType.Var x] | x == a, not more -> complain ("a method's context asks more of the class's variable, " ++ a ++ ", only if ConstrainedClassMethods is on")
+          SType.App _ [SType.Var x] | x `elem` variables, not more -> complain ("a method's context asks more of the class's variable, " ++ x ++ ", only if ConstrainedClassMethods is on")
           _ -> pure ()
       _ -> pure ()
     methodIds <- mapM binder (nub methods)
-    declaredTypesOf [(a, v)] methods ds
+    declaredTypesOf scope methods ds
     defaults <- fmap concat . forM groups $ \g -> case g of
-      Equations _ f _ | f `elem` methods -> pure <$> scopedIf [(a, v)] (binding g)
+      Equations _ f _ | f `elem` methods -> pure <$> scopedIf scope (binding g)
       _ -> [] <$ within (declOf g) (complain "a class can only define its own methods")
-    let cls = Class (own Map.! c) v (map constraintClass supers) methodIds defaults
+    let cls = Class (own Map.! c) (map snd scope) supers dependencies methodIds defaults
     modify (\st -> st {classes = IntMap.insert (nameKey (className cls)) cls (classes st)})
-  Decl.Class _ _ -> complain "a class is declared as its name and one type variable"
+  Decl.Class _ _ -> complain "a class is declared as its name and its type variables"
   _ -> pure ()
+  where
+    variableOf = \case
+      SType.Var a -> Just (a, Nothing)
+      SType.Kinded (SType.Var a) k -> Just (a, Just k)
+      SType.Paren inner -> variableOf inner
+      _ -> Nothing
 
--- | Note an instance.
+-- | Note an instance. There may not be another of its class at the same
+-- types, whatever each calls its variables.
 addInstance :: Instance -> M ()
 addInstance inst = do
-  clash <- gets (any (\other -> instanceClass other == instanceClass inst && instanceType other == instanceType inst) . instances)
+  clash <- gets (any (\other -> instanceClass other == instanceClass inst && shape other == shape inst) . instances)
   when clash (complain "there is already an instance of this class for this type")
   modify (\st -> st {instances = inst : instances st})
+  where
+    -- An instance's types, with each variable as when it is first met.
+    shape i = map (form (zip (instanceVariables i) [0 :: Int ..])) (instanceHead i)
+    form numbered ty = case Type.typeForm ty of
+      Type.Var v -> "$" ++ maybe "?" show (lookup v numbered)
+      Type.Con c -> "#" ++ show (nameKey c)
+      Type.App f a -> "(" ++ form numbered f ++ " " ++ form numbered a ++ ")"
+      Type.Fun a b -> "(" ++ form numbered a ++ " -> " ++ form numbered b ++ ")"
+      Type.Error -> "!"
 
 -- | What an instance declaration says. The classes are all known.
 instanceDecl :: Syntax.Decl -> M ()
 instanceDecl d = within d $ case d of
-  Decl.Instance (classHead -> Just (context, c, t)) ds ->
+  Decl.Instance (classHead -> Just (context, c, arguments)) ds ->
     asks (Map.lookup c . envClasses) >>= \case
       Nothing -> complain ("unknown class " ++ c)
       Just k -> do
@@ -1370,7 +1447,7 @@ instanceDecl d = within d $ case d of
         forM_ ds $ \s -> case s of
           Decl.Signature _ _ | not signatures' -> within s (complain "an instance gives its methods type signatures only if InstanceSigs is on: the class gives them")
           _ -> pure ()
-        scope <- forM (nub (typeVariables t)) (\x -> (,) x <$> newName x TypeVariable)
+        scope <- forM (nub (concatMap typeVariables arguments)) (\x -> (,) x <$> newName x TypeVariable)
         -- One that names its variables with a forall brings them into
         -- scope in the method, as the variables the class's own
         -- signature has where they are.
@@ -1381,23 +1458,34 @@ instanceDecl d = within d $ case d of
             pure [(x, (written', own)) | scoping, SType.Forall _ _ <- [ty], x <- xs]
           _ -> pure []
         declared' <- gets signatures
-        let -- Where the two types have a variable each in one place.
-            matched a m w = case (Type.typeForm m, Type.typeForm w) of
-              (Type.Var u, Type.Var v) | u /= a -> [(v, u)]
-              (Type.App f x, Type.App g y) -> matched a f g ++ matched a x y
-              (Type.Fun x y, Type.Fun x' y') -> matched a x x' ++ matched a y y'
+        (heads, context') <- withTypeVariables scope ((,) <$> mapM type' arguments <*> (concat <$> mapM constraints context))
+        cls <- gets (IntMap.lookup (nameKey k) . classes)
+        aliases <- gets synonyms
+        flexible <- enabled FlexibleInstances
+        synonymous <- (flexible ||) <$> enabled TypeSynonymInstances
+        let methods = maybe [] classMethods cls
+            arity = maybe 1 (length . classVariables) cls
+            -- Where the two types have a variable each in one place.
+            matched ofClass m w = case (Type.typeForm m, Type.typeForm w) of
+              (Type.Var u, Type.Var v) | u `notElem` ofClass -> [(v, u)]
+              (Type.App f x, Type.App g y) -> matched ofClass f g ++ matched ofClass x y
+              (Type.Fun x y, Type.Fun x' y') -> matched ofClass x x' ++ matched ofClass y y'
               _ -> []
             scopeOfMethod f m = case (lookup f said, IntMap.lookup (nameKey m) declared') of
-              (Just (written', own), Just (Signature (a : _) _ theirs)) -> [(x, u) | (x, v) <- own, Just u <- [lookup v (matched a theirs written')]]
+              (Just (written', own), Just (Signature vs _ theirs)) -> [(x, u) | (x, v) <- own, Just u <- [lookup v (matched (take arity vs) theirs written')]]
               _ -> []
-        (t', context') <- withTypeVariables scope ((,) <$> type' t <*> (catMaybes <$> mapM constraint context))
-        cls <- gets (IntMap.lookup (nameKey k) . classes)
-        let methods = maybe [] classMethods cls
-            (hd, arguments) = typeSpine t' []
-            variables = [v | Type.Var v <- map Type.typeForm arguments]
-        synonym <- case hd of
-          Type.Con tc -> gets (IntMap.member (nameKey tc) . synonyms)
-          _ -> pure False
+            -- As the Report has an instance's type: a type constructor,
+            -- not a synonym, applied to type variables, each different.
+            plain ty = case typeSpine ty [] of
+              (Type.Con tc, applied') ->
+                let variables = [v | Type.Var v <- map Type.typeForm applied']
+                 in (synonymous || IntMap.notMember (nameKey tc) aliases) && length variables == length applied' && nub variables == variables
+              _ -> False
+            wrong ty = case Type.typeForm ty of
+              Type.Error -> True
+              _ -> False
+        when (isJust cls && length arguments /= arity) $
+          complain ("the class " ++ c ++ " is of " ++ show arity ++ " types, and this instance is for " ++ show (length arguments))
         n <- node
         bs <- fmap concat . forM (grouped ds) $ \g -> case g of
           Equations _ f _ -> do
@@ -1410,13 +1498,17 @@ instanceDecl d = within d $ case d of
               then pure <$> scopedIf (scope ++ maybe [] (scopeOfMethod (unqualified f)) found) (bindingAs found g)
               else [] <$ within (declOf g) (complain (f ++ " is not a method of the class " ++ c))
           Destructuring {} -> [] <$ within (declOf g) (complain "an instance can only define methods")
-        case hd of
-          Type.Con tc
-            | not synonym && length variables == length arguments && nub variables == variables ->
-                addInstance (Instance n k tc variables context' bs)
-          Type.Error -> pure ()
-          _ -> complain "an instance is for a type constructor applied to type variables, each different"
-  Decl.Instance _ _ -> complain "an instance is declared as a class applied to a type"
+        let overlap = case Decl.overlap d of
+              Just "OVERLAPPING" -> Overlapping
+              Just "OVERLAPPABLE" -> Overlappable
+              Just "OVERLAPS" -> Overlaps
+              _ -> Exactly
+        case () of
+          _
+            | any wrong heads -> pure ()
+            | flexible || all plain heads -> addInstance (Instance n k heads (map snd scope) context' bs overlap)
+            | otherwise -> complain "an instance is for a type constructor applied to type variables, each different, unless FlexibleInstances is on"
+  Decl.Instance _ _ -> complain "an instance is declared as a class applied to types"
   _ -> pure ()
   where
     typeSpine ty arguments = case Type.typeForm ty of
@@ -1436,7 +1528,7 @@ deriving' :: Map.Map Name NameId -> [Syntax.Decl] -> Syntax.Decl -> M ()
 deriving' own decls d = within d $ case d of
   Decl.Data {} -> forM_ (Decl.derived d) (\(how, c) -> derive own d how Nothing c)
   Decl.StandaloneDeriving how hd -> case classHead hd of
-    Just (context, c, target)
+    Just (context, c, [target])
       | Just (t, vs) <- typedShape target,
         declared : _ <- [x | x@(Decl.Data t' _ _) <- decls, t' == t] ->
           derive own declared how (Just (vs, context)) c
@@ -1504,7 +1596,8 @@ derive own d said apart c = case d of
           _ | how == "anyclass" -> do
             variables <- mapM (`newName` TypeVariable) (nub parameters)
             n <- node
-            Nothing <$ addInstance (Instance n k (own Map.! t) variables [] [])
+            at' <- appliedTo (own Map.! t) variables
+            Nothing <$ addInstance (Instance n k [at'] variables [] [] Exactly)
           _ | how == "newtype" -> Nothing <$ newtypeDerived own d apart k
           -- A type with no constructors has no values to tell apart, to
           -- show or to read.
@@ -1512,10 +1605,10 @@ derive own d said apart c = case d of
           "Functor" -> Nothing <$ functorial DeriveFunctor functorEquations
           "Foldable" -> Nothing <$ functorial DeriveFoldable foldableEquations
           "Traversable" -> Nothing <$ functorial DeriveTraversable traversableEquations
-          "Eq" | null cs -> Nothing <$ written (instanceHead c t (nub parameters) constrained ++ "{ _ == _ = True }")
-          "Ord" | null cs -> Nothing <$ written (instanceHead c t (nub parameters) constrained ++ "{ compare _ _ = EQ }")
-          "Show" | null cs -> Nothing <$ written (instanceHead c t (nub parameters) constrained ++ "{ showsPrec _ v = seq v id }")
-          "Read" | null cs -> Nothing <$ written (instanceHead c t (nub parameters) constrained ++ "{ readsPrec _ _ = [] }")
+          "Eq" | null cs -> Nothing <$ written (writtenHead c t (nub parameters) constrained ++ "{ _ == _ = True }")
+          "Ord" | null cs -> Nothing <$ written (writtenHead c t (nub parameters) constrained ++ "{ compare _ _ = EQ }")
+          "Show" | null cs -> Nothing <$ written (writtenHead c t (nub parameters) constrained ++ "{ showsPrec _ v = seq v id }")
+          "Read" | null cs -> Nothing <$ written (writtenHead c t (nub parameters) constrained ++ "{ readsPrec _ _ = [] }")
           "Eq" -> Just . pure <$> derivedEq constructors
           "Ord" -> Just . pure <$> derivedOrd constructors
           "Show" -> Just . pure <$> derivedShow (zip3 constructors (map Syntax.constructorFields cs) (map Syntax.constructorInfix cs))
@@ -1536,9 +1629,10 @@ derive own d said apart c = case d of
           _ -> Nothing <$ complain ("instances of " ++ c ++ " cannot be derived")
         forM_ methods $ \bs -> do
           variables <- mapM (`newName` TypeVariable) (nub parameters)
-          context <- forM [v | (p, v) <- zip (nub parameters) variables, p `elem` constrained] (\v -> Constraint k . (`Type.Type` Type.Var v) <$> node)
+          context <- forM [v | (p, v) <- zip (nub parameters) variables, p `elem` constrained] (constraintOn k)
           n <- node
-          addInstance (Instance n k (own Map.! t) variables context bs)
+          at' <- appliedTo (own Map.! t) variables
+          addInstance (Instance n k [at'] variables context bs Exactly)
   _ -> pure ()
 
 -- | The context of a derived instance of a class of functors: the class
@@ -1647,7 +1741,7 @@ newtypeDerived own d apart k = case d of
         bs <- forM methods $ \(m, s) -> case s of
           Signature (a : others) context ty -> do
             ty' <- substituted a of' ty
-            context' <- forM context (\(Constraint c' u) -> Constraint c' <$> substituted a of' u)
+            context' <- forM context (\(Constraint c' us) -> Constraint c' <$> mapM (substituted a of') us)
             taken <- mk (Var m) >>= \inner -> mk (Annotated inner (Signature others context' ty'))
             body <- mk (Prim Coerce) >>= (`apply` [taken]) >>= plain
             b <- node
@@ -1659,13 +1753,14 @@ newtypeDerived own d apart k = case d of
         -- the type mentions.
         needed <- needs k of'
         context <- case (apart, needed) of
-          (Just (vs, given), _) -> withTypeVariables (zip vs variables) (catMaybes <$> mapM constraint given)
-          (Nothing, Just asked) -> forM (nub asked) (\(c', v) -> Constraint c' . (`Type.Type` Type.Var v) <$> node)
+          (Just (vs, given), _) -> withTypeVariables (zip vs variables) (concat <$> mapM constraints given)
+          (Nothing, Just asked) -> forM (nub asked) (uncurry constraintOn)
           (Nothing, Nothing)
             | higher -> pure []
-            | otherwise -> forM [v | v <- variables, mentions v whole] (\v -> Constraint k . (`Type.Type` Type.Var v) <$> node)
+            | otherwise -> forM [v | v <- variables, mentions v whole] (constraintOn k)
         n <- node
-        addInstance (Instance n k (own Map.! t) instanceVariables' context bs)
+        at' <- appliedTo (own Map.! t) instanceVariables'
+        addInstance (Instance n k [at'] instanceVariables' context bs Exactly)
   _ -> complain "an instance is derived as a newtype's only for a newtype"
   where
     mentions v ty = case Type.typeForm ty of
@@ -1695,14 +1790,19 @@ needs cls whole = do
               (Just t, arguments)
                 | Just (Synonym parameters body) <- IntMap.lookup (nameKey t) aliases ->
                     if length parameters == length arguments then go (depth + 1) c (replaced (zip parameters arguments) body) else Nothing
-                | inst : _ <- [i | i <- known, instanceClass i == c, instanceType i == t, length (instanceVariables i) == length arguments] ->
-                    concat <$> forM (instanceContext inst) (\(Constraint c' u) -> go (depth + 1) c' (replaced (zip (instanceVariables inst) arguments) u))
+                -- An instance at the constructor applied to variables.
+                | (inst, vs) : _ <- [(i, vs) | i <- known, instanceClass i == c, [hd] <- [instanceHead i], (Just t', vs) <- [variablesOf hd], t' == t, length vs == length arguments] ->
+                    concat <$> forM (instanceContext inst) (\case
+                      Constraint c' [u] -> go (depth + 1) c' (replaced (zip vs arguments) u)
+                      _ -> Nothing)
               _ -> Nothing
       spine ty arguments = case Type.typeForm ty of
         Type.App f x -> spine f (x : arguments)
         Type.Fun a b | null arguments -> (Just (NameId (-1)), [a, b])
         Type.Con t -> (Just t, arguments)
         _ -> (Nothing, arguments)
+      variablesOf hd = case spine hd [] of
+        (found, arguments) -> (found, [v | Type.Var v <- map Type.typeForm arguments])
       -- Only looked at, so it keeps the nodes it has.
       replaced with ty = case Type.typeForm ty of
         Type.Var v | Just other <- lookup v with -> other
@@ -1736,8 +1836,8 @@ written source = case (parsedProblems parsed, cast (Red.root (parsedTree parsed)
 
 -- | An instance's head and context, each parameter of the type being
 -- asked to be an instance too.
-instanceHead :: Name -> Name -> [Name] -> [Name] -> String
-instanceHead cls t parameters constrained = "instance " ++ context ++ cls ++ " (" ++ unwords (t : parameters) ++ ") where "
+writtenHead :: Name -> Name -> [Name] -> [Name] -> String
+writtenHead cls t parameters constrained = "instance " ++ context ++ cls ++ " (" ++ unwords (t : parameters) ++ ") where "
   where
     context = if null constrained then "" else "(" ++ intercalate ", " [cls ++ " " ++ a | a <- constrained] ++ ") => "
 
@@ -1767,7 +1867,7 @@ instanceHead cls t parameters constrained = "instance " ++ context ++ cls ++ " (
 -- which of its fields are of the type itself.
 readInstance :: Name -> Name -> [Name] -> [Name] -> [(Name, Int, [Name], Maybe Int, [Bool])] -> String
 readInstance cls t parameters constrained constructors =
-  instanceHead cls t parameters constrained
+  writtenHead cls t parameters constrained
     ++ "{ readsPrec d r = go d where { lexed = lex r; "
     ++ "wrapped = [(x, s2) | (\"(\", s0) <- lexed, (x, s1) <- readsPrec 0 s0, (\")\", s2) <- lex s1]; "
     ++ concat [parses i ++ " = " ++ made ++ "; " | (i, (_, made)) <- alternatives]
@@ -1810,7 +1910,7 @@ readInstance cls t parameters constrained constructors =
 -- | Indexed in the order the constructors were declared; or for the one
 -- constructor of a type, by its fields, the last counting fastest.
 ixInstance :: Name -> Name -> [Name] -> [Name] -> [(Name, Int)] -> String
-ixInstance cls t parameters constrained constructors = instanceHead cls t parameters constrained ++ "{ " ++ intercalate "; " methods ++ " }"
+ixInstance cls t parameters constrained constructors = writtenHead cls t parameters constrained ++ "{ " ++ intercalate "; " methods ++ " }"
   where
     methods = case constructors of
       [(k, arity)] | arity > 0 ->

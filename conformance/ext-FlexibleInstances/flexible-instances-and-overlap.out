@@ -1,0 +1,9 @@
+text hello
+numbers 6
+number 5, flag True, no flag
+right 3, a pair of one type, a function giving 1
+<ann> 1.0,2.5
+5 text yes 'c'
+[1;2;] [a;b;] [[yes;];[];]
+(3,3)
+(5,[True,False],10,6,100.0)

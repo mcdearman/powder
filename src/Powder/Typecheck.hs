@@ -48,7 +48,7 @@ import qualified Data.IntMap.Strict as IntMap
 import qualified Data.IntSet as IntSet
 import Data.List (nub, partition, (\\))
 import qualified Data.Map.Strict as Map
-import Data.Maybe (catMaybes, fromMaybe, isJust, maybeToList)
+import Data.Maybe (catMaybes, fromMaybe, isJust, maybeToList, listToMaybe)
 import Data.STRef
 import Powder.Core (Prim (..))
 import Powder.Diagnostics (Problem (..))
@@ -89,8 +89,8 @@ evidenceAt checked (NodeId n) = IntMap.findWithDefault [] n (checkedEvidence che
 parametersOf :: Checked -> NodeId -> [Int]
 parametersOf checked (NodeId n) = IntMap.findWithDefault [] n (checkedParameters checked)
 
--- | A class asked of a type.
-data Pred s = Pred NameId (Type s)
+-- | A class asked of types: one for each variable the class has.
+data Pred s = Pred NameId [Type s]
 
 -- | A type for all types its variables could be that are instances of
 -- what its context asks, while it may still have unknowns in it.
@@ -104,18 +104,18 @@ data Ev s
   | -- | To be filled in when the type it is for is known.
     EvHole (STRef s (Maybe (Ev s)))
 
--- | Something a type must be an instance of, and where the evidence that
--- it is goes.
+-- | Something types must be an instance of, and where the evidence that
+-- they are goes.
 data Wanted s = Wanted
   { wantedClass :: NameId,
-    wantedType :: Type s,
+    wantedTypes :: [Type s],
     wantedHole :: STRef s (Maybe (Ev s)),
     -- | What asked for it.
     wantedNode :: Maybe NodeId
   }
 
--- | Something a type is known to be an instance of: a signature said so.
-data Given s = Given NameId (Type s) (Ev s)
+-- | Something types are known to be an instance of: a signature said so.
+data Given s = Given NameId [Type s] (Ev s)
 
 data Env s = Env
   { envProgram :: Program,
@@ -130,8 +130,8 @@ data Env s = Env
     -- | The names whose types are being inferred: those of the groups
     -- being checked that have no signature.
     envInferring :: IntSet.IntSet,
-    -- | The instances, by class and type constructor.
-    envInstances :: Map.Map (Int, Int) Instance,
+    -- | The instances, by class.
+    envInstances :: IntMap.IntMap [Instance],
     -- | The names the monomorphism restriction is not to hold for.
     envGeneral :: [NameId],
     -- | The module a node is in, if that is known, and the modules each
@@ -178,7 +178,7 @@ typecheckAfter theirs general program = runST $ do
   parameters <- newSTRef IntMap.empty
   uses <- newSTRef []
   literals <- newSTRef []
-  let instances = Map.fromList [((nameKey (instanceClass i), nameKey (instanceType i)), i) | i <- programInstances program]
+  let instances = IntMap.fromListWith (flip (++)) [(nameKey (instanceClass i), [i]) | i <- programInstances program]
   runReaderT run (Env program IntMap.empty [] Nothing [] IntSet.empty instances general moduleOf reach next types schemes problems wanted evidence parameters uses literals)
   foundTypes <- readSTRef types >>= traverse Unify.zonk
   foundSchemes <- readSTRef schemes >>= traverse zonkPoly
@@ -222,7 +222,7 @@ typecheckAfter theirs general program = runST $ do
           (hd, _) <- fromSyntax t >>= lift . Unify.spine
           known <- asks envInstances
           case (hd, builtinNumeric (programBuiltins program)) of
-            (Con c, Just (num, _)) | Map.notMember (nameKey num, nameKey c) known -> complain "a default declaration names types that are instances of Num, and this is not one"
+            (Con c, Just (num, _)) | not (instanceAt known num c) -> complain "a default declaration names types that are instances of Num, and this is not one"
             _ -> pure ()
         foldr unit (pure ()) [0 .. max 0 (length units - 1)]
       settle
@@ -235,16 +235,29 @@ typecheckAfter theirs general program = runST $ do
             settle
             rest
 
-    zonkPoly (Poly vs context t) = Forall vs <$> mapM (\(Pred c a) -> Types.Pred c <$> Unify.zonk a) context <*> Unify.zonk t
+    zonkPoly (Poly vs context t) = Forall vs <$> mapM (\(Pred c as) -> Types.Pred c <$> mapM Unify.zonk as) context <*> Unify.zonk t
 
     -- A type found before, as one to check against.
-    thaw (Forall vs context t) = Poly vs <$> mapM (\(Types.Pred c a) -> Pred c <$> thawed a) context <*> thawed t
+    thaw (Forall vs context t) = Poly vs <$> mapM (\(Types.Pred c as) -> Pred c <$> mapM thawed as) context <*> thawed t
     thawed = \case
       Types.Con c -> pure (Con c)
       Types.App f a -> App <$> thawed f <*> thawed a
       Types.Fun a b -> Fun <$> thawed a <*> thawed b
       Types.Rigid v -> pure (Rigid v)
       Types.Meta _ -> unknown
+
+-- | Whether a class has an instance at a type constructor: one whose
+-- one type is that constructor, applied to whatever.
+instanceAt :: IntMap.IntMap [Instance] -> NameId -> NameId -> Bool
+instanceAt known cls c = any at' (IntMap.findWithDefault [] (nameKey cls) known)
+  where
+    at' inst = case instanceHead inst of
+      [t] -> headOf t == Just c
+      _ -> False
+    headOf t = case Syntax.typeForm t of
+      Syntax.Con k -> Just k
+      Syntax.App f _ -> headOf f
+      _ -> Nothing
 
 zonkEvidence :: Ev s -> ST s Evidence
 zonkEvidence = \case
@@ -345,18 +358,18 @@ instantiate :: Poly s -> Tc s (Type s)
 instantiate (Poly [] [] t) = pure t
 instantiate (Poly vs context t) = do
   fresh <- IntMap.fromList <$> forM vs (\v -> (,) (nameKey v) <$> unknown)
-  evidence <- forM context (\(Pred c a) -> lift (Unify.substitute fresh a) >>= want c)
+  evidence <- forM context (\(Pred c as) -> lift (mapM (Unify.substitute fresh) as) >>= want c)
   asks envNode >>= mapM_ (`recordEvidence` evidence)
   lift (Unify.substitute fresh t)
 
 -- Classes -------------------------------------------------------------------
 
-newWanted :: Maybe NodeId -> NameId -> Type s -> Tc s (Wanted s)
-newWanted n c t = (\hole -> Wanted c t hole n) <$> lift (newSTRef Nothing)
+newWanted :: Maybe NodeId -> NameId -> [Type s] -> Tc s (Wanted s)
+newWanted n c ts = (\hole -> Wanted c ts hole n) <$> lift (newSTRef Nothing)
 
--- | Ask that a type be an instance of a class, for the node being
+-- | Ask that types be an instance of a class, for the node being
 -- checked. Gives where the evidence will be.
-want :: NameId -> Type s -> Tc s (Ev s)
+want :: NameId -> [Type s] -> Tc s (Ev s)
 want c t = do
   w <- asks envNode >>= \n -> newWanted n c t
   note refWanted (w :)
@@ -375,19 +388,93 @@ capture inner = do
 defer :: [Wanted s] -> Tc s ()
 defer ws = note refWanted (reverse ws ++)
 
--- | What knowing a type is an instance of a class tells: that, and that
--- it is an instance of the class's superclasses, and of theirs.
-givenBy :: Program -> NameId -> Type s -> Ev s -> [Given s]
-givenBy program c t evidence =
-  Given c t evidence
-    : concat [givenBy program super t (EvSuper c i evidence) | Just cls <- [classOf program c], (i, super) <- zip [0 ..] (classSupers cls)]
+-- | What knowing types are an instance of a class tells: that, and that
+-- they are an instance of what the class has above it, and of what
+-- those have.
+givenBy :: NameId -> [Type s] -> Ev s -> Tc s [Given s]
+givenBy c ts evidence = do
+  program <- asks envProgram
+  above <- case classOf program c of
+    Nothing -> pure []
+    Just cls -> do
+      let scope = IntMap.fromList (zip (map nameKey (classVariables cls)) ts)
+      fmap concat . forM (zip [0 ..] (classSupers cls)) $ \(i, Constraint super us) -> do
+        us' <- mapM (fromSyntaxIn scope) us
+        givenBy super us' (EvSuper c i evidence)
+  pure (Given c ts evidence : above)
+
+-- | What a context gives to whatever is checked with it, each part of it
+-- by the dictionary of that number.
+givens :: [Pred s] -> [Int] -> Tc s [Given s]
+givens context ds = concat <$> zipWithM (\(Pred c as) d -> givenBy c as (EvParameter d)) context ds
+
+-- | How a type fits a pattern for it, which is an instance's type with
+-- unknowns of its own for the instance's variables: it does, and they
+-- are now what it has there; it does not; or it cannot be told yet,
+-- there being an unknown in it where the pattern has something.
+data Fit = Fits | Misfits | Unsettled
+  deriving (Eq)
+
+fit :: STRef s [Unify.Var s] -> Type s -> Type s -> ST s Fit
+fit free = go
+  where
+    go pattern'' target = do
+      p <- Unify.shallow pattern''
+      t <- Unify.shallow target
+      own <- readSTRef free
+      case (p, t) of
+        -- One of the pattern's own unknowns, met for the first time, is
+        -- what the type has there. Where that is an unknown too the two
+        -- are joined, and whichever stands for both is no longer the
+        -- pattern's to say again.
+        (Meta v, _) | v `elem` own -> do
+          _ <- Unify.unify p t
+          joined <- Unify.shallow p
+          Fits <$ writeSTRef free [u | u <- own, u /= v, Meta u /=? joined]
+        (Meta v, Meta u) | v == u -> pure Fits
+        (Meta _, _) -> pure Unsettled
+        (_, Meta _) -> pure Unsettled
+        (Con a, Con b) -> pure (if a == b then Fits else Misfits)
+        (Rigid a, Rigid b) -> pure (if a == b then Fits else Misfits)
+        (App f x, App g y) -> both <$> go f g <*> go x y
+        (Fun a r, Fun b q) -> both <$> go a b <*> go r q
+        _ -> pure Misfits
+    both a b
+      | Misfits `elem` [a, b] = Misfits
+      | Unsettled `elem` [a, b] = Unsettled
+      | otherwise = Fits
+    Meta a /=? Meta b = a /= b
+    _ /=? _ = True
+
+fits :: [Unify.Var s] -> [Type s] -> [Type s] -> ST s Fit
+fits own patterns targets = do
+  free <- newSTRef own
+  foldr worst Fits <$> zipWithM (fit free) patterns targets
+  where
+    worst a b
+      | Misfits `elem` [a, b] = Misfits
+      | Unsettled `elem` [a, b] = Unsettled
+      | otherwise = Fits
+
+-- | An instance's types with unknowns for its variables: the unknowns,
+-- by the variables, and the types.
+opened :: Instance -> Tc s ([Unify.Var s], IntMap.IntMap (Type s), [Type s])
+opened inst = do
+  metas' <- forM (instanceVariables inst) (const unknown)
+  let scope = IntMap.fromList (zip (map nameKey (instanceVariables inst)) metas')
+  heads <- mapM (fromSyntaxIn scope) (instanceHead inst)
+  pure ([v | Meta v <- metas'], scope, heads)
 
 -- | See to what is wanted, as far as the types are known, giving back
--- what must wait: what is wanted of a type still unknown.
+-- what must wait: what is wanted of types still unknown.
 --
--- A type built by a constructor is an instance if there is an instance
--- for the constructor, which may want things of its arguments in turn. A
--- type variable is an instance only of what it is given to be.
+-- Types are an instance if something given says so; or if there is an
+-- instance whose types they fit, which may want things in turn of what
+-- its variables are then. Where more than one instance fits, the most
+-- particular is taken if the instances say that is allowed. What a
+-- class's functional dependencies say is so first: where the types that
+-- decide are those of an instance, or of something given, or of
+-- something else wanted, the types they decide are those too.
 --
 -- An instance that is not there is reported once, however many of the
 -- things seen to together want it: a number added to a string wants the
@@ -397,9 +484,27 @@ solve wanted = do
   reported <- lift (newSTRef [])
   solveNoting reported wanted
 
-solveNoting :: STRef s [(NameId, Types.Type)] -> [Wanted s] -> Tc s [Wanted s]
-solveNoting reported = fmap concat . mapM one
+solveNoting :: STRef s [(NameId, [Types.Type])] -> [Wanted s] -> Tc s [Wanted s]
+solveNoting reported wanted = do
+  program <- asks envProgram
+  -- Two things wanted of one class, whose deciding types are the same,
+  -- have the same decided types.
+  forM_ (zip [0 :: Int ..] wanted) $ \(n, w) -> forM_ (maybe [] classDependencies (classOf program (wantedClass w))) $ \(from, to) ->
+    forM_ (drop (n + 1) wanted) $ \w' -> when (wantedClass w' == wantedClass w) $ do
+      same <- sameAt from (wantedTypes w) (wantedTypes w')
+      when same (forM_ to (\i -> local (\env -> env {envNode = wantedNode w' <|> envNode env}) (unifyAt i (wantedTypes w) (wantedTypes w'))))
+  concat <$> mapM one wanted
   where
+    at' is ts = [t | (i, t) <- zip [0 :: Int ..] ts, i `elem` is]
+    sameAt is as bs = do
+      as' <- mapM (lift . Unify.zonk) (at' is as)
+      bs' <- mapM (lift . Unify.zonk) (at' is bs)
+      -- Types still unknown are the same only if they are one unknown.
+      pure (as' == bs' && not (null as'))
+    unifyAt i as bs = case (drop i as, drop i bs) of
+      (a : _, b : _) -> unify a b
+      _ -> pure ()
+
     -- An instance is there only where imports lead to its module.
     visible w inst = do
       moduleOf <- asks envModuleOf
@@ -407,38 +512,85 @@ solveNoting reported = fmap concat . mapM one
       pure $ case (moduleOf (wantedNode w), moduleOf (Just (instanceId inst))) of
         (Just here, Just there) -> here == there || there `elem` Map.findWithDefault [] here reach
         _ -> True
+
     one w = do
-      (hd, arguments) <- lift (Unify.spine (wantedType w))
-      case hd of
-        Meta _ -> pure [w]
-        Con c ->
-          asks (Map.lookup (nameKey (wantedClass w), nameKey c) . envInstances) >>= \case
-            Nothing -> [] <$ missing w
-            Just inst -> do
-              seen <- visible w inst
-              if not seen
-                then [] <$ missing w
-                else do
-                  let scope = IntMap.fromList (zip (map nameKey (instanceVariables inst)) arguments)
-                  needs <- forM (instanceContext inst) (\(Constraint k t) -> fromSyntaxIn scope t >>= newWanted (wantedNode w) k)
-                  lift (writeSTRef (wantedHole w) (Just (EvInstance (instanceId inst) (map (EvHole . wantedHole) needs))))
-                  solveNoting reported needs
-        Rigid _ -> do
-          sought <- lift (Unify.zonk (wantedType w))
-          givens <- asks envGivens >>= filterM (\(Given c t _) -> if c == wantedClass w then (== sought) <$> lift (Unify.zonk t) else pure False)
-          case givens of
-            Given _ _ evidence : _ -> [] <$ lift (writeSTRef (wantedHole w) (Just evidence))
+      program <- asks envProgram
+      known <- asks (IntMap.findWithDefault [] (nameKey (wantedClass w)) . envInstances) >>= filterM (visible w)
+      given' <- asks (filter (\(Given c _ _) -> c == wantedClass w) . envGivens)
+      -- What the class's dependencies say.
+      forM_ (maybe [] classDependencies (classOf program (wantedClass w))) $ \(from, to) -> do
+        forM_ given' $ \(Given _ ts _) -> do
+          same <- sameAt from (wantedTypes w) ts
+          when same (forM_ to (\i -> unifyAt i ts (wantedTypes w)))
+        forM_ known $ \inst -> do
+          (own, _, heads) <- opened inst
+          decided <- lift (fits own (at' from heads) (at' from (wantedTypes w)))
+          when (decided == Fits) (forM_ to (\i -> local (\env -> env {envNode = wantedNode w <|> envNode env}) (unifyAt i heads (wantedTypes w))))
+      sought <- mapM (lift . Unify.zonk) (wantedTypes w)
+      said <- filterM (\(Given _ ts _) -> (== sought) <$> mapM (lift . Unify.zonk) ts) given'
+      case said of
+        Given _ _ evidence : _ -> [] <$ lift (writeSTRef (wantedHole w) (Just evidence))
+        [] -> do
+          tried <- forM known $ \inst -> do
+            (own, scope, heads) <- opened inst
+            how <- lift (fits own heads (wantedTypes w))
+            pure (how, inst, scope)
+          let fitting = [(inst, scope) | (Fits, inst, scope) <- tried]
+              pending = [inst | (Unsettled, inst, _) <- tried]
+          unknowns <- concat <$> mapM (lift . Unify.unsolved) (wantedTypes w)
+          case fitting of
+            -- Another may turn out to fit, and be the one that is meant.
+            _ | not (null pending) -> pure [w]
+            [] | not (null unknowns) && (null known || not (null given')) -> pure [w]
+            [] | not (null unknowns) && all bare (wantedTypes w) -> pure [w]
             [] -> [] <$ missing w
-        _ -> [] <$ missing w
+            [(inst, scope)] -> use w inst scope
+            several -> do
+              best <- particular (map fst several)
+              case [found | found@(inst, _) <- several, Just (instanceId inst) == fmap instanceId best] of
+                (inst, scope) : _ -> use w inst scope
+                [] -> [] <$ overlapping w
+
+    -- Whether a type is just an unknown.
+    bare = \case
+      Meta _ -> True
+      _ -> False
+
+    use w inst scope = do
+      needs <- forM (instanceContext inst) (\(Constraint k ts) -> mapM (fromSyntaxIn scope) ts >>= newWanted (wantedNode w) k)
+      lift (writeSTRef (wantedHole w) (Just (EvInstance (instanceId inst) (map (EvHole . wantedHole) needs))))
+      solveNoting reported needs
+
+    -- Of instances that all fit, the one whose types fit every other's:
+    -- the most particular, if each of the others may give way to it.
+    particular insts = do
+      found <- forM insts $ \inst -> do
+        mine <- mapM fromSyntax (instanceHead inst)
+        most <- forM [other | other <- insts, instanceId other /= instanceId inst] $ \other -> do
+          (own, _, heads) <- opened other
+          how <- lift (fits own heads mine)
+          pure (how == Fits && (instanceOverlap inst `elem` [Overlapping, Overlaps] || instanceOverlap other `elem` [Overlappable, Overlaps]))
+        pure (if and most then Just inst else Nothing)
+      pure (listToMaybe (catMaybes found))
+
+    overlapping w = local (\env -> env {envNode = wantedNode w <|> envNode env}) $ do
+      program <- asks envProgram
+      ts <- mapM showAtom (wantedTypes w)
+      complain ("more than one instance of " ++ maybe "?" nameText (nameInfo program (wantedClass w)) ++ " fits " ++ unwords ts ++ ", and none says it may be taken over another")
 
     missing w = local (\env -> env {envNode = wantedNode w <|> envNode env}) $ do
       program <- asks envProgram
-      sought <- (,) (wantedClass w) <$> lift (Unify.zonk (wantedType w))
+      sought <- (,) (wantedClass w) <$> mapM (lift . Unify.zonk) (wantedTypes w)
       before <- lift (readSTRef reported)
       lift (writeSTRef reported (sought : before))
-      t <- showType (wantedType w)
+      ts <- case wantedTypes w of
+        [t] -> pure <$> showType t
+        several -> mapM showAtom several
       unless (sought `elem` before) $
-        complain ("there is no instance of " ++ maybe "?" nameText (nameInfo program (wantedClass w)) ++ " for " ++ t)
+        complain ("there is no instance of " ++ maybe "?" nameText (nameInfo program (wantedClass w)) ++ " for " ++ unwords ts)
+
+    -- A type as one of several in a row.
+    showAtom t = (\shown -> if ' ' `elem` shown && take 1 shown /= "[" && take 1 shown /= "(" then "(" ++ shown ++ ")" else shown) <$> showType t
 
 -- | See to what is still wanted when everything has been checked. What is
 -- wanted of a type nothing settled is settled now: a type that has to be
@@ -450,14 +602,17 @@ settle = do
   pending <- lift (readSTRef ref <* writeSTRef ref [])
   waiting <- solve (reverse pending)
   let numeric c = case builtinNumeric (programBuiltins program) of
-        Just (num, _) -> c == num || any numeric (maybe [] classSupers (classOf program c))
+        Just (num, _) -> c == num || any (numeric . constraintClass) (maybe [] classSupers (classOf program c))
         Nothing -> False
   -- A type that has to be a number is the first of Integer and Double
   -- that is an instance of everything wanted of it.
   instances <- asks envInstances
   let builtins = programBuiltins program
-      unknownOf w = lift (Unify.shallow (wantedType w)) >>= \case
-        Meta v -> pure (Just v)
+      unknownOf w = case wantedTypes w of
+        [t] ->
+          lift (Unify.shallow t) >>= \case
+            Meta v -> pure (Just v)
+            _ -> pure Nothing
         _ -> pure Nothing
   placed <- forM waiting (\w -> (,) w <$> unknownOf w)
   forM_ placed $ \(w, at') -> forM_ at' $ \v -> when (numeric (wantedClass w)) $ do
@@ -471,7 +626,7 @@ settle = do
         let candidates = fromMaybe [Con (builtinInteger builtins), Con (builtinDouble builtins)] declared'
             wantedOfIt = [wantedClass w' | (w', Just v') <- placed, v' == v]
             fits t = lift (Unify.spine t) >>= \case
-              (Con c, _) -> pure (all (\k -> Map.member (nameKey k, nameKey c) instances) wantedOfIt)
+              (Con c, _) -> pure (all (\k -> instanceAt instances k c) wantedOfIt)
               _ -> pure False
         chosen <- filterM fits candidates
         forM_ (take 1 chosen) (lift . Unify.unify still)
@@ -489,31 +644,35 @@ settle = do
     let cls = maybe "?" nameText (nameInfo program (wantedClass w))
     complain ("the type of this is ambiguous: nothing says which instance of " ++ cls ++ " is meant")
 
--- | Check an instance: that its type is an instance of the superclasses,
--- and each method it defines against the method's type at its type.
+-- | Check an instance: that its types are an instance of what the class
+-- has above it, and each method it defines against the method's type at
+-- its types.
 instance' :: Instance -> Tc s ()
 instance' inst = at (instanceId inst) $ do
   program <- asks envProgram
-  let self = constructed (instanceType inst) (map Rigid (instanceVariables inst))
-  context <- forM (instanceContext inst) (\(Constraint c t) -> Pred c <$> fromSyntax t)
+  self <- mapM fromSyntax (instanceHead inst)
+  context <- forM (instanceContext inst) (\(Constraint c ts) -> Pred c <$> mapM fromSyntax ts)
   ds <- forM context (const freshKey)
   recordParameters (instanceId inst) ds
-  let givens = concat (zipWith (\(Pred c t) d -> givenBy program c t (EvParameter d)) context ds)
-  local (\env -> env {envGivens = givens ++ envGivens env}) $ do
-    (supers, wanted) <- capture (forM (maybe [] classSupers (classOf program (instanceClass inst))) (`want` self))
+  given' <- givens context ds
+  let cls = classOf program (instanceClass inst)
+      scope = IntMap.fromList (zip (map nameKey (maybe [] classVariables cls)) self)
+  local (\env -> env {envGivens = given' ++ envGivens env}) $ do
+    (supers, wanted) <- capture (forM (maybe [] classSupers cls) (\(Constraint super us) -> mapM (fromSyntaxIn scope) us >>= want super))
     recordEvidence (instanceId inst) supers
     solve wanted >>= defer
     forM_ (instanceMethods inst) $ \b -> case bindingKind b of
       Function m clauses -> at (bindingId b) $ do
         scheme <- schemeOfName m
         case scheme of
-          -- The class's variable is first, and the class first in the
+          -- The class's variables are first, and the class first in the
           -- context.
-          Poly (a : vs) (_ : own) t -> do
-            let scope = IntMap.singleton (nameKey a) self
-            t' <- lift (Unify.substitute scope t)
-            own' <- forM own (\(Pred c u) -> Pred c <$> lift (Unify.substitute scope u))
-            definition (bindingId b) clauses vs own' t'
+          Poly vs (_ : own) t -> do
+            let (ofClass, rest) = splitAt (length self) vs
+                at' = IntMap.fromList (zip (map nameKey ofClass) self)
+            t' <- lift (Unify.substitute at' t)
+            own' <- forM own (\(Pred c us) -> Pred c <$> lift (mapM (Unify.substitute at') us))
+            definition (bindingId b) clauses rest own' t'
           _ -> pure ()
       Destructure _ _ -> pure ()
 
@@ -572,9 +731,9 @@ declared :: NameId -> Tc s (Maybe (Poly s))
 declared x = do
   program <- asks envProgram
   forM (signature program x) $ \(Signature vs context t) -> do
-    own <- forM context (\(Constraint c u) -> Pred c <$> fromSyntax u)
-    let cls = case (nameSort <$> nameInfo program x, vs) of
-          (Just (Method c), a : _) -> [Pred c (Rigid a)]
+    own <- forM context (\(Constraint c us) -> Pred c <$> mapM fromSyntax us)
+    let cls = case nameSort <$> nameInfo program x of
+          Just (Method c) -> [Pred c (map Rigid (take (maybe 1 (length . classVariables) (classOf program c)) vs))]
           _ -> []
     Poly vs (cls ++ own) <$> fromSyntax t
 
@@ -719,12 +878,12 @@ group bs inner = do
       restricted = any restricts bs
       unknowns = fmap concat . mapM (lift . Unify.unsolved)
   held <- unknowns (envMonos env)
-  constrained <- unknowns (map wantedType waiting)
+  constrained <- unknowns (concatMap wantedTypes waiting)
   -- What a pattern binds is generalised too, as far as the restriction
   -- lets it be: over what nothing is wanted of.
   candidates <- unknowns (map snd monos)
   let free = [v | v <- nub candidates, v `notElem` held, not (restricted && v `elem` constrained)]
-  sorted <- forM waiting (\w -> (,) w . any (`elem` free) <$> lift (Unify.unsolved (wantedType w)))
+  sorted <- forM waiting (\w -> (,) w . any (any (`elem` free)) <$> mapM (lift . Unify.unsolved) (wantedTypes w))
   let (quantified, deferred) = partition snd sorted
   defer (map fst deferred)
   vs <- forM free $ \v -> do
@@ -746,13 +905,13 @@ group bs inner = do
   local (\e -> e {envMonos = [t | (x, t) <- monos, restricted || x `notElem` functions] ++ envMonos e}) (withSchemes generalised inner)
   where
     parameter context w = do
-      t <- lift (Unify.zonk (wantedType w))
-      same <- filterM (\(c, u, _) -> if c == wantedClass w then (== t) <$> lift (Unify.zonk u) else pure False) context
+      t <- mapM (lift . Unify.zonk) (wantedTypes w)
+      same <- filterM (\(c, u, _) -> if c == wantedClass w then (== t) <$> mapM (lift . Unify.zonk) u else pure False) context
       d <- case same of
         (_, _, d) : _ -> pure d
         [] -> freshKey
       lift (writeSTRef (wantedHole w) (Just (EvParameter d)))
-      pure (if null same then context ++ [(wantedClass w, wantedType w, d)] else context)
+      pure (if null same then context ++ [(wantedClass w, wantedTypes w, d)] else context)
 
 -- | Check a definition whose names are in scope.
 binding :: Binding -> Tc s ()
@@ -797,11 +956,10 @@ binding b = at (bindingId b) $ case bindingKind b of
 definition :: NodeId -> [Clause] -> [NameId] -> [Pred s] -> Type s -> Tc s ()
 definition n clauses vs context t = do
   record n t
-  program <- asks envProgram
   ds <- forM context (const freshKey)
   recordParameters n ds
-  let givens = concat (zipWith (\(Pred c a) d -> givenBy program c a (EvParameter d)) context ds)
-  local (\env -> env {envGivens = givens ++ envGivens env}) $ do
+  given' <- givens context ds
+  local (\env -> env {envGivens = given' ++ envGivens env}) $ do
     ((), wanted) <- capture (forM_ clauses (`clause` t))
     solve wanted >>= defer
   -- A signature's type variables stand for any type at all, so nothing
@@ -879,8 +1037,8 @@ literal matched = \case
     case (builtinNumeric builtins, builtinEquality builtins) of
       (Just (num, _), equality) | not matched || isJust equality -> do
         a <- unknown
-        equal <- if matched then forM (maybeToList equality) (\(eq, _) -> want eq a) else pure []
-        number <- want num a
+        equal <- if matched then forM (maybeToList equality) (\(eq, _) -> want eq [a]) else pure []
+        number <- want num [a]
         n <- asks envNode
         forM_ n $ \here -> do
           recordEvidence here (equal ++ [number])
@@ -892,13 +1050,13 @@ literal matched = \case
     case builtinFractional builtins of
       Just (fractional, _, _) | not matched -> do
         a <- unknown
-        evidence <- want fractional a
+        evidence <- want fractional [a]
         asks envNode >>= mapM_ (`recordEvidence` [evidence])
         pure a
       Just (fractional, _, _) | Just (eq, _) <- builtinEquality builtins -> do
         a <- unknown
-        equal <- want eq a
-        evidence <- want fractional a
+        equal <- want eq [a]
+        evidence <- want fractional [a]
         asks envNode >>= mapM_ (`recordEvidence` [equal, evidence])
         pure a
       Just _ -> complain "a number with a fraction needs the prelude's Eq to be matched against" >> unknown
@@ -939,13 +1097,12 @@ infer e = at (exprId e) $ do
     -- What is said is checked as a signature is, and then used as a
     -- name with that signature would be.
     HIR.Annotated inner (Signature vs context said) -> do
-      program <- asks envProgram
-      preds <- forM context (\(Constraint c u) -> Pred c <$> fromSyntax u)
+      preds <- forM context (\(Constraint c us) -> Pred c <$> mapM fromSyntax us)
       t <- fromSyntax said
       ds <- forM preds (const freshKey)
       recordParameters (exprId e) ds
-      let givens = concat (zipWith (\(Pred c a) d -> givenBy program c a (EvParameter d)) preds ds)
-      local (\env -> env {envGivens = givens ++ envGivens env}) $ do
+      given' <- givens preds ds
+      local (\env -> env {envGivens = given' ++ envGivens env}) $ do
         ((), wanted) <- capture (check inner t)
         solve wanted >>= defer
       instantiate (Poly vs preds t)
@@ -971,7 +1128,7 @@ appliedTo inner x types = at (exprId inner) $ do
   said <- forM (zip vs types) (\(v, ty) -> (,) (nameKey v) <$> maybe unknown fromSyntax ty)
   rest <- forM (drop (length types) vs) (\v -> (,) (nameKey v) <$> unknown)
   let scope = IntMap.fromList (said ++ rest)
-  evidence <- forM context (\(Pred c a) -> lift (Unify.substitute scope a) >>= want c)
+  evidence <- forM context (\(Pred c as) -> lift (mapM (Unify.substitute scope) as) >>= want c)
   recordEvidence (exprId inner) evidence
   found <- lift (Unify.substitute scope t)
   found <$ record (exprId inner) found
