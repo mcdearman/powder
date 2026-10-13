@@ -52,7 +52,8 @@ import qualified Powder.Sequent as Sequent
 import Powder.Sequent.FromCore (fromCore)
 import qualified Data.Map as Map
 import qualified Data.Set as Set
-import Powder.Extensions (Extension (ReportPrelude), Extensions, Settings (..), defaultSettings, extensionsOf, haskell2010, pragmaWords, reportPrelude)
+import Powder.Cpp (preprocess)
+import Powder.Extensions (Extension (CPP, ReportPrelude), Extensions, Settings (..), defaultSettings, extensionsOf, haskell2010, pragmaWords, reportPrelude)
 import Powder.Lexer (lexer)
 import Powder.Parser
 import Powder.Syntax.Kind (SyntaxKind (Pragma), isTrivia)
@@ -110,7 +111,13 @@ parseFileWith settings path src = do
     Left (Failure [(path, src)] [Problem "syntax error" "program text in a literate file must have a blank line between it and what is not program text" path (Just (Pos line 1, Pos line 2)) False])
   -- A literate file is its program text, the rest left blank, so that
   -- everything in it is where it was.
-  tree <- parsed path src (parseModuleWith extensions (if ".lhs" `isSuffixOf` path then unlit src else src))
+  -- With CPP the preprocessor's directives are carried out first. What
+  -- they leave out is left blank, as for a literate file.
+  text <-
+    if CPP `Set.member` extensions
+      then first (\(line, message) -> Failure [(path, src)] [Problem "syntax error" message path (Just (Pos line 1, Pos line 2)) False]) (preprocess src)
+      else pure src
+  tree <- parsed path src (parseModuleWith extensions (if ".lhs" `isSuffixOf` path then unlit text else text))
   maybe (Left (Failure [] [Problem "error" (path ++ " is not a module") "" Nothing False])) (Right . (\m -> Unit path src m Nothing extensions)) (cast tree)
 
 -- | The lines of a literate source that are program text hard against

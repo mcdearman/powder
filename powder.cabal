@@ -38,6 +38,7 @@ library
     Powder.Bytecode
     Powder.Core
     Powder.Diagnostics
+    Powder.Cpp
     Powder.Extensions
     Powder.Files
     Powder.Foreign

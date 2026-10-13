@@ -384,6 +384,7 @@ means:
 | `AllowAmbiguousTypes` | A method's type need not mention its class's variable: applying it to a type says which instance is meant |
 | `TypeFamilies` | `type family Elem c where Elem [a] = a`: a function from types to a type, with all its equations; or open, with `type instance`; or going with a class, `type Item f`, and given in each instance |
 | `DefaultSignatures` | `default describe :: Show a => a -> String`, in a class: a method's default of a type of its own, which asks more than the method's does. An instance that does not define the method must have what the default asks |
+| `CPP` | The C preprocessor's directives, carried out before a file is read: `#if`, `#ifdef`, `#ifndef`, `#elif`, `#else`, `#endif`, `#define` of a name or of one with parameters, `#undef`, `#error`. What is left out is left blank, so everything kept is on the line it was on. `__POWDER__` is defined, and `MIN_VERSION_base(4,20,0)` holds |
 | `UndecidableInstances` | Accepted, and says nothing: no instance is checked to be one whose use must end |
 
 And one of Powder's own, which only `Haskell2010` has on:
