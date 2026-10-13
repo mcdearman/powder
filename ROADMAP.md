@@ -353,10 +353,16 @@ A typed Core is not needed by anything in GHC2024.
 
 ### Compiling Powder with Powder
 
-Powder cannot build itself yet. What stands in the way is small: M0 to M2,
-simple PatternSynonyms, signatures on patterns, StandaloneDeriving, and a
-decision about Binary and Generic. The packages it depends on (bytestring,
-text, binary, diagnose) are better replaced by modules of its own than
+Powder cannot build itself yet. The language it is written in is no longer
+what stands in the way: the extensions its sources use are done, Generic among
+them. What does is what it is built from. Its lexer is made by Alex. It
+depends on containers, mtl, text, bytestring, binary, array, directory,
+filepath, unix, prettyprinter and diagnose, and the library here has none of
+`Data.Map`, `Data.Set`, `Data.IntMap`, `Control.Monad.State` and
+`Control.Monad.Reader`, `Control.Monad.ST` and `Data.STRef`, or `Data.Text`.
+Those are the next thing to write: maps and sets first, then the monads, which
+functional dependencies and the classes of M5 now allow. bytestring, binary
+and diagnose are better replaced in the compiler by modules of its own than
 compiled.
 
 ## The machine
@@ -378,9 +384,12 @@ the machine ten seconds; that was not the depth, which costs nothing, but that
 every step of such a recursion is slow, about a microsecond and a half and
 some twenty thousand of the processor's instructions. The example is a hundred
 thousand deep now, so that the machine for AxCut can run it with the others.
-What makes a step slow is the next thing to look at for speed. It has not been
-measured further than that; arithmetic on `Int` by way of a dictionary, and
-thunks made where a value is wanted at once, are where to look first.
+Part of what made a step slow is gone: a whole program is now made smaller
+before it is compiled, by seeing which dictionary a method is applied to and
+writing out the small functions that `Int`'s arithmetic was made of, and the
+million-deep recursion is four times as fast for it. What is left to look at
+is thunks made where a value is wanted at once, for which the compiler would
+have to know what is strict.
 
 ## The tools
 
@@ -395,6 +404,9 @@ thunks made where a value is wanted at once, are where to look first.
 - Whether `ReportPrelude` is the name to keep for the extension that says a
   module has the Report's Prelude.
 - What Powder2026, the default edition, turns on, and what extensions of
-  Powder's own it has. Today it is the thirteen extensions of M2 that are done.
+  Powder's own it has. Today it is every extension of GHC2024 that is done and
+  a few beside, fifty-one in all, and none of its own.
 - Whether the register machine keeps tagged values with reference counts, as it
-  does on its branch, or takes untagged words and a tracing collector.
+  does, or takes untagged words and a tracing collector. The three things not
+  started under the machine wait on this: how a stack segment is detached and
+  what native code looks like both follow from how a value is kept.

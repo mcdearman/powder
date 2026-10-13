@@ -13,6 +13,7 @@ import Data.Maybe (fromMaybe)
 import qualified Powder.Core as Core
 import Powder.Frontend (haskell2010, parseFileWith)
 import Powder.Package
+import Powder.Simplify (shaken)
 import Powder.SKI.Compile (compileProgram)
 import Powder.SKI.Eval (Hooks (..), RuntimeError (..), run)
 import System.Directory
@@ -87,7 +88,7 @@ compiled lib sources = do
     Left _ -> Left "refused"
     Right package ->
       let linked = link [compiledCode lib, compiledCode package]
-       in if "Main.main" `elem` map fst (Core.progDefs linked) then Right (Core.shake entry linked) else Left "no main"
+       in if "Main.main" `elem` map fst (Core.progDefs linked) then Right (shaken entry linked) else Left "no main"
 
 -- | The status a test's name says it leaves with.
 wanted :: String -> Int

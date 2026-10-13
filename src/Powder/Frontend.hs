@@ -50,6 +50,7 @@ import qualified Powder.AxCut as AxCut
 import qualified Powder.AxCut.Lower as AxCut
 import qualified Powder.Sequent as Sequent
 import Powder.Sequent.FromCore (fromCore)
+import Powder.Simplify (shaken)
 import qualified Data.Map as Map
 import qualified Data.Set as Set
 import Powder.Cpp (preprocess)
@@ -229,7 +230,7 @@ rooted :: Name -> Program -> Either Failure Program
 rooted root prog = do
   unless (root `elem` map fst (progDefs prog)) $
     Left (Failure [] [Problem "error" ("no definition of " ++ root) "" Nothing False])
-  pure (shake root prog)
+  pure (shaken root prog)
 
 -- | Load a program together with the prelude.
 loadProgram :: FilePath -> IO (Either Failure Program)

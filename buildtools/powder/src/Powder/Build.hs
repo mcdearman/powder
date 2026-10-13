@@ -44,6 +44,7 @@ import qualified Powder.Core as Core
 import Powder.Diagnostics (Failure (..), Problem (..))
 import Powder.Frontend (Module, Unit, haskell2010, parseFileWith, readPrelude, unitModule)
 import Powder.Package
+import Powder.Simplify (shaken)
 import System.Directory
 import System.Environment (getExecutablePath)
 import System.FilePath
@@ -123,7 +124,7 @@ build options graph = do
       program
         | not (all (isJust . resultCompiled) everything) || not runnable = (Nothing, [])
         | "Main.main" `notElem` map fst (Core.progDefs linked) = (Nothing, [failed ("the module Main of `" ++ graphRoot graph ++ "` does not define main")])
-        | otherwise = (Just (Core.shake entry linked), [])
+        | otherwise = (Just (shaken entry linked), [])
   pure (Built (zip ("base" : map packageName (graphPackages graph)) (map resultStep everything)) (mapMaybe resultFailure everything ++ snd program) (fst program))
 
 -- | The library the language comes with, compiled, from where it is kept
