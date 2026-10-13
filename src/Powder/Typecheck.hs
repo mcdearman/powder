@@ -622,7 +622,62 @@ solveNoting reported wanted = do
 
     one unrefined = do
       program <- asks envProgram
-      w <- (\ts -> unrefined {wantedTypes = ts}) <$> mapM refined (wantedTypes unrefined)
+      refinedTypes <- mapM refined (wantedTypes unrefined)
+      let coercing = fmap (\i -> (nameText i, nameModule i)) (nameInfo program (wantedClass unrefined)) == Just ("Coercible", "Powder.Base")
+      if coercing then coercion unrefined {wantedTypes = refinedTypes} else matching unrefined {wantedTypes = refinedTypes}
+
+    -- That one type's values may be taken as another's is not for any
+    -- instance to say: it is so where the two are the same; where one is
+    -- a newtype, and what it is of may be taken as the other; and where
+    -- they are one thing applied to types that may be taken as each
+    -- other, place by place.
+    coercion w = case wantedTypes w of
+      [a, b] ->
+        coercible (24 :: Int) a b >>= \case
+          Just True -> [] <$ lift (writeSTRef (wantedHole w) (Just (EvInstance (NodeId (-1)) [])))
+          Just False -> [] <$ missing w
+          Nothing -> pure [w]
+      _ -> [] <$ missing w
+
+    coercible depth a b
+      | depth <= 0 = pure (Just False)
+      | otherwise = do
+          program <- asks envProgram
+          a' <- lift (Unify.zonk a)
+          b' <- lift (Unify.zonk b)
+          (hdA, argsA) <- lift (Unify.spine a)
+          (hdB, argsB) <- lift (Unify.spine b)
+          given' <- asks envGivens
+          said <- anyM (\(Given _ ts _) -> (\ts' -> ts' == [a', b'] || ts' == [b', a']) <$> mapM (lift . Unify.zonk) ts) [g | g@(Given c _ _) <- given', isCoercible program c]
+          case (hdA, hdB) of
+            _ | a' == b' && null (Types.metas a') -> pure (Just True)
+            _ | said -> pure (Just True)
+            (Con t, _) | Just (parameters, of') <- newtypeOf program t, length parameters <= length argsA -> do
+              inner <- fromSyntaxIn (IntMap.fromList (zip (map nameKey parameters) argsA)) of'
+              coercible (depth - 1) (foldl App inner (drop (length parameters) argsA)) b
+            (_, Con t) | Just (parameters, of') <- newtypeOf program t, length parameters <= length argsB -> do
+              inner <- fromSyntaxIn (IntMap.fromList (zip (map nameKey parameters) argsB)) of'
+              coercible (depth - 1) a (foldl App inner (drop (length parameters) argsB))
+            (Con t, Con u) | t == u && length argsA == length argsB -> allOf <$> zipWithM (coercible (depth - 1)) argsA argsB
+            (Rigid x, Rigid y) | x == y && length argsA == length argsB -> allOf <$> zipWithM (coercible (depth - 1)) argsA argsB
+            (Meta _, _) -> pure Nothing
+            (_, Meta _) -> pure Nothing
+            _ -> pure (Just False)
+
+    allOf results
+      | Just False `elem` results = Just False
+      | Nothing `elem` results = Nothing
+      | otherwise = Just True
+
+    anyM p = fmap or . mapM p
+
+    isCoercible program c = fmap (\i -> (nameText i, nameModule i)) (nameInfo program c) == Just ("Coercible", "Powder.Base")
+
+    -- A newtype's parameters and what it is a newtype of.
+    newtypeOf program t = listToMaybe [(dataParameters d, of') | d <- programDataTypes program, dataName d == t, [(k, [of'])] <- [dataConstructors d], k `elem` programNewtypes program]
+
+    matching w = do
+      program <- asks envProgram
       known <- asks (IntMap.findWithDefault [] (nameKey (wantedClass w)) . envInstances) >>= filterM (visible w)
       given' <- asks (filter (\(Given c _ _) -> c == wantedClass w) . envGivens)
       -- What the class's dependencies say.

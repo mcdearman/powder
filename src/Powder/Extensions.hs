@@ -51,6 +51,7 @@ data Extension
   | DeriveLift
   | DeriveTraversable
   | DerivingStrategies
+  | DerivingVia
   | DisambiguateRecordFields
   | EmptyCase
   | EmptyDataDeriving
@@ -149,6 +150,7 @@ implemented =
         DeriveFunctor,
         DeriveTraversable,
         DerivingStrategies,
+        DerivingVia,
         DisambiguateRecordFields,
         EmptyCase,
         EmptyDataDeriving,
@@ -259,6 +261,7 @@ editionExtensions = \case
       DeriveFunctor,
       DeriveTraversable,
       DerivingStrategies,
+      DerivingVia,
       DisambiguateRecordFields,
       EmptyCase,
       EmptyDataDeriving,

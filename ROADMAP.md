@@ -218,8 +218,8 @@ What these do not yet do:
 - [x] Type equality, `a ~ b`, in a context
 - [x] RoleAnnotations, which are read and say nothing
 - [x] MonoLocalBinds, which is accepted and changes nothing
-- [ ] Coercible, with `Data.Coerce`
-- [ ] DerivingVia
+- [x] Coercible, with `Data.Coerce`
+- [x] DerivingVia
 - [ ] TypeFamilies
 - [ ] DeriveGeneric, with `GHC.Generics`, which needs TypeFamilies
 - [ ] DefaultSignatures
@@ -243,6 +243,13 @@ What these do not yet do:
 - That two types are the same can be asked for and given in a context. It is
   a class in the library, with one instance, and a dictionary that holds
   nothing is passed for it.
+- Coercible takes every parameter of a type to be one whose values may be
+  taken as another's: there are no roles, so `coerce` between two sets of
+  different orderings is not refused. A newtype is seen through whether or
+  not its constructor is in scope.
+- An instance is derived by way of another type beside the type's
+  declaration, and not apart from it; and not for a class of type
+  constructors.
 
 **M8, kinds.** PolyKinds, DataKinds, type-level literals, Typeable and
 DeriveDataTypeable. This replaces `src/Powder/Kinds.hs`.

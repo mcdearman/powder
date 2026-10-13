@@ -364,6 +364,7 @@ compiled as if it did not. Implemented so far, all of them in
 | `RankNTypes` | `f :: (forall a. a -> a) -> (Int, Bool)`: an argument, or a field, that works at every type |
 | `GADTs` | `data Expr a where IntE :: Int -> Expr Int`: a constructor makes its type at types of its own choosing, and matching it says what they are. With `a ~ b` in a context, for two types that are the same |
 | `RoleAnnotations`, `MonoLocalBinds` | Read, and say nothing here |
+| `DerivingVia` | `deriving (Semigroup, Monoid) via (Sum Int)`: an instance that is another type's, the two being kept the same way. `Data.Coerce` has `coerce` for taking one such type's values as the other's |
 
 Implemented and in no edition, since each changes what a program already
 means:

@@ -8,6 +8,7 @@ module Powder.Syntax.AST.Decl
     Listed (..),
     Subordinates (..),
     derived,
+    derivedVia,
     isNewtype,
     patternBuilder,
     kinds,
@@ -62,8 +63,9 @@ isNewtype (syntax -> r) = K.KwNewtype `elem` map Red.kind (Red.tokens r)
 -- each with how, if that is said: @stock@, @newtype@ or @anyclass@. It
 -- is said after the word deriving, of which there may be several.
 derived :: Decl -> [(Maybe Name, Name)]
-derived (syntax -> r) = concat [clauses Nothing (spelled d) | d <- Red.nodes r, Red.kind d == K.Deriving]
+derived (syntax -> r) = concat [[(if via d then Just "via" else how, c) | (how, c) <- clauses Nothing (spelled d)] | d <- Red.nodes r, Red.kind d == K.Deriving]
   where
+    via d = (K.VarId, "via") `elem` spelled d
     clauses how = \case
       (K.KwDeriving, _) : (K.KwNewtype, _) : rest -> clauses (Just "newtype") rest
       (K.KwDeriving, _) : (K.VarId, s) : rest | s `elem` ["stock", "anyclass"] -> clauses (Just s) rest
@@ -71,6 +73,11 @@ derived (syntax -> r) = concat [clauses Nothing (spelled d) | d <- Red.nodes r, 
       (k, c) : rest | k `elem` [K.ConId, K.QConId] -> (how, c) : clauses how rest
       _ : rest -> clauses how rest
       [] -> []
+
+-- | For each class a data declaration asks to have an instance derived
+-- for by way of another type's: that type.
+derivedVia :: Decl -> [(Name, Type)]
+derivedVia (syntax -> r) = [(c, t) | d <- Red.nodes r, Red.kind d == K.Deriving, t <- take 1 (children d), (k, c) <- spelled d, k `elem` [K.ConId, K.QConId]]
 
 -- | An instance derived apart from its type's declaration: how, if that
 -- is said, and the instance's head, with perhaps a context.

@@ -1607,12 +1607,12 @@ enabled extension = asks (\env -> maybe False (Set.member extension) (Map.lookup
 -- the module's declarations.
 deriving' :: Map.Map Name NameId -> [Syntax.Decl] -> Syntax.Decl -> M ()
 deriving' own decls d = within d $ case d of
-  Decl.Data {} -> forM_ (Decl.derived d) (\(how, c) -> derive own d how Nothing c)
+  Decl.Data {} -> forM_ (Decl.derived d) (\(how, c) -> derive own d how Nothing (lookup c (Decl.derivedVia d)) c)
   Decl.StandaloneDeriving how hd -> case classHead hd of
     Just (context, c, [target])
       | Just (t, vs) <- typedShape target,
         declared : _ <- [x | x@(Decl.Data t' _ _) <- decls, t' == t] ->
-          derive own declared how (Just (vs, context)) c
+          derive own declared how (Just (vs, context)) Nothing c
     _ -> complain "an instance is derived apart from a type's declaration for a type this module declares, applied to variables"
   _ -> pure ()
 
@@ -1621,8 +1621,8 @@ deriving' own decls d = within d $ case d of
 -- instance of what a newtype is of; or with no methods. Which may be
 -- said. Where the instance was asked for apart from the type, the
 -- variables it named and the context it gave are here too.
-derive :: Map.Map Name NameId -> Syntax.Decl -> Maybe Name -> Maybe ([Name], [SType.Type]) -> Name -> M ()
-derive own d said apart c = case d of
+derive :: Map.Map Name NameId -> Syntax.Decl -> Maybe Name -> Maybe ([Name], [SType.Type]) -> Maybe SType.Type -> Name -> M ()
+derive own d said apart via c = case d of
   Decl.Data t parameters cs -> do
     -- Whether a field's type is the type being declared, as it is declared.
     let itself = \case
@@ -1679,7 +1679,10 @@ derive own d said apart c = case d of
             n <- node
             at' <- appliedTo (own Map.! t) variables
             Nothing <$ addInstance (Instance n k [at'] variables [] [] Exactly)
-          _ | how == "newtype" -> Nothing <$ newtypeDerived own d apart k
+          _ | how == "newtype" -> Nothing <$ newtypeDerived own d apart Nothing k
+          -- By way of another type: as a newtype's instance is of what
+          -- the newtype is of, but of the type that is named.
+          _ | how == "via" -> Nothing <$ newtypeDerived own d apart via k
           -- A type with no constructors has no values to tell apart, to
           -- show or to read.
           _ | null cs, not allowed -> Nothing <$ complain "an instance can be derived for a type with no constructors only with EmptyDataDeriving"
@@ -1797,13 +1800,19 @@ traversableEquations shapes = forM shapes $ \(con, fields) -> do
 -- can be since a newtype and what it is of are kept the same way. The
 -- instance asks of the newtype's parameters what it would ask if derived
 -- as the Report derives, unless a context was given with the request.
-newtypeDerived :: Map.Map Name NameId -> Syntax.Decl -> Maybe ([Name], [SType.Type]) -> NameId -> M ()
-newtypeDerived own d apart k = case d of
-  Decl.Data t parameters [con@(Syntax.Constructor _ [field])] | Decl.isNewtype d -> do
+newtypeDerived :: Map.Map Name NameId -> Syntax.Decl -> Maybe ([Name], [SType.Type]) -> Maybe SType.Type -> NameId -> M ()
+newtypeDerived own d apart via k = case d of
+  Decl.Data t parameters cs | isJust via || (Decl.isNewtype d && length cs == 1) -> do
     variables <- mapM (`newName` TypeVariable) (nub parameters)
     let scope = zip (nub parameters) variables
-    scope' <- maybe (pure scope) (typedScope t scope) (Syntax.constructorResult con)
-    whole <- withTypeVariables scope' (type' field)
+    -- The type whose instance it is: the one named, or what the newtype
+    -- is a newtype of.
+    whole <- case (via, cs) of
+      (Just named, _) -> withTypeVariables scope (type' named)
+      (Nothing, con@(Syntax.Constructor _ (field : _)) : _) -> do
+        scope' <- maybe (pure scope) (typedScope t scope) (Syntax.constructorResult con)
+        withTypeVariables scope' (type' field)
+      _ -> (`Type.Type` Type.Error) <$> node
     cls <- gets (IntMap.lookup (nameKey k) . classes)
     known <- gets signatures
     let methods = [(m, s) | m <- maybe [] classMethods cls, Just s <- [IntMap.lookup (nameKey m) known]]

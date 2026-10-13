@@ -202,6 +202,15 @@ class a ~ b | a -> b, b -> a
 
 instance a ~ a
 
+-- That one type's values may be taken as another's, the two being kept
+-- the same way: a newtype and what it is of, and types made of such in
+-- the same places. No instance is written: the compiler says when it is
+-- so.
+class Coercible a b
+
+coerce :: Coercible a b => a -> b
+coerce = primCoerce
+
 -- The types a string written in a program may be of, where
 -- OverloadedStrings is on.
 class IsString a where

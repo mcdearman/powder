@@ -687,11 +687,18 @@ dataDecl = do
       when defined $ do
         conDecl
         whileM (eat Bar) conDecl
-  deriving' <- at KwDeriving
-  when deriving' $ do
+  -- The classes to derive instances of: after the word, which may come
+  -- more than once, perhaps how, a class or several in parentheses, and
+  -- with DerivingVia perhaps the type whose instances they are to be.
+  whileM (at KwDeriving) $ do
     d <- open
     advance
-    restOfDecl
+    how <- (||) <$> at KwNewtype <*> ((&&) <$> at VarId <*> ((||) <$> atText "stock" <*> atText "anyclass"))
+    when how advance
+    several <- at LParen
+    if several then balanced else expectAny [ConId, QConId] "a class"
+    via <- (&&) <$> on DerivingVia <*> ((&&) <$> at VarId <*> atText "via")
+    when via (advance >> atype)
     close_ d Deriving
   close_ m DataDecl
   where
