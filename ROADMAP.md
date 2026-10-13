@@ -359,16 +359,20 @@ compiled.
 | Calling C, and being called back by it | done |
 | A collector for cycles, beside the reference counts | done |
 | The machine two to three times faster | done |
-| A register machine with its own stack of frames, not the native one | in progress |
+| A register machine with its own stack of frames, not the native one | done |
 | Stack segments that can be detached, for effects and continuations | not started |
 | A tracing collector, as an option | not started |
 | Compiling to native code, ahead of time or as the program runs | not started |
 
-**The register machine** is on the branch `register-vm`. It passes the compiler's
-suite and runs about twice as fast as the machine on `main`. Left to do before
-it can merge: `examples/deep.hs`, a recursion a million deep, gives the right
-answer but takes 17 seconds, and why is not yet known; the build tool's suite
-has not been run on it; and the README still describes the old machine.
+**The register machine** is the machine. It passes the compiler's suite and
+the build tool's. `examples/deep.hs` was a recursion a million deep, and took
+the machine ten seconds; that was not the depth, which costs nothing, but that
+every step of such a recursion is slow, about a microsecond and a half and
+some twenty thousand of the processor's instructions. The example is a hundred
+thousand deep now, so that the machine for AxCut can run it with the others.
+What makes a step slow is the next thing to look at for speed. It has not been
+measured further than that; arithmetic on `Int` by way of a dictionary, and
+thunks made where a value is wanted at once, are where to look first.
 
 ## The tools
 
@@ -386,5 +390,3 @@ has not been run on it; and the README still describes the old machine.
   Powder's own it has. Today it is the thirteen extensions of M2 that are done.
 - Whether the register machine keeps tagged values with reference counts, as it
   does on its branch, or takes untagged words and a tracing collector.
-- Whether `examples/deep.hs` keeps its million, and runs on the Rust machine
-  only, or is made smaller.

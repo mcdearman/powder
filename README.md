@@ -676,7 +676,7 @@ compiler, and a machine written in Rust runs the bytecode.
 | Sequent calculus | [Powder.Sequent](src/Powder/Sequent.hs), [FromCore](src/Powder/Sequent/FromCore.hs) | The λμμ̃ calculus, call by value: producers, consumers, and statements that cut one against the other. |
 | AxCut | [Powder.AxCut](src/Powder/AxCut.hs), [Lower](src/Powder/AxCut/Lower.hs) | Every cut reduced until a variable stands on one side: statements only, over one environment that is a row of values with no names. |
 | A machine for AxCut | [Powder.AxCut.Machine](src/Powder/AxCut/Machine.hs) | What AxCut means, for testing the lowering by itself. Not the runtime. |
-| Bytecode | [Powder.Bytecode](src/Powder/Bytecode.hs) | AxCut written down: values by their place in the environment, code cut into blocks. |
+| Bytecode | [Powder.Bytecode](src/Powder/Bytecode.hs) | AxCut compiled for registers: a value stays in the register it is in, and code is cut into blocks. |
 | The machine | [runtime/](runtime/src/main.rs) | Rust. Loads an image and runs it. |
 
 ```
@@ -714,8 +714,17 @@ exactly that. So the machine counts references by the statements alone:
 a count goes up where a `substitute` copies, and a value is let go where
 one leaves it out.
 
-The machine in Rust counts references, as above, and runs in constant
-stack. A count frees a value the moment the last reference to it is let
+The machine in Rust is a register machine. A value stays in its register:
+a `substitute` becomes only the copies and the drops it asks for, and a
+method is gone to with its arguments in the first registers. A consumer
+that waits for a result is a frame on a stack the machine keeps itself, in
+chunks, and not an object on the heap. Nothing uses the machine's own
+stack: the loop that runs instructions calls nothing that calls it back,
+and letting go of a long list is a loop. So a recursion goes as deep as
+there is memory for, and [examples/deep.hs](examples/deep.hs) goes a
+hundred thousand deep five ways.
+
+It counts references, as above. A count frees a value the moment the last reference to it is let
 go of, but values that refer to each other in a circle, which lazy code
 makes (`let xs = 1 : xs`, or two local functions that call each other),
 keep each other's counts up for good. Those are freed by a cycle
@@ -732,11 +741,13 @@ circles be.
 
 A tracing collector as an alternative is to come, and after it a JIT and
 ahead-of-time compilation to native code, from the same bytecode. The
-machine is as fast as the reducer or faster on most programs, and up to
-two and a half times slower on the ones that allocate most. What time is
-left is spread over the whole loop that runs instructions, so the next
-gains are in what the compiler gives it to run: fewer rows made again,
-and fewer thunks where a value is known to be wanted.
+register machine was about twice as fast, when it was written, as the
+machine before it, which worked on the end of a row of values. A step of
+a recursion over `Int` still costs the processor some twenty thousand
+instructions, as callgrind counts them. Where they go has not been
+measured further; the likely places are in what the compiler gives the
+machine to run, arithmetic by way of a dictionary and thunks made where a
+value is wanted at once, more than in the loop that runs it.
 
 Every example is run on all three, the reducer, the machine for AxCut and
 the machine in Rust, and they must agree.
