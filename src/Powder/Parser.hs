@@ -870,6 +870,14 @@ typeHead = do
       if quoted then expect_ ConId >> expect_ Backquote else advance
       binder'
     LParen : op : RParen : _ | operators && op `elem` [ConSym, VarSym] -> replicateM_ 3 advance >> binders
+    -- An operator between two in parentheses, and then more variables.
+    LParen : VarId : op : _ | operators && op `elem` [ConSym, VarSym] -> do
+      advance
+      binder'
+      advance
+      binder'
+      expect_ RParen
+      binders
     _ -> expect_ ConId >> binders
   where
     binder' = do

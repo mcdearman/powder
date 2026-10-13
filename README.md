@@ -362,6 +362,7 @@ compiled as if it did not. Implemented so far, all of them in
 | `ConstraintKinds` | `type Stringy a = (Show a, Read a)`: a name for constraints |
 | `DataKinds` | `data Vec (n :: Nat) a`: a data type is a kind, and its constructors are the types of it, `'Z` and `'S n`, with the tick or without where no type goes by the name; and a list of types is a type, `'[Int, Bool]` and `t ': ts`. A number or a string is a type too, `Mod 7` and `Field "age"`, and `natVal` and `symbolVal` of `GHC.TypeLits` say which |
 | `DeriveDataTypeable` | `deriving (Typeable)`, which says nothing: every type a module declares can be asked for when a program runs, with `typeOf`, `cast` and `eqT` of `Data.Typeable` |
+| `DeriveGeneric` | `deriving (Generic)`: a type's values as values of the few types of `GHC.Generics`, with the names of the type, its constructors and their fields, so that one function serves every such type |
 | `PolyKinds` | `data Proxy (a :: k)`: a kind with a variable in it, which is any kind, another at each use. `Data.Proxy` has that type |
 | `ExistentialQuantification` | `data Showable = forall a. Show a => MkShowable a`: a constructor with type variables of its own, and a context, whose dictionaries what it makes carries |
 | `RankNTypes` | `f :: (forall a. a -> a) -> (Int, Bool)`: an argument, or a field, that works at every type |
@@ -382,6 +383,7 @@ means:
 | `PartialTypeSignatures`, `NamedWildCards` | `f :: _ -> Int`: a type with parts left out, which are found |
 | `AllowAmbiguousTypes` | A method's type need not mention its class's variable: applying it to a type says which instance is meant |
 | `TypeFamilies` | `type family Elem c where Elem [a] = a`: a function from types to a type, with all its equations; or open, with `type instance`; or going with a class, `type Item f`, and given in each instance |
+| `DefaultSignatures` | `default describe :: Show a => a -> String`, in a class: a method's default of a type of its own, which asks more than the method's does. An instance that does not define the method must have what the default asks |
 | `UndecidableInstances` | Accepted, and says nothing: no instance is checked to be one whose use must end |
 
 And one of Powder's own, which only `Haskell2010` has on:

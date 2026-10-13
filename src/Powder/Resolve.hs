@@ -32,6 +32,7 @@ import Data.Char (isAlphaNum, isUpper)
 import Data.Maybe (catMaybes, fromMaybe, isJust, isNothing, listToMaybe, mapMaybe, maybeToList)
 import Data.Ratio (denominator, numerator)
 import qualified Data.Set as Set
+import qualified Data.Text as Text
 import Numeric (readFloat)
 import Powder.Core (ConInfo (..), Name, Prim (Coerce, MatchFail), primName)
 import Powder.Extensions (Extension (..), Extensions, reportPrelude)
@@ -39,7 +40,7 @@ import Powder.Diagnostics (Problem (..))
 import Powder.HIR hiding (mine)
 import qualified Powder.HIR.Pat as Pat
 import qualified Powder.HIR.Type as Type
-import Powder.Parser (Parsed (..), parseModule)
+import Powder.Parser (Parsed (..), parseModule, parseModuleWith)
 import Powder.Syntax.AST (Ast, Module, cast, moduleDecls, moduleHeader, operatorName, syntax)
 import qualified Powder.Syntax.AST as Syntax
 import Powder.Syntax.AST.Decl (Assoc (..))
@@ -48,6 +49,7 @@ import qualified Powder.Syntax.AST.Expr as Expr
 import qualified Powder.Syntax.AST.Pat as SPat
 import qualified Powder.Syntax.AST.Stmt as Stmt
 import qualified Powder.Syntax.AST.Type as SType
+import qualified Powder.Syntax.Kind as Kind
 import qualified Powder.Syntax.Red as Red
 
 -- | What is in scope.
@@ -90,7 +92,10 @@ data Env = Env
     envPinned :: Bool,
     -- | The classes of what the prelude is made from, as 'envGlobals' is
     -- its values: what is made up here is an instance of some.
-    envGlobalClasses :: Map.Map Name NameId
+    envGlobalClasses :: Map.Map Name NameId,
+    -- | What the module GHC.Generics lets out, if there is one: an
+    -- instance of Generic derived here is written with it.
+    envGenerics :: Scope
   }
 
 data St = St
@@ -148,7 +153,10 @@ data St = St
     literalTypes :: Map.Map String NameId,
     -- | For a method whose default has a type of its own, by 'NameId':
     -- the function that default is.
-    defaultSigned :: Table NameId
+    defaultSigned :: Table NameId,
+    -- | The numbers and strings met as types that have no instance yet
+    -- of the class that says which they are: met before the class was.
+    literalsPending :: [(NameId, Literal, Name)]
   }
 
 type M = ReaderT Env (State St)
@@ -241,10 +249,10 @@ resolveAfter seed languages lenient sources extra = case reverse (problems final
     program = Program (bindings ++ reverse (generated final)) (names final) (origins final) (signatures final) (reverse (dataTypes final)) (synonyms final) (classes final) (reverse (instances final)) builtins spelled (defaults final) (newtypes final) (maybe [] seedModules seed ++ [(file, n) | (file, n, _) <- sources] ++ [(file, root) | Just (_, _, file, _) <- [extra]]) (maybe [] seedImports seed ++ [(n, [name | (name, _, _, _) <- importsOf n]) | n <- moduleNames]) (maybe (-1) seedFloor seed) (partials final) (kindsSaid final) (reverse (kindedTypes final)) (families final)
     ((linked, (bindings, builtins)), final) =
       runState
-        (runReaderT run (Env Map.empty Map.empty Map.empty Map.empty Map.empty Map.empty "" Nothing "" spelled Set.empty Map.empty Map.empty Map.empty Map.empty languages False Map.empty))
+        (runReaderT run (Env Map.empty Map.empty Map.empty Map.empty Map.empty Map.empty "" Nothing "" spelled Set.empty Map.empty Map.empty Map.empty Map.empty languages False Map.empty mempty))
         initial
     initial = case seed of
-      Nothing -> St 0 IntMap.empty IntMap.empty IntMap.empty IntMap.empty [] IntMap.empty [] IntMap.empty [] [] IntMap.empty [] IntMap.empty [] [] [] [] IntMap.empty IntMap.empty [] IntMap.empty [] IntMap.empty IntMap.empty Map.empty IntMap.empty
+      Nothing -> St 0 IntMap.empty IntMap.empty IntMap.empty IntMap.empty [] IntMap.empty [] IntMap.empty [] [] IntMap.empty [] IntMap.empty [] [] [] [] IntMap.empty IntMap.empty [] IntMap.empty [] IntMap.empty IntMap.empty Map.empty IntMap.empty []
       Just s ->
         St
           (seedFloor s)
@@ -276,6 +284,7 @@ resolveAfter seed languages lenient sources extra = case reverse (problems final
           (seedFamilies s)
           Map.empty
           (linkDefaults before)
+          []
     -- What the packages before this one let be known.
     before = maybe mempty seedLinkage seed
     -- In a package every name is spelled with its module's: no module is
@@ -401,6 +410,7 @@ resolveAfter seed languages lenient sources extra = case reverse (problems final
                   envTopAll = scopeValues (scopeOf n),
                   envGlobals = one (scopeValues (basis n)),
                   envGlobalClasses = one (scopeClasses (basis n)),
+                  envGenerics = Map.findWithDefault mempty "GHC.Generics" exports,
                   envConstructors = one (scopeConstructors (scopeOf n)),
                   envTypes = one (scopeTypes (scopeOf n)),
                   envClasses = one (scopeClasses (scopeOf n)),
@@ -576,6 +586,7 @@ resolveAfter seed languages lenient sources extra = case reverse (problems final
             pure (Binding b (Function (globalsOf n Map.! matcherName p) [hit, miss]) : builder)
           _ -> pure []
         (,) [globalsOf n Map.! f | Equations _ f _ <- gs] . (++ foreigns) <$> mapM binding gs
+      forM_ (take 1 sources) (\(file, n, _) -> inModule n file literalInstances)
       asked <- fmap (fromMaybe []) . forM extra $ \(name, printer, file, e) -> inModule root file . within e $ do
         let define x body = do
               n <- node
@@ -1284,18 +1295,8 @@ type' t = within t $ case t of
           Just n -> mkType (Type.Con n)
           Nothing -> do
             n <- newName shown TypeConstructor
-            modify (\st -> st {literalTypes = Map.insert shown n (literalTypes st)})
-            m <- asks (Map.lookup method . envGlobals)
-            cls <- gets (\st -> listToMaybe [k | k <- IntMap.elems (classes st), Just m' <- [m], m' `elem` classMethods k])
-            forM_ cls $ \k -> do
-              -- Its kind is the one the class says its variable is of.
-              forM_ (take 1 (classVariables k)) $ \v ->
-                gets (IntMap.lookup (nameKey v) . kindsSaid) >>= mapM_ (\said -> modify (\st -> st {kindsSaid = IntMap.insert (nameKey n) said (kindsSaid st)}))
-              anything <- mkPat Pat.Wild
-              b <- mk (Lit l) >>= \body -> equations method [([anything], body)]
-              i <- node
-              at' <- mkType (Type.Con n)
-              modify (\st -> st {instances = Instance i (className k) [at'] [] [] [b] Exactly : instances st})
+            modify (\st -> st {literalTypes = Map.insert shown n (literalTypes st), literalsPending = (n, l, method) : literalsPending st})
+            literalInstances
             mkType (Type.Con n)
       _ -> complain "only a number or a string is a type" >> mkType Type.Error
   -- A list of types, as a type: the list's constructors, as types.
@@ -1479,6 +1480,28 @@ signatureFull given whole = do
   namedWild <- enabled NamedWildCards
   let partial = not (null blanks) || (namedWild && any ((== "_") . take 1 . fst) own)
   pure (Signature (map snd scope ++ blanks) constrained resolved, own, partial)
+
+-- | For each number or string met as a type that has none yet, the
+-- instance of the class that says which it is: once that class is known,
+-- which it is not while the types of a module are first read.
+literalInstances :: M ()
+literalInstances = do
+  pending <- gets literalsPending
+  globals <- asks envGlobals
+  known <- gets classes
+  left <- fmap concat . forM pending $ \(n, l, method) ->
+    case [k | k <- IntMap.elems known, Just m <- [Map.lookup method globals], m `elem` classMethods k] of
+      k : _ -> do
+        -- Its kind is the one the class says its variable is of.
+        forM_ (take 1 (classVariables k)) $ \v ->
+          gets (IntMap.lookup (nameKey v) . kindsSaid) >>= mapM_ (\said -> modify (\st -> st {kindsSaid = IntMap.insert (nameKey n) said (kindsSaid st)}))
+        anything <- mkPat Pat.Wild
+        b <- mk (Lit l) >>= \body -> equations method [([anything], body)]
+        i <- node
+        at' <- (`Type.Type` Type.Con n) <$> node
+        [] <$ modify (\st -> st {instances = Instance i (className k) [at'] [] [] [b] Exactly : instances st})
+      [] -> pure [(n, l, method)]
+  modify (\st -> st {literalsPending = left})
 
 -- | Note the kind something is said to have.
 sayKind :: Syntax.Kind -> NameId -> M ()
@@ -1844,7 +1867,7 @@ derive own d said apart via c = case d of
         -- if both are. Where newtypes' instances are asked for, a newtype
         -- has those of the Report's classes too that are of its values
         -- and not of how it is written: all but Read and Show.
-        let stock = unqualified c `elem` ["Eq", "Ord", "Show", "Read", "Enum", "Bounded", "Ix", "Functor", "Foldable", "Traversable"]
+        let stock = unqualified c `elem` ["Eq", "Ord", "Show", "Read", "Enum", "Bounded", "Ix", "Functor", "Foldable", "Traversable", "Generic"]
             how = case said of
               Just s -> s
               Nothing
@@ -1878,6 +1901,7 @@ derive own d said apart via c = case d of
           -- A type with no constructors has no values to tell apart, to
           -- show or to read.
           _ | null cs, not allowed -> Nothing <$ complain "an instance can be derived for a type with no constructors only with EmptyDataDeriving"
+          "Generic" -> Nothing <$ derivedGeneric d
           "Functor" -> Nothing <$ functorial DeriveFunctor functorEquations
           "Foldable" -> Nothing <$ functorial DeriveFoldable foldableEquations
           "Traversable" -> Nothing <$ functorial DeriveTraversable traversableEquations
@@ -2118,6 +2142,99 @@ written source = case (parsedProblems parsed, cast (Red.root (parsedTree parsed)
   _ -> complain "an instance derived here could not be written, which is a fault in the compiler"
   where
     parsed = parseModule source
+
+-- | An instance of Generic: the type its values are kept as, which is
+-- made of the few types of GHC.Generics and says the names of the type,
+-- its constructors and their fields; and the two ways between a value
+-- and that. The constructors are a sum and a constructor's fields a
+-- product, each halved and halved again, as GHC has them.
+derivedGeneric :: Syntax.Decl -> M ()
+derivedGeneric d = case d of
+  Decl.Data t parameters cs -> do
+    on <- enabled DeriveGeneric
+    unless on (complain "an instance of Generic is derived only if DeriveGeneric is on")
+    home <- asks envModule
+    strictly <- enabled StrictData
+    fixities <- forM cs (\(Syntax.Constructor name _) -> fixityOf name)
+    let plainly = all (\con -> isNothing (Syntax.constructorResult con) && null (Syntax.constructorExistentials con) && null (Syntax.constructorContext con)) cs
+        joined :: String -> String -> (a -> String) -> [a] -> String
+        joined op none one = go
+          where
+            go [] = none
+            go [x] = one x
+            go xs = let (l, r) = splitAt (length xs `div` 2) xs in "(" ++ go l ++ " " ++ op ++ " " ++ go r ++ ")"
+        spelt name = if any isAlphaNum (take 1 name) then name else "(" ++ name ++ ")"
+        tokensOf r = concat [if Red.isToken c then [c | not (Kind.isTrivia (Red.kind c)), not (Kind.isVirtual (Red.kind c))] else tokensOf c | c <- Red.children r]
+        typeText ty = "(" ++ unwords (map (Text.unpack . Red.text) (tokensOf (syntax ty))) ++ ")"
+        constructorRep (con@(Syntax.Constructor name tys), (assoc, prec)) =
+          let names = Syntax.constructorFields con
+              marks = Syntax.constructorMarks con
+              fixity
+                | Syntax.constructorInfix con =
+                    "('InfixI '" ++ (case assoc of LeftAssoc -> "LeftAssociative"; RightAssoc -> "RightAssociative"; NonAssoc -> "NotAssociative") ++ " " ++ show prec ++ ")"
+                | otherwise = "'PrefixI"
+              selector (i, ty) =
+                let field = case drop i names of
+                      f : _ -> "('Just " ++ show f ++ ")"
+                      [] -> "'Nothing"
+                    (said, decided) = case drop i marks of
+                      Just True : _ -> ("'SourceStrict", "'DecidedStrict")
+                      Just False : _ -> ("'SourceLazy", "'DecidedLazy")
+                      _ -> ("'NoSourceStrictness", if strictly then "'DecidedStrict" else "'DecidedLazy")
+                 in "S1 ('MetaSel " ++ field ++ " 'NoSourceUnpackedness " ++ said ++ " " ++ decided ++ ") (Rec0 " ++ typeText ty ++ ")"
+           in "C1 ('MetaCons " ++ show name ++ " " ++ fixity ++ " " ++ (if null names then "'False" else "'True") ++ ") (" ++ joined ":*:" "U1" selector (zip [0 :: Int ..] tys) ++ ")"
+        rep = "D1 ('MetaData " ++ show t ++ " " ++ show home ++ " \"main\" " ++ (if Decl.isNewtype d then "'True" else "'False") ++ ") (" ++ joined ":+:" "V1" constructorRep (zip cs fixities) ++ ")"
+        variables n = ["a" ++ show i | i <- [1 .. n]]
+        inject :: Int -> Int -> String -> String
+        inject i n e
+          | n <= 1 = e
+          | i < n `div` 2 = "L1 (" ++ inject i (n `div` 2) e ++ ")"
+          | otherwise = "R1 (" ++ inject (i - n `div` 2) (n - n `div` 2) e ++ ")"
+        alternatives build =
+          intercalate
+            "; "
+            [ build (unwords (spelt name : variables (length tys))) (inject i (length cs) ("M1 (" ++ joined ":*:" "U1" (\v -> "M1 (K1 " ++ v ++ ")") (variables (length tys)) ++ ")"))
+              | (i, Syntax.Constructor name tys) <- zip [0 ..] cs
+            ]
+        whole = "(" ++ unwords (spelt t : nub parameters) ++ ")"
+        text =
+          "instance Generic " ++ whole ++ " where { type Rep " ++ whole ++ " = " ++ rep
+            ++ "; from x = M1 (case x of { " ++ alternatives (\value kept -> value ++ " -> " ++ kept) ++ " })"
+            ++ "; to (M1 r) = case r of { " ++ alternatives (\value kept -> kept ++ " -> " ++ value) ++ " } }"
+    if plainly
+      then writtenGenerically text
+      else complain ("an instance of Generic cannot be derived for " ++ t ++ ": a constructor of it has type variables or a context of its own, or is given by its type")
+  _ -> pure ()
+
+-- | Resolve an instance of Generic written here. What it is written with
+-- is GHC.Generics's, whatever the module has of the same names, and it
+-- is read with what extensions it is written with.
+writtenGenerically :: String -> M ()
+writtenGenerically source = case (parsedProblems parsed, cast (Red.root (parsedTree parsed)) :: Maybe Module) of
+  ([], Just m) -> do
+    generics <- asks envGenerics
+    let one = Map.mapMaybe (\case [x] -> Just x; _ -> Nothing)
+        the names = (`Map.restrictKeys` Set.fromList names) . one
+        types = the ["D1", "C1", "S1", "Rec0", "U1", "V1", ":+:", ":*:", "Rep"] (scopeTypes generics)
+        constructors = the ["M1", "K1", "U1", "L1", "R1", ":*:", "MetaData", "MetaCons", "MetaSel", "PrefixI", "InfixI", "LeftAssociative", "RightAssociative", "NotAssociative", "NoSourceUnpackedness", "NoSourceStrictness", "SourceLazy", "SourceStrict", "DecidedLazy", "DecidedStrict"] (scopeConstructors generics)
+        values = the ["from", "to"] (scopeValues generics)
+    local
+      ( \env ->
+          env
+            { envPinned = True,
+              envValues = Map.union values (Map.union (envGlobals env) (envValues env)),
+              envOwnValues = Map.union values (envOwnValues env),
+              envTypes = Map.union types (envTypes env),
+              envConstructors = Map.union constructors (envConstructors env),
+              envClasses = Map.union (the ["Generic"] (scopeClasses generics)) (envClasses env),
+              envLanguages = Map.insertWith Set.union (envFile env) needed (envLanguages env)
+            }
+      )
+      (forM_ (moduleDecls m) (\d -> forM_ [ds | Decl.Instance _ ds <- [d]] (mapM_ familyEquation) >> instanceDecl d))
+  _ -> complain "an instance of Generic derived here could not be written, which is a fault in the compiler"
+  where
+    needed = Set.fromList [DataKinds, TypeOperators, TypeFamilies, KindSignatures, EmptyCase, FlexibleInstances]
+    parsed = parseModuleWith needed source
 
 -- | An instance's head and context, each parameter of the type being
 -- asked to be an instance too.

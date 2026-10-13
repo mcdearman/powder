@@ -386,7 +386,7 @@ unify :: Type s -> Type s -> Tc s ()
 unify expected actual = do
   expected' <- refined expected >>= normalise
   actual' <- refined actual >>= normalise
-  ok <- lift (Unify.unify expected' actual')
+  ok <- carefully expected' actual'
   unless ok $ do
     -- One of them may be a function from types whose types are not
     -- known yet: then whether they are the same is asked again later.
@@ -397,6 +397,39 @@ unify expected actual = do
         e <- showType expected'
         a <- showType actual'
         complain ("expected " ++ e ++ ", but this has type " ++ a)
+
+-- | Make two types the same, where either may have in it a function
+-- from types applied to types that are not known yet. Such a type is not
+-- taken apart as a type applied to types is, for what it is applied to
+-- says nothing of what it is: that it and the other are the same is
+-- asked again later. What such a function gives may itself be
+-- applied to more, and that much is taken apart. Whether the rest could
+-- be made the same.
+carefully :: Type s -> Type s -> Tc s Bool
+carefully a b = do
+  waiting <- (||) <$> stuck a <*> stuck b
+  if not waiting
+    then lift (Unify.unify a b)
+    else do
+      known <- asks (programFamilies . envProgram)
+      a' <- lift (Unify.shallow a)
+      b' <- lift (Unify.shallow b)
+      (headA, argumentsA) <- lift (Unify.spine a')
+      (headB, argumentsB) <- lift (Unify.spine b')
+      let family hd arguments = case hd of
+            Con f | Just found <- IntMap.lookup (nameKey f) known -> length arguments == familyArity found
+            _ -> False
+      case (a', b') of
+        -- A type not known yet is whatever the other is.
+        (Meta _, _) -> lift (Unify.unify a' b')
+        (_, Meta _) -> lift (Unify.unify a' b')
+        _ | family headA argumentsA || family headB argumentsB -> do
+          same <- (==) <$> lift (Unify.zonk a') <*> lift (Unify.zonk b')
+          unless same (asks envNode >>= \n -> note refDeferred ((a', b', n) :))
+          pure True
+        (Fun x y, Fun x' y') -> (&&) <$> carefully x x' <*> carefully y y'
+        (App f x, App g y) -> (&&) <$> carefully f g <*> carefully x y
+        _ -> lift (Unify.unify a' b')
 
 -- | Whether a type has in it a function from types applied to types.
 stuck :: Type s -> Tc s Bool
@@ -421,7 +454,7 @@ retry final = do
   forM_ (reverse pending) $ \(a, b, n) -> local (\env -> env {envNode = n <|> envNode env}) $ do
     a' <- normalise a
     b' <- normalise b
-    ok <- lift (Unify.unify a' b')
+    ok <- if final then lift (Unify.unify a' b') else carefully a' b'
     unless ok $ do
       waiting <- (||) <$> stuck a' <*> stuck b'
       if waiting && not final

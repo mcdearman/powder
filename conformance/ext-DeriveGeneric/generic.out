@@ -1,0 +1,17 @@
+Red; Green; Blue
+Circle 1.5; Rect 2.0 3.0; Dot
+Person name="Ada" age=36 likes=[Red,Blue]
+Node (Node Leaf 'a' Leaf) 'b' Leaf
+:& 1 "two"
+Wrapped unwrap=7
+([0,1,2],[0,1,2])
+([0,1,2,3,4],0,1)
+(Red,Circle 0.0,Person {name = "", age = 0, likes = []},Wrapped {unwrap = 0},One)
+(Leaf,0 :& (False :& ""))
+(Person {name = "Bo", age = 2, likes = []},Four 4 False 'd')
+(Node Leaf 3 Leaf,9)
+Main.Colour Blue Prefix False []
+Main.Shape Rect Prefix False ["",""]
+Main.Person Person Prefix True ["name","age","likes"]
+Main.Pair :& Infix RightAssociative 4 False ["",""]
+Main.Wrapped newtype Wrapped Prefix True ["unwrap"]
