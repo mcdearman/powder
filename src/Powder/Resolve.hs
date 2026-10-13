@@ -87,7 +87,10 @@ data Env = Env
     envLanguages :: Map.Map FilePath Extensions,
     -- | Whether what is being resolved was made up here, so that it is
     -- all placed where what it was made up for is.
-    envPinned :: Bool
+    envPinned :: Bool,
+    -- | The classes of what the prelude is made from, as 'envGlobals' is
+    -- its values: what is made up here is an instance of some.
+    envGlobalClasses :: Map.Map Name NameId
   }
 
 data St = St
@@ -232,7 +235,7 @@ resolveAfter seed languages lenient sources extra = case reverse (problems final
     program = Program (bindings ++ reverse (generated final)) (names final) (origins final) (signatures final) (reverse (dataTypes final)) (synonyms final) (classes final) (reverse (instances final)) builtins spelled (defaults final) (newtypes final) (maybe [] seedModules seed ++ [(file, n) | (file, n, _) <- sources] ++ [(file, root) | Just (_, _, file, _) <- [extra]]) (maybe [] seedImports seed ++ [(n, [name | (name, _, _, _) <- importsOf n]) | n <- moduleNames]) (maybe (-1) seedFloor seed) (partials final) (kindsSaid final) (reverse (kindedTypes final)) (families final)
     ((linked, (bindings, builtins)), final) =
       runState
-        (runReaderT run (Env Map.empty Map.empty Map.empty Map.empty Map.empty Map.empty "" Nothing "" spelled Set.empty Map.empty Map.empty Map.empty Map.empty languages False))
+        (runReaderT run (Env Map.empty Map.empty Map.empty Map.empty Map.empty Map.empty "" Nothing "" spelled Set.empty Map.empty Map.empty Map.empty Map.empty languages False Map.empty))
         initial
     initial = case seed of
       Nothing -> St 0 IntMap.empty IntMap.empty IntMap.empty IntMap.empty [] IntMap.empty [] IntMap.empty [] [] IntMap.empty [] IntMap.empty [] [] [] [] IntMap.empty IntMap.empty [] IntMap.empty [] IntMap.empty IntMap.empty Map.empty
@@ -390,6 +393,7 @@ resolveAfter seed languages lenient sources extra = case reverse (problems final
                   envTop = one (scopeValues (scopeOf n)),
                   envTopAll = scopeValues (scopeOf n),
                   envGlobals = one (scopeValues (basis n)),
+                  envGlobalClasses = one (scopeClasses (basis n)),
                   envConstructors = one (scopeConstructors (scopeOf n)),
                   envTypes = one (scopeTypes (scopeOf n)),
                   envClasses = one (scopeClasses (scopeOf n)),
@@ -1037,6 +1041,18 @@ constructorsAs ids t parameters cs existentials indices = do
         kept = maybe 0 (length . snd) (lookup (NameId n) existentials)
     modify (\st -> st {names = IntMap.insert n (NameInfo c (Constructor (ConInfo spelling tag (kept + length fields) (length cs)) ids) home) (names st)})
   addDataType (DataType t parameters (zip ids (map snd cs)) existentials indices)
+  -- Every type a module declares is one that can be asked for when a
+  -- program runs: by its name, and its module's.
+  typeable <- asks (Map.lookup "Typeable" . envGlobalClasses)
+  called <- gets (fmap nameText . IntMap.lookup (nameKey t) . names)
+  made <- asks (Map.member "mkTyCon" . envGlobals)
+  forM_ ((,) <$> typeable <*> called) $ \(k, name) -> when (made && not (null home)) $ do
+    anything <- mkPat Pat.Wild
+    body <- mapM (mk . Lit . Text) [home, name] >>= call "mkTyCon"
+    b <- equations "typeRepOf" [([anything], body)]
+    i <- node
+    at' <- (`Type.Type` Type.Con t) <$> node
+    modify (\st -> st {instances = Instance i k [at'] [] [] [b] Exactly : instances st})
 
 -- | The type variables in scope in the type of a constructor that is
 -- given by its type: the ones its result applies the type to, each
@@ -1761,6 +1777,11 @@ derive own d said apart via c = case d of
           SType.App (SType.Con n) arguments -> n == t && map Just parameters == map (\case SType.Var v -> Just v; _ -> Nothing) arguments
           _ -> False
     asks (Map.lookup c . envClasses) >>= \case
+      -- Every type is one that can be asked for when a program runs, and
+      -- to derive that it is says nothing.
+      _ | unqualified c == "Typeable" -> do
+        on <- enabled DeriveDataTypeable
+        unless on (complain "an instance of Typeable is derived, which says nothing, only if DeriveDataTypeable is on")
       Nothing -> complain ("unknown class " ++ c)
       Just k -> do
         constructors <- fmap catMaybes . forM cs $ \(Syntax.Constructor name fields) ->

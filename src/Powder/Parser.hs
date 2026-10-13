@@ -793,14 +793,14 @@ dataDecl = do
           unless empty (fieldDecl >> whileM (eat Comma) fieldDecl)
           expect_ RBrace
           expect_ RightArrow
-          btype' >>= made
+          operands >>= made
         else arguments
       close_ c ConDecl
     -- The types of the fields, each before an arrow, and then the type
     -- that is made.
     arguments = do
       atStrict >>= (`when` advance)
-      t <- btype'
+      t <- operands
       more <- eat RightArrow
       if more then arguments else made t
     made t = openBefore t >>= (`close_` GadtResult)

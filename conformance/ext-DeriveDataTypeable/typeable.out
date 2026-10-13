@@ -1,0 +1,23 @@
+(Int,Char,Bool,Double,Integer,())
+([Char],[Maybe Bool],(Int,Char),(Int,Char,[()]))
+Maybe (Either Int (Maybe Bool))
+(Bool -> Bool,Int -> Int -> Ordering,(Int -> Bool) -> [Int] -> [Bool])
+(Colour,Pair Colour Char,Wrap Maybe Colour,Tree [Colour])
+(Maybe (Int -> Int),[Pair Char (Maybe Int)])
+(Maybe,Either,Either Int,[])
+(Pair,Wrap Maybe,(,),(,) Int)
+(True,False,True,False)
+("Pair",[Colour,Char])
+(Just 1,Nothing,Just "abc",Just Red,Nothing)
+(Just (Just 1),Nothing,Just [True])
+1 :: Int
+"two" :: [Char]
+Red :: Colour
+4 :: Int
+[Just 'x'] :: [Maybe Char]
+Pair Green 5 :: Pair Colour Int
+[1,4]
+(["two"],[Red])
+(42,'x',"unchanged",1.5)
+(42,'x',41)
+(True,False,True,False)

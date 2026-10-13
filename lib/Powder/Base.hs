@@ -1,4 +1,4 @@
-{-# LANGUAGE MultiParamTypeClasses, FunctionalDependencies, FlexibleInstances, TypeOperators, KindSignatures, DataKinds, PolyKinds #-}
+{-# LANGUAGE MultiParamTypeClasses, FunctionalDependencies, FlexibleInstances, TypeOperators, KindSignatures, DataKinds, PolyKinds, GADTs #-}
 -- Everything the prelude and the libraries beside it are made of, written
 -- in the language the compilers accept. The modules a program imports
 -- are selections from this one: Prelude, Data.List, Data.Char and the
@@ -232,6 +232,150 @@ symbolVal p = symbolString (literalOf p)
 
 -- A value that stands for a type, of any kind.
 data Proxy (t :: k) = Proxy
+
+-- What a type is, to be asked for when a program runs: the type it is
+-- made with, by its module and its name, and the types that is applied
+-- to. The compiler makes the instance for each type a module declares.
+data TyCon = TyCon String String deriving (Eq, Ord)
+
+data TypeRep = TypeRep TyCon [TypeRep] deriving (Eq, Ord)
+
+class Typeable (a :: k) where
+  typeRepOf :: LiteralOf a -> TypeRep
+
+mkTyCon :: String -> String -> TypeRep
+mkTyCon m n = TypeRep (TyCon m n) []
+
+instance (Typeable f, Typeable a) => Typeable (f a) where
+  typeRepOf p = case typeRepOf (functionOf p) of
+    TypeRep c arguments -> TypeRep c (arguments ++ [typeRepOf (argumentOf p)])
+
+instance (Typeable a, Typeable b) => Typeable (a -> b) where
+  typeRepOf p = TypeRep (TyCon "GHC.Prim" "->") [typeRepOf (fromOf p), typeRepOf (toOf p)]
+
+instance Typeable Integer where typeRepOf _ = mkTyCon "GHC.Num.Integer" "Integer"
+
+instance Typeable Int where typeRepOf _ = mkTyCon "GHC.Types" "Int"
+
+instance Typeable Double where typeRepOf _ = mkTyCon "GHC.Types" "Double"
+
+instance Typeable Float where typeRepOf _ = mkTyCon "GHC.Types" "Float"
+
+instance Typeable Char where typeRepOf _ = mkTyCon "GHC.Types" "Char"
+
+instance Typeable Bool where typeRepOf _ = mkTyCon "GHC.Types" "Bool"
+
+instance Typeable IO where typeRepOf _ = mkTyCon "GHC.Types" "IO"
+
+instance Typeable () where typeRepOf _ = mkTyCon "GHC.Tuple" "()"
+
+instance Typeable [] where typeRepOf _ = mkTyCon "GHC.Types" "[]"
+
+instance Typeable (,) where typeRepOf _ = mkTyCon "GHC.Tuple" "(,)"
+
+instance Typeable (,,) where typeRepOf _ = mkTyCon "GHC.Tuple" "(,,)"
+
+instance Typeable (,,,) where typeRepOf _ = mkTyCon "GHC.Tuple" "(,,,)"
+
+instance Typeable (,,,,) where typeRepOf _ = mkTyCon "GHC.Tuple" "(,,,,)"
+
+functionOf :: LiteralOf (f a) -> LiteralOf f
+functionOf _ = LiteralOf
+
+argumentOf :: LiteralOf (f a) -> LiteralOf a
+argumentOf _ = LiteralOf
+
+fromOf :: LiteralOf (a -> b) -> LiteralOf a
+fromOf _ = LiteralOf
+
+toOf :: LiteralOf (a -> b) -> LiteralOf b
+toOf _ = LiteralOf
+
+valueOf :: a -> LiteralOf a
+valueOf _ = LiteralOf
+
+typeOf :: Typeable a => a -> TypeRep
+typeOf x = typeRepOf (valueOf x)
+
+typeRep :: Typeable a => proxy a -> TypeRep
+typeRep p = typeRepOf (literalOf p)
+
+typeRepTyCon :: TypeRep -> TyCon
+typeRepTyCon (TypeRep c _) = c
+
+typeRepArgs :: TypeRep -> [TypeRep]
+typeRepArgs (TypeRep _ arguments) = arguments
+
+splitTyConApp :: TypeRep -> (TyCon, [TypeRep])
+splitTyConApp (TypeRep c arguments) = (c, arguments)
+
+tyConName :: TyCon -> String
+tyConName (TyCon _ n) = n
+
+tyConModule :: TyCon -> String
+tyConModule (TyCon m _) = m
+
+instance Show TyCon where
+  showsPrec _ (TyCon _ n) = showString n
+
+-- As the type would be written: a list in its brackets, a tuple in its
+-- parentheses with nothing after the commas, a function with its arrow.
+instance Show TypeRep where
+  showsPrec d (TypeRep (TyCon _ n) arguments) = case arguments of
+    [] -> showString n
+    [a] | n == "[]" -> showChar '[' . showsPrec 0 a . showChar ']'
+    [a, b] | n == "->" -> showParen (d > 8) (showsPrec 9 a . showString " -> " . showsPrec 8 b)
+    _
+      | take 2 n == "(," && length n == length arguments + 1 ->
+          showChar '(' . foldr1 (\one rest -> one . showChar ',' . rest) (map (showsPrec 0) arguments) . showChar ')'
+      | otherwise -> showParen (d > 9) (showString n . foldr (.) id [showChar ' ' . showsPrec 10 a | a <- arguments])
+
+-- A value as one of another type, if that is the type it is of.
+cast :: (Typeable a, Typeable b) => a -> Maybe b
+cast x = result
+  where
+    result = if typeOf x == typeRepOf (wantedOf result) then Just (primCoerce x) else Nothing
+
+wantedOf :: Maybe b -> LiteralOf b
+wantedOf _ = LiteralOf
+
+-- That two types are the same, which matching on its one constructor
+-- lets be known.
+data a :~: b where
+  Refl :: a :~: a
+
+infix 4 :~:
+
+eqT :: (Typeable a, Typeable b) => Maybe (a :~: b)
+eqT = result
+  where
+    result = if typeRepOf (leftOf result) == typeRepOf (rightOf result) then Just (primCoerce (Refl :: () :~: ())) else Nothing
+
+leftOf :: Maybe (a :~: b) -> LiteralOf a
+leftOf _ = LiteralOf
+
+rightOf :: Maybe (a :~: b) -> LiteralOf b
+rightOf _ = LiteralOf
+
+gcast :: (Typeable a, Typeable b) => c a -> Maybe (c b)
+gcast x = result
+  where
+    result = if typeRepOf (appliedOf x) == typeRepOf (wantedAppliedOf result) then Just (primCoerce x) else Nothing
+
+appliedOf :: c a -> LiteralOf a
+appliedOf _ = LiteralOf
+
+wantedAppliedOf :: Maybe (c b) -> LiteralOf b
+wantedAppliedOf _ = LiteralOf
+
+sym :: (a :~: b) -> (b :~: a)
+sym Refl = Refl
+
+trans :: (a :~: b) -> (b :~: c) -> (a :~: c)
+trans Refl Refl = Refl
+
+castWith :: (a :~: b) -> a -> b
+castWith Refl x = x
 
 class Coercible a b
 

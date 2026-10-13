@@ -52,7 +52,7 @@ CUSKs, DeepSubsumption. MonoLocalBinds and PolyKinds change what some Haskell
 | M5 | The class system | done |
 | M6 | Higher ranks and existentials | done |
 | M7 | GADTs, type families and what needs an implication solver | in progress |
-| M8 | Kinds | in progress |
+| M8 | Kinds | done |
 
 **M0, plumbing.** Done. LANGUAGE pragmas are read, an edition names a set of
 extensions, and a package's `Powder.toml` sets both for all its modules. Asking
@@ -270,7 +270,8 @@ What these do not yet do:
       lists of types
 - [x] PolyKinds, where a kind is written with a variable in it
 - [x] Numbers and strings as types, with `GHC.TypeLits` and `Data.Proxy`
-- [ ] Typeable, with `Data.Typeable`, and DeriveDataTypeable
+- [x] Typeable, with `Data.Typeable` and `Data.Type.Equality`, and
+      DeriveDataTypeable as far as that class
 
 `src/Powder/Kinds.hs` was to be replaced. It was added to: a kind may now be
 a data type applied to kinds, and a kind written with a variable in it is
@@ -297,6 +298,16 @@ What these do not yet do:
   `KnownSymbol` made beside it. It is the same type throughout a package,
   and not in two compiled apart: the `3` of one is not the `3` of another,
   and each makes the instance.
+- What a type is can be asked for when a program runs because an instance
+  of `Typeable` is made for each type a module declares, and the library
+  has those of the types the language has and one for a type applied to
+  another. A type is known by its name and its module's, so two modules of
+  one name in two packages that each declare a type of one name are not
+  told apart. A number or a string as a type has no instance, nor has a
+  constructor as a type; and a type of a general kind is shown without the
+  kind GHC shows it at.
+- `Data.Data` is not there, and `deriving (Data)` is refused. Nor is
+  `Data.Dynamic`, which is a few lines over `cast`.
 - `Nat` and `Symbol` are two types with no values, and `Nat` is not
   `Natural`. There is no arithmetic on numbers as types and nothing
   compares them or joins strings: no `+`, `<=`, `CmpNat`, `AppendSymbol`;
