@@ -52,7 +52,7 @@ CUSKs, DeepSubsumption. MonoLocalBinds and PolyKinds change what some Haskell
 | M5 | The class system | done |
 | M6 | Higher ranks and existentials | done |
 | M7 | GADTs, type families and what needs an implication solver | in progress |
-| M8 | Kinds | not started |
+| M8 | Kinds | done |
 
 **M0, plumbing.** Done. LANGUAGE pragmas are read, an edition names a set of
 extensions, and a package's `Powder.toml` sets both for all its modules. Asking
@@ -259,12 +259,59 @@ What these do not yet do:
   and not used.
 - There are no data families, no defaults for a type that goes with a class,
   and nothing says a function from types is one to one.
-- A function from types and its equations are known in the package that
-  declares them, and not in another compiled apart.
+- A function from types is known to a package compiled after the one that
+  declares it, with the equations that one gave; equations another package
+  gives apart from it are that package's alone.
 - Equations given apart are not checked against each other.
 
-**M8, kinds.** PolyKinds, DataKinds, type-level literals, Typeable and
-DeriveDataTypeable. This replaces `src/Powder/Kinds.hs`.
+**M8, kinds.**
+
+- [x] DataKinds: a data type as a kind, its constructors as types, and
+      lists of types
+- [x] PolyKinds, where a kind is written with a variable in it
+- [x] Numbers and strings as types, with `GHC.TypeLits` and `Data.Proxy`
+- [x] Typeable, with `Data.Typeable` and `Data.Type.Equality`, and
+      DeriveDataTypeable as far as that class
+
+`src/Powder/Kinds.hs` was to be replaced. It was added to: a kind may now be
+a data type applied to kinds, and a kind written with a variable in it is
+read anew, as kinds not yet known, at each use of what was said to have it.
+
+What these do not yet do:
+
+- A kind is general only where it is written with a variable. Nothing
+  generalises the kind that is found for a declaration: `data Proxy a =
+  Proxy` without the `(a :: k)` has a parameter that is a type, and not one
+  of any kind, as GHC would have it with PolyKinds on.
+- A kind variable is a kind not yet known each time it is read, so nothing
+  holds two written `k`s in one declaration to be the same kind at a use.
+  A program GHC would refuse for that is accepted.
+- The body of a declaration whose parameter is of a general kind is not
+  checked against that kind.
+- There is no `forall k.` in a kind or a type, no kind applied by name
+  other than a list's, and a type synonym, a class or a function from types
+  is not a kind or a type by promotion: only a data type and its
+  constructors are.
+- A tuple of types, `'(a, b)`, is not a type.
+- A number or a string written as a type is a type of its own, made
+  where it is first written, with an instance of `KnownNat` or of
+  `KnownSymbol` made beside it. It is the same type throughout a package,
+  and not in two compiled apart: the `3` of one is not the `3` of another,
+  and each makes the instance.
+- What a type is can be asked for when a program runs because an instance
+  of `Typeable` is made for each type a module declares, and the library
+  has those of the types the language has and one for a type applied to
+  another. A type is known by its name and its module's, so two modules of
+  one name in two packages that each declare a type of one name are not
+  told apart. A number or a string as a type has no instance, nor has a
+  constructor as a type; and a type of a general kind is shown without the
+  kind GHC shows it at.
+- `Data.Data` is not there, and `deriving (Data)` is refused. Nor is
+  `Data.Dynamic`, which is a few lines over `cast`.
+- `Nat` and `Symbol` are two types with no values, and `Nat` is not
+  `Natural`. There is no arithmetic on numbers as types and nothing
+  compares them or joins strings: no `+`, `<=`, `CmpNat`, `AppendSymbol`;
+  and no `someNatVal`, `sameNat` or `TypeError`.
 
 ### On the side
 

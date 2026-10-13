@@ -96,7 +96,7 @@ instance Ast Rhs where
   syntax (RhsNode r) = r
 
 instance Ast Type where
-  cast = wrap TypeNode [K.TyVar, K.TyCon, K.TyApp, K.TyFun, K.TyTuple, K.TyList, K.TyParen, K.TyQual, K.TyForall, K.TyWild, K.TyKinded, K.TyInfix]
+  cast = wrap TypeNode [K.TyVar, K.TyCon, K.TyApp, K.TyFun, K.TyTuple, K.TyList, K.TyParen, K.TyQual, K.TyForall, K.TyWild, K.TyKinded, K.TyInfix, K.TyPromotedList, K.TyLit]
   syntax (TypeNode r) = r
 
 instance Ast Expr where
@@ -166,6 +166,8 @@ constructorNameOf r = case nameOf r of
   "" | K.RightArrow `elem` kinds -> "->"
      | K.Comma `elem` kinds -> "(" ++ concatMap (filter (== ',') . snd) (spelled r) ++ ")"
      | K.LParen `elem` kinds -> "()"
+     -- With a tick, the list's constructor and not its type.
+     | "'[" `elem` map snd (spelled r) -> "'[]"
      | otherwise -> "[]"
   name -> name
   where
@@ -180,29 +182,41 @@ fieldBinds r = [(nameOf f, listToMaybe (children f)) | f <- Red.nodes r, Red.kin
 fieldWild :: Red -> Bool
 fieldWild r = any ((== K.FieldWild) . Red.kind) (Red.nodes r)
 
--- | A kind as it is written.
-data Kind = Star | Arrow Kind Kind
+-- | A kind as it is written: the kind of types, a function between
+-- kinds, a data type whose values are types of it, a variable, or a list.
+data Kind = Star | Arrow Kind Kind | Named Name | Variable Name | ListOf Kind
   deriving (Eq, Show)
 
 -- | The kind a node gives: that of the first kind under it. A kind is
 -- stars with arrows between them, grouping to the right.
 kindOf :: Red -> Maybe Kind
 kindOf r = case [k | k <- Red.nodes r, Red.kind k == K.KindSig] of
-  k : _ -> fst <$> arrows (map fst (spelled k))
+  k : _ -> fst <$> arrows (spelled k)
   [] -> Nothing
   where
     arrows ts = do
       (left, rest) <- atom ts
       case rest of
-        K.RightArrow : more -> first (Arrow left) <$> arrows more
+        (K.RightArrow, _) : more -> first (Arrow left) <$> arrows more
         _ -> Just (left, rest)
     atom = \case
-      K.LParen : more -> do
+      (K.LParen, _) : more -> do
         (inner, rest) <- arrows more
         case rest of
-          K.RParen : after -> Just (inner, after)
+          (K.RParen, _) : after -> Just (inner, after)
           _ -> Nothing
-      t : more | t `elem` [K.VarSym, K.ConId, K.QConId] -> Just (Star, more)
+      (K.LBracket, _) : more -> do
+        (inner, rest) <- arrows more
+        case rest of
+          (K.RBracket, _) : after -> Just (ListOf inner, after)
+          _ -> Nothing
+      (K.VarSym, _) : more -> Just (Star, more)
+      (K.VarId, v) : more -> Just (Variable v, more)
+      (t, c) : more
+        | t `elem` [K.ConId, K.QConId] ->
+            -- The kind of types by its names, and any other a data type.
+            let plain = reverse (takeWhile (/= '.') (reverse c))
+             in Just (if plain `elem` ["Type", "Constraint"] then Star else Named c, more)
       _ -> Nothing
 
 -- | The type variables directly under a node that are given kinds, each

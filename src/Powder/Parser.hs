@@ -793,14 +793,14 @@ dataDecl = do
           unless empty (fieldDecl >> whileM (eat Comma) fieldDecl)
           expect_ RBrace
           expect_ RightArrow
-          btype' >>= made
+          operands >>= made
         else arguments
       close_ c ConDecl
     -- The types of the fields, each before an arrow, and then the type
     -- that is made.
     arguments = do
       atStrict >>= (`when` advance)
-      t <- btype'
+      t <- operands
       more <- eat RightArrow
       if more then arguments else made t
     made t = openBefore t >>= (`close_` GadtResult)
@@ -910,8 +910,10 @@ kind = do
       star <- (&&) <$> at VarSym <*> atText "*"
       case () of
         _
-          | star || k `elem` [ConId, QConId, RightArrow] -> advance >> go
+          -- A kind may be a data type's name, a variable, or a list's.
+          | star || k `elem` [ConId, QConId, RightArrow, VarId] -> advance >> go
           | k == LParen -> advance >> go >> expect_ RParen >> go
+          | k == LBracket -> advance >> go >> expect_ RBracket >> go
           | otherwise -> pure ()
 
 -- | Do something for as long as a test holds. The test may consume.
@@ -1089,18 +1091,23 @@ btype = void btype'
 -- | A type applied to types, or just the one.
 btype' :: P MarkClosed
 btype' = do
-  starts <- atAny typeStarts
+  starts <- typeStarting
   if not starts
     then missing "expected a type"
     else do
       first <- atype'
-      more <- atAny typeStarts
+      more <- typeStarting
       if not more
         then pure first
         else do
           m <- openBefore first
-          whileM (atAny typeStarts) atype
+          whileM typeStarting atype
           close m TyApp
+
+-- | Whether a type starts here. With DataKinds a number or a string is
+-- one.
+typeStarting :: P Bool
+typeStarting = (||) <$> atAny typeStarts <*> ((&&) <$> on DataKinds <*> atAny [IntegerLit, StringLit])
 
 atype :: P ()
 atype = void atype'
@@ -1112,6 +1119,7 @@ atype' = do
   case kinds of
     VarId : _ -> advance >> close m TyVar
     Underscore : _ -> advance >> close m TyWild
+    k : _ | k `elem` [IntegerLit, StringLit] -> advance >> close m TyLit
     k : _ | k `elem` [ConId, QConId] -> advance >> close m TyCon
     LParen : RParen : _ -> advance >> advance >> close m TyTuple
     -- A constructor with no name of its own: a tuple's, or the arrow.
@@ -1133,7 +1141,14 @@ atype' = do
           | kinded -> advance >> kind >> expect_ RParen >> close m TyKinded
           | otherwise -> expect_ RParen >> close m TyParen
     LBracket : RBracket : _ -> advance >> advance >> close m TyCon
-    LBracket : _ -> advance >> type_ >> expect_ RBracket >> close m TyList
+    LBracket : _ -> do
+      -- With a tick before it, a list of types, which is a type.
+      promoted <- atText "'["
+      advance
+      type_
+      if promoted
+        then whileM (eat Comma) type_ >> expect_ RBracket >> close m TyPromotedList
+        else expect_ RBracket >> close m TyList
     _ -> problem "expected a type" >> close m ErrorNode
 
 -- Expressions -----------------------------------------------------------------

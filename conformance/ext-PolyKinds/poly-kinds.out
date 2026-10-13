@@ -1,0 +1,4 @@
+Int Maybe Red Green Either
+(Just 'x',[1,2,3])
+7
+(True,True)

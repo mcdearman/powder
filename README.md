@@ -360,6 +360,9 @@ compiled as if it did not. Implemented so far, all of them in
 | `FlexibleInstances`, `TypeSynonymInstances` | `instance C [Char]`, `instance C (Maybe Int)`, `instance C String`: an instance at any type. Where two fit, `{-# OVERLAPPING #-}`, `{-# OVERLAPPABLE #-}` and `{-# OVERLAPS #-}` say the more particular is taken |
 | `FlexibleContexts` | `Show [a] => ...`: a class asked of any type |
 | `ConstraintKinds` | `type Stringy a = (Show a, Read a)`: a name for constraints |
+| `DataKinds` | `data Vec (n :: Nat) a`: a data type is a kind, and its constructors are the types of it, `'Z` and `'S n`, with the tick or without where no type goes by the name; and a list of types is a type, `'[Int, Bool]` and `t ': ts`. A number or a string is a type too, `Mod 7` and `Field "age"`, and `natVal` and `symbolVal` of `GHC.TypeLits` say which |
+| `DeriveDataTypeable` | `deriving (Typeable)`, which says nothing: every type a module declares can be asked for when a program runs, with `typeOf`, `cast` and `eqT` of `Data.Typeable` |
+| `PolyKinds` | `data Proxy (a :: k)`: a kind with a variable in it, which is any kind, another at each use. `Data.Proxy` has that type |
 | `ExistentialQuantification` | `data Showable = forall a. Show a => MkShowable a`: a constructor with type variables of its own, and a context, whose dictionaries what it makes carries |
 | `RankNTypes` | `f :: (forall a. a -> a) -> (Int, Bool)`: an argument, or a field, that works at every type |
 | `GADTs` | `data Expr a where IntE :: Int -> Expr Int`: a constructor makes its type at types of its own choosing, and matching it says what they are. With `a ~ b` in a context, for two types that are the same |

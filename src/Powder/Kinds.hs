@@ -17,6 +17,7 @@ import Control.Monad.Reader
 import Control.Monad.ST
 import Data.Graph (flattenSCC, stronglyConnComp)
 import qualified Data.IntMap.Strict as IntMap
+import Data.Maybe (listToMaybe)
 import Data.STRef
 import Powder.Diagnostics (Problem (..))
 import Powder.HIR
@@ -26,6 +27,9 @@ import qualified Powder.HIR.Type as Type
 data Kind s
   = Star
   | Arrow (Kind s) (Kind s)
+  | -- | A data type as a kind, applied to kinds: the kind of the types
+    -- its constructors are.
+    Promoted NameId [Kind s]
   | -- | Not yet known.
     Unknown (STRef s (Maybe (Kind s)))
 
@@ -71,9 +75,9 @@ kindcheck program = runST $ do
 
     run = do
       -- What was said of kinds is so before any is found.
-      forM_ (IntMap.toList (programKinds program)) $ \(n, said) -> do
+      forM_ (IntMap.toList (programKinds program)) $ \(n, said) -> unless (general said) $ do
         k <- kindOf (NameId n)
-        void (lift (unify k (written said)))
+        written said >>= void . lift . unify k
       forM_ groups $ \group -> do
         mapM_ declaration group
         settle
@@ -81,12 +85,8 @@ kindcheck program = runST $ do
         unless (isMethod (NameId n)) (signed s)
       mapM_ instance' (programInstances program)
       mapM_ signed (concatMap annotations (allBindings program))
-      forM_ (programKinded program) (\(t, said) -> check t (written said))
+      forM_ (programKinded program) (\(t, said) -> written said >>= check t)
       settle
-
-    written = \case
-      KindStar -> Star
-      KindArrow a r -> Arrow (written a) (written r)
 
     isMethod n = case nameSort <$> nameInfo program n of
       Just (Method _) -> True
@@ -130,6 +130,48 @@ annotations = binding
 unknown :: K s (Kind s)
 unknown = Unknown <$> lift (newSTRef Nothing)
 
+-- | A kind as a program writes it. A variable in one stands for any
+-- kind, and is a kind to be found each time it is read.
+written :: KindSyntax -> K s (Kind s)
+written = \case
+  KindStar -> pure Star
+  KindArrow a r -> Arrow <$> written a <*> written r
+  KindNamed t -> pure (Promoted t [])
+  KindList k -> do
+    list <- asks (builtinList . programBuiltins . envProgram)
+    Promoted list . pure <$> written k
+  KindVariable _ -> unknown
+
+-- | Whether a kind a program writes has a variable in it: then what has
+-- it has a kind at each use, and not one for all of them.
+general :: KindSyntax -> Bool
+general = \case
+  KindVariable _ -> True
+  KindArrow a r -> general a || general r
+  KindList k -> general k
+  _ -> False
+
+-- | The kind of a constructor used as a type: from the kinds its fields
+-- are, as types, to its data type as a kind. A parameter of the data
+-- type is any kind, the same wherever it is.
+promoted :: NameId -> K s (Maybe (Kind s))
+promoted c = do
+  program <- asks envProgram
+  case [(d, fields) | d <- programDataTypes program, (c', fields) <- dataConstructors d, c' == c] of
+    (d, fields) : _ -> do
+      parameters <- forM (dataParameters d) (\v -> (,) v <$> unknown)
+      let asKind t = case spine t [] of
+            (Type.Con k, arguments) -> Promoted k <$> mapM asKind arguments
+            (Type.Var v, []) -> maybe unknown pure (lookup v parameters)
+            (Type.Fun a b, []) -> Arrow <$> asKind a <*> asKind b
+            _ -> unknown
+          spine t arguments = case typeForm t of
+            Type.App f a -> spine f (a : arguments)
+            form -> (form, arguments)
+      fields' <- mapM asKind fields
+      pure (Just (foldr Arrow (Promoted (dataName d) (map snd parameters)) fields'))
+    [] -> pure Nothing
+
 -- | The kind of a name: the one it was found to have, or one to find.
 kindOf :: NameId -> K s (Kind s)
 kindOf n = do
@@ -159,6 +201,7 @@ unify a b = do
   case (a', b') of
     (Star, Star) -> pure True
     (Arrow x r, Arrow y s) -> (&&) <$> unify x y <*> unify r s
+    (Promoted t xs, Promoted u ys) | t == u && length xs == length ys -> and <$> zipWithM unify xs ys
     (Unknown v, Unknown w) | v == w -> pure True
     (Unknown v, k) -> bind v k
     (k, Unknown v) -> bind v k
@@ -171,6 +214,7 @@ unify a b = do
       shallow k >>= \case
         Unknown w -> pure (v == w)
         Arrow x r -> (||) <$> occurs v x <*> occurs v r
+        Promoted _ xs -> or <$> mapM (occurs v) xs
         Star -> pure False
 
 -- | What is still undetermined is @*@.
@@ -183,6 +227,7 @@ settle = do
       shallow k >>= \case
         Unknown ref -> writeSTRef ref (Just Star)
         Arrow a r -> ground a >> ground r
+        Promoted _ xs -> mapM_ ground xs
         Star -> pure ()
 
 render :: Kind s -> ST s String
@@ -192,6 +237,9 @@ render = go False
       shallow k >>= \case
         Star -> pure "*"
         Unknown _ -> pure "_"
+        Promoted t xs -> do
+          xs' <- mapM (go True) xs
+          pure (unwords (("a data type's, " ++ show (nameKey t)) : xs'))
         Arrow a r -> do
           a' <- go True a
           r' <- go False r
@@ -209,8 +257,11 @@ complainAt n message = do
 -- | The kind of a type.
 infer :: Type -> K s (Kind s)
 infer t = case typeForm t of
-  Type.Var a -> kindOf a
-  Type.Con c -> kindOf c
+  -- One said to be of a kind with a variable in it is of any such, here.
+  Type.Var a -> saidGenerally a >>= maybe (kindOf a) written
+  -- A constructor is a type of its data type's kind; and a type declared
+  -- with a kind that has a variable in it has a kind for each use.
+  Type.Con c -> promoted c >>= maybe (ofDeclared c) pure
   Type.Fun a b -> Star <$ (check a Star >> check b Star)
   Type.App f a -> do
     function <- infer f
@@ -232,6 +283,29 @@ infer t = case typeForm t of
   Type.Forall _ context inner -> Star <$ (mapM_ (\(c, ts) -> constraint (Constraint c ts)) context >> check inner Star)
   Type.Error -> unknown
 
+-- | What a name was said to be of, if that is a kind with a variable in
+-- it.
+saidGenerally :: NameId -> K s (Maybe KindSyntax)
+saidGenerally n = asks (\env -> case IntMap.lookup (nameKey n) (programKinds (envProgram env)) of
+  Just said | general said -> Just said
+  _ -> Nothing)
+
+-- | The kind of a declared type. One whose parameters were said to be of
+-- kinds with variables in them takes, at each use, parameters of any
+-- such kinds.
+ofDeclared :: NameId -> K s (Kind s)
+ofDeclared c = do
+  program <- asks envProgram
+  said <- saidGenerally c
+  let parameters = listToMaybe [dataParameters d | d <- programDataTypes program, dataName d == c]
+      saidOf v = IntMap.lookup (nameKey v) (programKinds program)
+  case (said, parameters) of
+    (Just whole, _) -> written whole
+    (Nothing, Just vs) | any (maybe False general . saidOf) vs -> do
+      ks <- forM vs (maybe unknown written . saidOf)
+      pure (foldr Arrow Star ks)
+    _ -> kindOf c
+
 -- | Check a type against the kind it must have.
 check :: Type -> Kind s -> K s ()
 check t wanted = do
@@ -247,7 +321,7 @@ check t wanted = do
 constraint :: Constraint -> K s ()
 constraint (Constraint c ts) = do
   program <- asks envProgram
-  forM_ (classOf program c) $ \cls -> zipWithM_ (\t v -> kindOf v >>= check t) ts (classVariables cls)
+  forM_ (classOf program c) $ \cls -> zipWithM_ (\t v -> (saidGenerally v >>= maybe (kindOf v) written) >>= check t) ts (classVariables cls)
 
 -- Declarations --------------------------------------------------------------
 
@@ -285,7 +359,7 @@ instance' inst = do
   program <- asks envProgram
   forM_ (classOf program (instanceClass inst)) $ \cls ->
     forM_ (zip (instanceHead inst) (classVariables cls)) $ \(t, v) -> do
-      wanted <- kindOf v
+      wanted <- saidGenerally v >>= maybe (kindOf v) written
       found <- infer t
       fits <- lift (unify found wanted)
       unless fits $ do

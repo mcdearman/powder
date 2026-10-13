@@ -87,7 +87,10 @@ data Env = Env
     envLanguages :: Map.Map FilePath Extensions,
     -- | Whether what is being resolved was made up here, so that it is
     -- all placed where what it was made up for is.
-    envPinned :: Bool
+    envPinned :: Bool,
+    -- | The classes of what the prelude is made from, as 'envGlobals' is
+    -- its values: what is made up here is an instance of some.
+    envGlobalClasses :: Map.Map Name NameId
   }
 
 data St = St
@@ -139,7 +142,10 @@ data St = St
     -- parameters and the constraints it stands for.
     constraintSynonyms :: Table ([NameId], [Constraint]),
     -- | The functions from types to a type, by 'NameId'.
-    families :: Table Family
+    families :: Table Family,
+    -- | The numbers and strings met as types, each as it is shown, and
+    -- the type each is.
+    literalTypes :: Map.Map String NameId
   }
 
 type M = ReaderT Env (State St)
@@ -208,7 +214,11 @@ data Seed = Seed
     seedInstances :: [Instance],
     seedNewtypes :: [NameId],
     seedModules :: [(FilePath, String)],
-    seedImports :: [(String, [String])]
+    seedImports :: [(String, [String])],
+    -- | The kinds the packages before said types and their variables
+    -- have, and their functions from types.
+    seedKinds :: Table KindSyntax,
+    seedFamilies :: Table Family
   }
 
 -- | Resolve modules as 'resolve' does, as a package compiled after
@@ -225,10 +235,10 @@ resolveAfter seed languages lenient sources extra = case reverse (problems final
     program = Program (bindings ++ reverse (generated final)) (names final) (origins final) (signatures final) (reverse (dataTypes final)) (synonyms final) (classes final) (reverse (instances final)) builtins spelled (defaults final) (newtypes final) (maybe [] seedModules seed ++ [(file, n) | (file, n, _) <- sources] ++ [(file, root) | Just (_, _, file, _) <- [extra]]) (maybe [] seedImports seed ++ [(n, [name | (name, _, _, _) <- importsOf n]) | n <- moduleNames]) (maybe (-1) seedFloor seed) (partials final) (kindsSaid final) (reverse (kindedTypes final)) (families final)
     ((linked, (bindings, builtins)), final) =
       runState
-        (runReaderT run (Env Map.empty Map.empty Map.empty Map.empty Map.empty Map.empty "" Nothing "" spelled Set.empty Map.empty Map.empty Map.empty Map.empty languages False))
+        (runReaderT run (Env Map.empty Map.empty Map.empty Map.empty Map.empty Map.empty "" Nothing "" spelled Set.empty Map.empty Map.empty Map.empty Map.empty languages False Map.empty))
         initial
     initial = case seed of
-      Nothing -> St 0 IntMap.empty IntMap.empty IntMap.empty IntMap.empty [] IntMap.empty [] IntMap.empty [] [] IntMap.empty [] IntMap.empty [] [] [] [] IntMap.empty IntMap.empty [] IntMap.empty [] IntMap.empty IntMap.empty
+      Nothing -> St 0 IntMap.empty IntMap.empty IntMap.empty IntMap.empty [] IntMap.empty [] IntMap.empty [] [] IntMap.empty [] IntMap.empty [] [] [] [] IntMap.empty IntMap.empty [] IntMap.empty [] IntMap.empty IntMap.empty Map.empty
       Just s ->
         St
           (seedFloor s)
@@ -254,10 +264,11 @@ resolveAfter seed languages lenient sources extra = case reverse (problems final
           IntMap.empty
           IntMap.empty
           []
-          IntMap.empty
+          (seedKinds s)
           []
           IntMap.empty
-          IntMap.empty
+          (seedFamilies s)
+          Map.empty
     -- What the packages before this one let be known.
     before = maybe mempty seedLinkage seed
     -- In a package every name is spelled with its module's: no module is
@@ -382,6 +393,7 @@ resolveAfter seed languages lenient sources extra = case reverse (problems final
                   envTop = one (scopeValues (scopeOf n)),
                   envTopAll = scopeValues (scopeOf n),
                   envGlobals = one (scopeValues (basis n)),
+                  envGlobalClasses = one (scopeClasses (basis n)),
                   envConstructors = one (scopeConstructors (scopeOf n)),
                   envTypes = one (scopeTypes (scopeOf n)),
                   envClasses = one (scopeClasses (scopeOf n)),
@@ -1029,6 +1041,18 @@ constructorsAs ids t parameters cs existentials indices = do
         kept = maybe 0 (length . snd) (lookup (NameId n) existentials)
     modify (\st -> st {names = IntMap.insert n (NameInfo c (Constructor (ConInfo spelling tag (kept + length fields) (length cs)) ids) home) (names st)})
   addDataType (DataType t parameters (zip ids (map snd cs)) existentials indices)
+  -- Every type a module declares is one that can be asked for when a
+  -- program runs: by its name, and its module's.
+  typeable <- asks (Map.lookup "Typeable" . envGlobalClasses)
+  called <- gets (fmap nameText . IntMap.lookup (nameKey t) . names)
+  made <- asks (Map.member "mkTyCon" . envGlobals)
+  forM_ ((,) <$> typeable <*> called) $ \(k, name) -> when (made && not (null home)) $ do
+    anything <- mkPat Pat.Wild
+    body <- mapM (mk . Lit . Text) [home, name] >>= call "mkTyCon"
+    b <- equations "typeRepOf" [([anything], body)]
+    i <- node
+    at' <- (`Type.Type` Type.Con t) <$> node
+    modify (\st -> st {instances = Instance i k [at'] [] [] [b] Exactly : instances st})
 
 -- | The type variables in scope in the type of a constructor that is
 -- given by its type: the ones its result applies the type to, each
@@ -1241,6 +1265,40 @@ type' t = within t $ case t of
       Just n -> mkType (Type.Var n)
       Nothing -> complain ("type variable not in scope: " ++ x) >> mkType Type.Error
   SType.Con c -> typeConstructor c
+  -- A number or a string, as a type: one type for each, the same
+  -- wherever it is written. The first time one is met an instance is
+  -- made that says which it is.
+  SType.Lit written -> do
+    promoted <- enabled DataKinds
+    unless promoted (complain "a number or a string is a type only if DataKinds is on")
+    literal written >>= \case
+      Just l | Just (shown, method) <- literalType l ->
+        gets (Map.lookup shown . literalTypes) >>= \case
+          Just n -> mkType (Type.Con n)
+          Nothing -> do
+            n <- newName shown TypeConstructor
+            modify (\st -> st {literalTypes = Map.insert shown n (literalTypes st)})
+            m <- asks (Map.lookup method . envGlobals)
+            cls <- gets (\st -> listToMaybe [k | k <- IntMap.elems (classes st), Just m' <- [m], m' `elem` classMethods k])
+            forM_ cls $ \k -> do
+              -- Its kind is the one the class says its variable is of.
+              forM_ (take 1 (classVariables k)) $ \v ->
+                gets (IntMap.lookup (nameKey v) . kindsSaid) >>= mapM_ (\said -> modify (\st -> st {kindsSaid = IntMap.insert (nameKey n) said (kindsSaid st)}))
+              anything <- mkPat Pat.Wild
+              b <- mk (Lit l) >>= \body -> equations method [([anything], body)]
+              i <- node
+              at' <- mkType (Type.Con n)
+              modify (\st -> st {instances = Instance i (className k) [at'] [] [] [b] Exactly : instances st})
+            mkType (Type.Con n)
+      _ -> complain "only a number or a string is a type" >> mkType Type.Error
+  -- A list of types, as a type: the list's constructors, as types.
+  SType.PromotedList elements -> do
+    promoted <- enabled DataKinds
+    unless promoted (complain "a list of types is a type only if DataKinds is on")
+    nil <- asks (Map.lookup "[]" . envConstructors) >>= maybe (mkType Type.Error) (mkType . Type.Con)
+    cons <- asks (Map.lookup ":" . envConstructors)
+    resolved <- mapM type' elements
+    foldM (\rest element -> maybe (mkType Type.Error) (mkType . Type.Con) cons >>= (`applyType` [element, rest])) nil (reverse resolved)
   -- The arrow written before its two types is the arrow between them.
   SType.App (SType.Con "->") [a, b] -> (Type.Fun <$> type' a <*> type' b) >>= mkType
   SType.App f arguments -> do
@@ -1272,7 +1330,8 @@ type' t = within t $ case t of
   -- A type said to have a kind is the type, and the kind is checked.
   SType.Kinded inner k -> do
     inner' <- type' inner
-    inner' <$ modify (\st -> st {kindedTypes = (inner', kindSyntax k) : kindedTypes st})
+    said <- kindSyntax k
+    inner' <$ modify (\st -> st {kindedTypes = (inner', said) : kindedTypes st})
   -- Types with operators between them group as the operators' fixities
   -- say, each operator a type's name applied to the two.
   SType.Operators operands operators -> do
@@ -1303,10 +1362,26 @@ type' t = within t $ case t of
   where
     mkType form = (`Type.Type` form) <$> node
     applyType = foldM (\f a -> mkType (Type.App f a))
-    typeConstructor c =
-      asks (Map.lookup c . envTypes) >>= \case
-        Just n -> mkType (Type.Con n)
-        Nothing -> missing "unknown type " c >> mkType Type.Error
+    -- How a number or a string is shown as a type, and the method of
+    -- the class that says which one a type is.
+    literalType = \case
+      Number n | n >= 0 -> Just (show n, "natInteger")
+      Text s -> Just (show s, "symbolString")
+      _ -> Nothing
+    -- With DataKinds a constructor is a type too: where a tick says so,
+    -- or where no type goes by the name.
+    typeConstructor c = do
+      promoted <- enabled DataKinds
+      let (ticked, plain) = case c of
+            '\'' : rest -> (True, rest)
+            _ -> (False, c)
+      ofType <- asks (Map.lookup plain . envTypes)
+      ofConstructor <- asks (Map.lookup plain . envConstructors)
+      case (ofType, ofConstructor) of
+        (Just n, _) | not ticked -> mkType (Type.Con n)
+        (_, Just k) | promoted -> mkType (Type.Con k)
+        (Just n, _) -> mkType (Type.Con n)
+        _ -> missing "unknown type " c >> mkType Type.Error
 
 -- | The type variables a type mentions, as they are spelled, in order.
 typeVariables :: SType.Type -> [Name]
@@ -1323,6 +1398,8 @@ typeVariables = \case
   SType.Wild -> []
   SType.Kinded inner _ -> typeVariables inner
   SType.Operators operands _ -> concatMap typeVariables operands
+  SType.PromotedList elements -> concatMap typeVariables elements
+  SType.Lit _ -> []
 
 -- | Note the types a scope's signatures declare, for the names that scope
 -- defines, which are in scope. A signature quantifies over the variables
@@ -1398,12 +1475,25 @@ signatureFull given whole = do
 
 -- | Note the kind something is said to have.
 sayKind :: Syntax.Kind -> NameId -> M ()
-sayKind k n = modify (\st -> st {kindsSaid = IntMap.insert (nameKey n) (kindSyntax k) (kindsSaid st)})
+sayKind k n = kindSyntax k >>= \said -> modify (\st -> st {kindsSaid = IntMap.insert (nameKey n) said (kindsSaid st)})
 
-kindSyntax :: Syntax.Kind -> KindSyntax
+-- | A kind as it is written, with the data type it names found.
+kindSyntax :: Syntax.Kind -> M KindSyntax
 kindSyntax = \case
-  Syntax.Star -> KindStar
-  Syntax.Arrow a r -> KindArrow (kindSyntax a) (kindSyntax r)
+  Syntax.Star -> pure KindStar
+  Syntax.Arrow a r -> KindArrow <$> kindSyntax a <*> kindSyntax r
+  Syntax.ListOf k -> KindList <$> kindSyntax k
+  Syntax.Variable v -> do
+    poly <- enabled PolyKinds
+    unless poly (complain ("a kind has a variable in it, " ++ v ++ ", only if PolyKinds is on"))
+    pure (KindVariable v)
+  -- A data type is a kind, of the types its constructors are.
+  Syntax.Named c -> do
+    promoted <- enabled DataKinds
+    unless promoted (complain ("a data type, " ++ c ++ ", is a kind only if DataKinds is on"))
+    asks (Map.lookup c . envTypes) >>= \case
+      Just t -> pure (KindNamed t)
+      Nothing -> KindStar <$ complain ("unknown kind " ++ c)
 
 -- | The fixity of an operator that is a type's name: what was declared
 -- for the type, or for the constructor of the same name, since one
@@ -1687,6 +1777,11 @@ derive own d said apart via c = case d of
           SType.App (SType.Con n) arguments -> n == t && map Just parameters == map (\case SType.Var v -> Just v; _ -> Nothing) arguments
           _ -> False
     asks (Map.lookup c . envClasses) >>= \case
+      -- Every type is one that can be asked for when a program runs, and
+      -- to derive that it is says nothing.
+      _ | unqualified c == "Typeable" -> do
+        on <- enabled DeriveDataTypeable
+        unless on (complain "an instance of Typeable is derived, which says nothing, only if DeriveDataTypeable is on")
       Nothing -> complain ("unknown class " ++ c)
       Just k -> do
         constructors <- fmap catMaybes . forM cs $ \(Syntax.Constructor name fields) ->
