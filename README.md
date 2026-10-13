@@ -263,6 +263,15 @@ itself. [Powder.Base](lib/Powder/Base.hs) holds the definitions, and
 selection from it; the library modules are selections and additions in
 the same way.
 
+Beside what `base` has, the library has the modules of a few packages
+that most programs are written with, each written here and checked
+against the package itself: of containers, `Data.Map`, `Data.Set`,
+`Data.IntMap` and `Data.IntSet`; of transformers and mtl,
+`Control.Monad.State`, `Reader`, `Writer` and `Except` and the monads
+under them; `Control.Monad.ST` and `Data.STRef`; `System.FilePath`; and
+`Data.Text`, which is a list of characters under a type of its own.
+[ROADMAP.md](ROADMAP.md) says what each leaves out.
+
 There is one library for every edition, as GHC has, and its classes are
 the ones programs are written against today and not the Report's.
 `Applicative` is above `Monad`, `fail` is `MonadFail`'s and not
