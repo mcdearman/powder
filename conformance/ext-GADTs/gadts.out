@@ -1,0 +1,12 @@
+((10,True),10,30)
+if (1 + 2) == 3 then (10, True) else (0, not True)
+(13,False)
+[<1|yes>;<2|no>;]
+((0,[]),1)
+('c',Just 5)
+"same"
+"different"
+5 as 5, [True] as [yes;]
+('a',[1,2,3],[])
+"ab"
+a string of 4

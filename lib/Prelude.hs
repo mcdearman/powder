@@ -1,3 +1,4 @@
+{-# LANGUAGE ExplicitNamespaces #-}
 -- The prelude: what every module has in scope unless it says otherwise.
 -- It is what the Report says the Prelude exports and what has been added
 -- to it since, taken from Powder.Base. A module written in the Haskell2010
@@ -5,7 +6,7 @@
 -- Report's names only. The types the language itself knows, such as Bool,
 -- Int and IO, are in scope everywhere and need no exporting.
 module Prelude
-  ( Maybe (..), Either (..), Ordering (..), String, Rational, Word,
+  ( Maybe (..), Either (..), Ordering (..), String, Rational, Word, type (~),
     Eq (..), Ord (..), Enum (..), Bounded (..),
     Num (..), Real (..), Integral (..), Fractional (..), Floating (..), RealFrac (..), RealFloat (..),
     Functor (..), (<$>), Applicative (..), Monad (..), MonadFail (..), Semigroup (..), Monoid (..),

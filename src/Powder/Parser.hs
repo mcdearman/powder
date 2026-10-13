@@ -514,7 +514,11 @@ topDecl = do
       kinds <- ahead 0
       -- The kind of a type, said apart from the type.
       standalone <- on StandaloneKindSignatures
+      roles <- on RoleAnnotations
+      role <- atText "role"
       case kinds of
+        -- What a type's parameters are to it, which is said and not used.
+        VarId : next : _ | roles && role && next `elem` [ConId, LParen] -> restOfDecl >> close_ m RoleDecl
         _ : DoubleColon : _ | standalone -> do
           expect_ ConId
           advance
@@ -666,12 +670,15 @@ dataDecl = do
   kinds <- ahead 0
   when (stoppedAt (scan [DoubleArrow, Equals] kinds) == DoubleArrow) (btype >> expect_ DoubleArrow)
   typeHead
+  -- Its kind may be said in place of some of its variables.
+  kinded <- (&&) <$> on KindSignatures <*> at DoubleColon
+  when kinded (advance >> kind)
   -- The constructors, each written as one, or after a where each given by
   -- its type.
   typed <- at KwWhere
   if typed
     then do
-      allowed <- on GADTSyntax
+      allowed <- (||) <$> on GADTSyntax <*> on GADTs
       unless allowed (problem "constructors are given by their types, after `where`, only if GADTSyntax is on")
       advance
       void (block True [ConId, LParen] typedCon)
@@ -732,6 +739,15 @@ dataDecl = do
         LParen : op : RParen : _ | op `elem` [ConSym, Colon] -> replicateM_ 3 advance
         _ -> expect_ ConId
       expect_ DoubleColon
+      -- Its type variables may be named.
+      named <- (&&) <$> at VarId <*> atText "forall"
+      when named $ do
+        f <- open
+        advance
+        binders
+        dot <- (&&) <$> at VarSym <*> atText "."
+        if dot then advance else problem "expected a . after the variables of a forall"
+        close_ f ConForall
       rest <- ahead 0
       when (stoppedAt (scan [DoubleArrow] rest) == DoubleArrow) $ do
         x <- open
@@ -1002,9 +1018,12 @@ operands = do
       close m TyInfix
   where
     atTypeOperator = do
-      allowed <- on TypeOperators
+      operators <- on TypeOperators
+      -- That two types are the same is written with an operator too.
+      equalities <- on GADTs
       kinds <- ahead 0
       spelled <- spellings 1
+      let allowed = operators || (equalities && spelled == ["~"])
       pure $ allowed && case kinds of
         ConSym : _ -> True
         QConSym : _ -> True

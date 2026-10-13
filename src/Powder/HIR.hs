@@ -176,7 +176,11 @@ data DataType = DataType
     dataConstructors :: [(NameId, [Type])],
     -- | For a constructor that has type variables of its own, or a
     -- context: those, which what it makes carries the dictionaries for.
-    dataExistentials :: [(NameId, ([NameId], [Constraint]))]
+    dataExistentials :: [(NameId, ([NameId], [Constraint]))],
+    -- | For a constructor that makes the type at types of its own
+    -- choosing: those, over its own type variables, which are all the
+    -- variables it has.
+    dataIndices :: [(NameId, [Type])]
   }
 
 data Synonym = Synonym {synonymParameters :: [NameId], synonymType :: Type}
