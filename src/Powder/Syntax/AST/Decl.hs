@@ -3,7 +3,7 @@
 
 -- | The forms of a declaration. Import qualified.
 module Powder.Syntax.AST.Decl
-  ( Decl (Data, Clause, PatBind, Signature, Fixity, TypeSynonym, Class, Instance, Import, Default, Foreign, ForeignExport, PatternSynonym, PatternSignature, StandaloneDeriving, KindSignature),
+  ( Decl (Data, Clause, PatBind, Signature, Fixity, TypeSynonym, Class, Instance, Import, Default, Foreign, ForeignExport, PatternSynonym, PatternSignature, StandaloneDeriving, KindSignature, RoleAnnotation),
     Assoc (..),
     Listed (..),
     Subordinates (..),
@@ -13,6 +13,7 @@ module Powder.Syntax.AST.Decl
     kinds,
     dependencies,
     overlap,
+    resultKind,
   )
 where
 
@@ -42,6 +43,11 @@ typeNameOf :: Red.Red -> Name
 typeNameOf r = case [x | (k, x) <- takeWhile ((`notElem` [K.Equals, K.KwWhere, K.KwDeriving]) . fst) (spelled r), k `elem` [K.ConId, K.ConSym, K.VarSym]] of
   x : _ -> x
   [] -> nameOf r
+
+-- | The kind a data declaration is said to have after its variables, if
+-- it is: what the type is when it is applied to those.
+resultKind :: Decl -> Maybe Kind
+resultKind = kindOf . syntax
 
 -- | The kinds a declaration gives the type variables its head names, for
 -- those it does.
@@ -253,4 +259,8 @@ patternBuilder (syntax -> r) = [(child 0 d, child 0 d) | w <- Red.nodes r, Red.k
 pattern PatternSignature :: Decl
 pattern PatternSignature <- (kindIs [K.PatSynSig] -> Just _)
 
-{-# COMPLETE Data, Clause, PatBind, Signature, Fixity, TypeSynonym, Class, Instance, Import, Default, Foreign, ForeignExport, PatternSynonym, PatternSignature, StandaloneDeriving, KindSignature #-}
+{-# COMPLETE Data, Clause, PatBind, Signature, Fixity, TypeSynonym, Class, Instance, Import, Default, Foreign, ForeignExport, PatternSynonym, PatternSignature, StandaloneDeriving, KindSignature, RoleAnnotation #-}
+
+-- | What a type's parameters are to it, which is read and not used.
+pattern RoleAnnotation :: Decl
+pattern RoleAnnotation <- (kindIs [K.RoleDecl] -> Just _)

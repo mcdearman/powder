@@ -51,7 +51,7 @@ CUSKs, DeepSubsumption. MonoLocalBinds and PolyKinds change what some Haskell
 | M4 | Explicit quantification at rank 1 | done |
 | M5 | The class system | done |
 | M6 | Higher ranks and existentials | done |
-| M7 | GADTs, type families and what needs an implication solver | not started |
+| M7 | GADTs, type families and what needs an implication solver | in progress |
 | M8 | Kinds | not started |
 
 **M0, plumbing.** Done. LANGUAGE pragmas are read, an edition names a set of
@@ -212,9 +212,37 @@ What these do not yet do:
   if they were written once.
 - QuantifiedConstraints is not done.
 
-**M7, what needs an implication solver.** GADTs, type equality, TypeFamilies,
-DeriveGeneric, Coercible and RoleAnnotations, DerivingVia. An OutsideIn solver:
-the second redesign of the checker.
+**M7, what needs an implication solver.**
+
+- [x] GADTs
+- [x] Type equality, `a ~ b`, in a context
+- [x] RoleAnnotations, which are read and say nothing
+- [x] MonoLocalBinds, which is accepted and changes nothing
+- [ ] Coercible, with `Data.Coerce`
+- [ ] DerivingVia
+- [ ] TypeFamilies
+- [ ] DeriveGeneric, with `GHC.Generics`, which needs TypeFamilies
+- [ ] DefaultSignatures
+
+GADTs are done without the implication solver the plan called for. Matching
+a constructor that makes its type at types of its own choosing says what
+type variables are, and that is kept beside what is given: types are read
+through it wherever two are made the same, and what is wanted under the
+match is seen to before leaving it. So what is under such a match must have
+its types known from outside, by a signature, which is also what GHC asks.
+
+What these do not yet do:
+
+- A local definition under such a match is generalised as anywhere else.
+  MonoLocalBinds would not have it be, and a program that leans on the
+  difference may be accepted here and refused by GHC.
+- Nothing checks that a type variable such a match learns about stays under
+  the match, as nothing does for a constructor's own.
+- A constructor that makes its type at types of its own choosing does not
+  have its fields named, and has no instances derived.
+- That two types are the same can be asked for and given in a context. It is
+  a class in the library, with one instance, and a dictionary that holds
+  nothing is passed for it.
 
 **M8, kinds.** PolyKinds, DataKinds, type-level literals, Typeable and
 DeriveDataTypeable. This replaces `src/Powder/Kinds.hs`.

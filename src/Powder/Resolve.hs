@@ -419,6 +419,7 @@ resolveAfter seed languages lenient sources extra = case reverse (problems final
         let find o =
               maybeToList (Map.lookup o (envOwnValues env) <|> Map.lookup o (envOwnConstructors env) <|> Map.lookup o (envValues env) <|> Map.lookup o (envConstructors env))
                 ++ maybeToList (Map.lookup o (envTypes env))
+                ++ maybeToList (Map.lookup o (envClasses env))
         declareFixities find (moduleDecls m ++ concat [ds | Decl.Class _ ds <- moduleDecls m])
       -- Types first, since everything else may mention them; then classes,
       -- before the instances that need to know their methods.
@@ -958,13 +959,13 @@ wiredIn = do
   modify (\st -> st {names = IntMap.insert (-1) arrow (names st)})
   argument <- newName "a" TypeVariable
   result <- newName "b" TypeVariable
-  addDataType (DataType (NameId (-1)) [argument, result] [] [])
+  addDataType (DataType (NameId (-1)) [argument, result] [] [] [])
   double <- newName "Double" TypeConstructor
   float <- newName "Float" TypeConstructor
   char <- newName "Char" TypeConstructor
   io <- newName "IO" TypeConstructor
   a <- newName "a" TypeVariable
-  mapM_ (\(t, ps) -> addDataType (DataType t ps [] [])) [(integer, []), (int, []), (double, []), (float, []), (char, []), (io, [a])]
+  mapM_ (\(t, ps) -> addDataType (DataType t ps [] [] [])) [(integer, []), (int, []), (double, []), (float, []), (char, []), (io, [a])]
   (bool, boolCs) <- dataType "Bool" [] [("False", []), ("True", [])]
   (unit, unitCs) <- dataType "()" [] [("()", [])]
   -- The list's constructors mention the list type itself.
@@ -1002,13 +1003,13 @@ dataType t parameters cs = do
 constructorsOf :: NameId -> [NameId] -> [(Name, [Type.Type])] -> M [(Name, NameId)]
 constructorsOf t parameters cs = do
   ids <- mapM (const (NameId <$> fresh)) cs
-  zip (map fst cs) ids <$ constructorsAs ids t parameters cs []
+  zip (map fst cs) ids <$ constructorsAs ids t parameters cs [] []
 
 -- | Say what the constructors of a type are, under names they have been
 -- given already. In what is compiled a constructor goes by its name, with
 -- its module's before it unless that is the root.
-constructorsAs :: [NameId] -> NameId -> [NameId] -> [(Name, [Type.Type])] -> [(NameId, ([NameId], [Constraint]))] -> M ()
-constructorsAs ids t parameters cs existentials = do
+constructorsAs :: [NameId] -> NameId -> [NameId] -> [(Name, [Type.Type])] -> [(NameId, ([NameId], [Constraint]))] -> [(NameId, [Type.Type])] -> M ()
+constructorsAs ids t parameters cs existentials indices = do
   home <- asks envModule
   plainly <- asks ((|| null home) . (== home) . envRoot)
   forM_ (zip3 [0 ..] cs ids) $ \(tag, (c, fields), NameId n) -> do
@@ -1017,7 +1018,7 @@ constructorsAs ids t parameters cs existentials = do
         -- before its fields.
         kept = maybe 0 (length . snd) (lookup (NameId n) existentials)
     modify (\st -> st {names = IntMap.insert n (NameInfo c (Constructor (ConInfo spelling tag (kept + length fields) (length cs)) ids) home) (names st)})
-  addDataType (DataType t parameters (zip ids (map snd cs)) existentials)
+  addDataType (DataType t parameters (zip ids (map snd cs)) existentials indices)
 
 -- | The type variables in scope in the type of a constructor that is
 -- given by its type: the ones its result applies the type to, each
@@ -1046,30 +1047,74 @@ typedShape = \case
 typeDecl :: Map.Map Name (NameId, [NameId]) -> Syntax.Decl -> M ()
 typeDecl own d = within d $ case d of
   Decl.Data t parameters cs -> do
-    scope <- typeParameters parameters
-    full <- forM cs $ \c@(Syntax.Constructor name tys) -> within c $ do
-      -- A constructor given by its type names the type's parameters as
-      -- it likes.
-      scope' <- maybe (pure scope) (typedScope t scope) (Syntax.constructorResult c)
-      -- With ExistentialQuantification it may have type variables of
-      -- its own: those a forall names, or where it is given by its type
-      -- those its fields have that its result has not; and a context.
-      existential <- enabled ExistentialQuantification
+    named' <- typeParameters parameters
+    -- A kind said after them stands for more parameters, with no names.
+    let more = \case
+          Just (Syntax.Arrow k rest) -> k : more (Just rest)
+          _ -> []
+    unnamed' <- forM (more (Decl.resultKind d)) $ \k -> do
+      v <- newName "_" TypeVariable
+      (,) "" v <$ sayKind k v
+    let scope = named' ++ unnamed'
+        (name, ids) = own Map.! t
+    gadts <- enabled GADTs
+    full <- forM cs $ \c@(Syntax.Constructor cname tys) -> within c $ do
       let assertions = concatMap assertionsOf (Syntax.constructorContext c)
           named = Syntax.constructorExistentials c
-          unnamed = if isJust (Syntax.constructorResult c) then nub (concatMap typeVariables (tys ++ assertions)) \\ (map fst scope' ++ named) else []
-      unless (existential || (null named && null unnamed && null assertions)) $
-        complain "a constructor has a context, or type variables of its own, only if ExistentialQuantification is on"
-      unless ((null named && null unnamed && null assertions) || null (Syntax.constructorFields c)) $
-        complain "a constructor with a context, or type variables of its own, does not have its fields named"
-      own' <- forM (nub (named ++ unnamed)) (\x -> (,) x <$> newName x TypeVariable)
-      withTypeVariables (scope' ++ own') $ do
-        fields' <- mapM type' tys
-        context <- if existential then concat <$> mapM constraints assertions else pure []
-        pure ((name, fields'), (map snd own', context))
-    let (name, ids) = own Map.! t
-        declared = map fst full
-    constructorsAs ids name (map snd scope) declared [(c, extra) | (c, (_, extra@(vs, context))) <- zip ids full, not (null vs && null context)]
+          -- Whether one given by its type makes the type at variables,
+          -- all different, as every constructor written the other way
+          -- does: then they are the type's parameters, as it names them.
+          plainly = case fmap typedShape (Syntax.constructorResult c) of
+            Just (Just (t', vs)) -> t' == t && length vs == length scope && nub vs == vs
+            Just Nothing -> False
+            Nothing -> True
+      case Syntax.constructorResult c of
+        -- With GADTs it may make the type at any types. Every type
+        -- variable it has is then its own.
+        Just result | gadts && not plainly -> do
+          unless (null (Syntax.constructorFields c)) (complain "a constructor that makes its type at types of its own choosing does not have its fields named")
+          own' <- forM (nub (named ++ concatMap typeVariables (tys ++ assertions ++ [result]))) (\x -> (,) x <$> newName x TypeVariable)
+          withTypeVariables own' $ do
+            fields' <- mapM type' tys
+            context <- concat <$> mapM constraints assertions
+            made <- type' result
+            let spine ty arguments = case Type.typeForm ty of
+                  Type.App f a -> spine f (a : arguments)
+                  form -> (form, arguments)
+            at' <- case spine made [] of
+              (Type.Con made', arguments) | made' == name, length arguments == length scope -> pure arguments
+              _ -> [] <$ complain ("the type of a constructor of " ++ t ++ " must end in " ++ t ++ " applied to " ++ show (length scope) ++ " types")
+            pure ((cname, fields'), (map snd own', context), Just at')
+        _ -> do
+          -- A constructor given by its type names the type's parameters
+          -- as it likes.
+          scope' <- maybe (pure scope) (typedScope t scope) (Syntax.constructorResult c)
+          -- With ExistentialQuantification it may have type variables of
+          -- its own: those a forall names, or where it is given by its
+          -- type those its fields have that its result has not; and a
+          -- context.
+          existential <- (gadts ||) <$> enabled ExistentialQuantification
+          let unnamed = if isJust (Syntax.constructorResult c) then nub (concatMap typeVariables (tys ++ assertions)) \\ (map fst scope' ++ named) else []
+              -- Named with a forall where it is given by its type, a
+              -- variable may be one of the type's parameters.
+              ofItsOwn = filter (`notElem` map fst scope') (if isJust (Syntax.constructorResult c) then named else []) ++ (if isJust (Syntax.constructorResult c) then [] else named) ++ unnamed
+          unless (existential || (null ofItsOwn && null assertions)) $
+            complain "a constructor has a context, or type variables of its own, only if ExistentialQuantification is on"
+          unless ((null ofItsOwn && null assertions) || null (Syntax.constructorFields c)) $
+            complain "a constructor with a context, or type variables of its own, does not have its fields named"
+          own' <- forM (nub ofItsOwn) (\x -> (,) x <$> newName x TypeVariable)
+          withTypeVariables (scope' ++ own') $ do
+            fields' <- mapM type' tys
+            context <- if existential then concat <$> mapM constraints assertions else pure []
+            pure ((cname, fields'), (map snd own', context), Nothing)
+    let declared = [con | (con, _, _) <- full]
+    constructorsAs
+      ids
+      name
+      (map snd scope)
+      declared
+      [(c, extra) | (c, (_, extra@(vs, context), at')) <- zip ids full, isJust at' || not (null vs && null context)]
+      [(c, at') | (c, (_, _, Just at')) <- zip ids full]
     -- With StrictData a field is strict unless it is marked lazy.
     strictly <- enabled StrictData
     modify (\st -> st {strict = IntMap.union (IntMap.fromList (zip (map nameKey ids) (map (map (fromMaybe strictly) . Syntax.constructorMarks) cs))) (strict st)})
@@ -1310,9 +1355,10 @@ kindSyntax = \case
 typeFixity :: Name -> M (Assoc, Int)
 typeFixity name = do
   ofType <- asks (Map.lookup name . envTypes)
+  ofClass <- asks (Map.lookup name . envClasses)
   ofConstructor <- asks (Map.lookup name . envConstructors)
   known <- gets fixityTable
-  pure (fromMaybe (LeftAssoc, 9) (listToMaybe [f | Just x <- [ofType, ofConstructor], Just f <- [IntMap.lookup (nameKey x) known]]))
+  pure (fromMaybe (LeftAssoc, 9) (listToMaybe [f | Just x <- [ofType, ofClass, ofConstructor], Just f <- [IntMap.lookup (nameKey x) known]]))
 
 -- | Do something with the type variables a name's signature brought into
 -- scope, if it brought any.
@@ -1337,6 +1383,8 @@ classHead = \case
   SType.Qualified context inner -> (\(_, c, ts) -> (assertionsOf context, c, ts)) <$> classHead inner
   SType.App (SType.Con c) ts -> Just ([], c, ts)
   SType.Con c -> Just ([], c, [])
+  -- A class whose name is an operator, between its two types.
+  SType.Operators [left, right] [c] -> Just ([], c, [left, right])
   SType.Paren inner -> classHead inner
   -- Its variables may be named, which says nothing more.
   SType.Forall _ inner -> classHead inner
@@ -2165,6 +2213,7 @@ grouped ds = map gather (NE.groupBy sameFunction (concatMap binds ds))
       Decl.PatternSignature -> []
       Decl.StandaloneDeriving {} -> []
       Decl.KindSignature {} -> []
+      Decl.RoleAnnotation -> []
     sameFunction (Left (_, f, _, _)) (Left (_, g, _, _)) = f == g
     sameFunction _ _ = False
     gather group = case NE.head group of

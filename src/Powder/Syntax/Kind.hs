@@ -125,6 +125,8 @@ data SyntaxKind
   | TypeDecl
   | -- | @type T :: kind@
     KindSigDecl
+  | -- | @type role T nominal representational@
+    RoleDecl
   | -- | A class: its head, a type, and the declarations in its @where@.
     ClassDecl
   | InstanceDecl

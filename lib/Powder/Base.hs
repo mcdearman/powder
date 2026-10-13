@@ -1,3 +1,4 @@
+{-# LANGUAGE MultiParamTypeClasses, FunctionalDependencies, FlexibleInstances, TypeOperators #-}
 -- Everything the prelude and the libraries beside it are made of, written
 -- in the language the compilers accept. The modules a program imports
 -- are selections from this one: Prelude, Data.List, Data.Char and the
@@ -15,6 +16,7 @@ infixl 6 +, -
 infixr 6 <>
 infixr 5 :, ++, :|
 infix 4 ==, /=, <, <=, >, >=, `elem`, `notElem`
+infix 4 ~
 infixl 4 <$>, <$, <*>, *>, <*
 infixr 3 &&
 infixl 3 <|>
@@ -192,6 +194,13 @@ class Applicative f => Alternative f where
 
 (<$>) :: Functor f => (a -> b) -> f a -> f b
 (<$>) = fmap
+
+-- That two types are the same. Each says what the other is, and the one
+-- instance is of a type and itself: so that asking it of two types makes
+-- them the same.
+class a ~ b | a -> b, b -> a
+
+instance a ~ a
 
 -- The types a string written in a program may be of, where
 -- OverloadedStrings is on.

@@ -362,6 +362,8 @@ compiled as if it did not. Implemented so far, all of them in
 | `ConstraintKinds` | `type Stringy a = (Show a, Read a)`: a name for constraints |
 | `ExistentialQuantification` | `data Showable = forall a. Show a => MkShowable a`: a constructor with type variables of its own, and a context, whose dictionaries what it makes carries |
 | `RankNTypes` | `f :: (forall a. a -> a) -> (Int, Bool)`: an argument, or a field, that works at every type |
+| `GADTs` | `data Expr a where IntE :: Int -> Expr Int`: a constructor makes its type at types of its own choosing, and matching it says what they are. With `a ~ b` in a context, for two types that are the same |
+| `RoleAnnotations`, `MonoLocalBinds` | Read, and say nothing here |
 
 Implemented and in no edition, since each changes what a program already
 means:

@@ -155,6 +155,16 @@ data Env s = Env
     -- them: the contexts of the constructors in them that have one. It
     -- is taken where the names they bind come into scope.
     refMatched :: STRef s [Given s],
+    -- | What the patterns just checked say type variables are, by
+    -- 'NameId': a constructor that makes its type at types of its own
+    -- choosing says, where it is matched, that the type matched is at
+    -- those. Taken with what they give.
+    refRefining :: STRef s [(Int, Type s)],
+    -- | What type variables are known to be, where what is being checked
+    -- is under such a match.
+    envRefined :: IntMap.IntMap (Type s),
+    -- | The types such constructors make their type at, by 'NameId'.
+    envIndexed :: IntMap.IntMap [Syntax.Type],
     -- | The constructors that have type variables of their own, or a
     -- context: those, by 'NameId'.
     envExistentials :: IntMap.IntMap ([NameId], [Constraint]),
@@ -185,9 +195,10 @@ typecheckAfter theirs general program = runST $ do
   parameters <- newSTRef IntMap.empty
   uses <- newSTRef []
   matched <- newSTRef []
+  refining <- newSTRef []
   literals <- newSTRef []
   let instances = IntMap.fromListWith (flip (++)) [(nameKey (instanceClass i), [i]) | i <- programInstances program]
-  runReaderT run (Env program IntMap.empty [] Nothing [] IntSet.empty instances general moduleOf reach next types schemes problems wanted evidence parameters uses matched existentials literals)
+  runReaderT run (Env program IntMap.empty [] Nothing [] IntSet.empty instances general moduleOf reach next types schemes problems wanted evidence parameters uses matched refining IntMap.empty indexed existentials literals)
   foundTypes <- readSTRef types >>= traverse Unify.zonk
   foundSchemes <- readSTRef schemes >>= traverse zonkPoly
   foundEvidence <- readSTRef evidence >>= traverse (mapM zonkEvidence)
@@ -202,6 +213,7 @@ typecheckAfter theirs general program = runST $ do
   pure (Checked foundTypes foundSchemes (foldr (IntMap.delete . nodeKey) foundEvidence numbers) foundParameters, reverse found)
   where
     existentials = IntMap.fromList [(nameKey c, extra) | d <- programDataTypes program, (c, extra) <- dataExistentials d]
+    indexed = IntMap.fromList [(nameKey c, at') | d <- programDataTypes program, (c, at') <- dataIndices d]
     moduleOf n = n >>= origin program >>= \o -> lookup (originFile o) (programModules program)
     imports = Map.fromList (programImports program)
     -- Everything a module's imports lead to.
@@ -337,6 +349,8 @@ withMonos :: [(NameId, Type s)] -> Tc s a -> Tc s a
 withMonos binds inner = do
   ref <- asks refMatched
   given' <- lift (readSTRef ref <* writeSTRef ref [])
+  same <- equalities given'
+  said <- (same ++) <$> (asks refRefining >>= \r -> lift (readSTRef r <* writeSTRef r []))
   -- One whose type is for all types its variables could be is used at
   -- any of them, as something declared with that type would be.
   schemes <- forM binds $ \(x, t) ->
@@ -347,9 +361,10 @@ withMonos binds inner = do
         env
           { envSchemes = IntMap.union (IntMap.fromList schemes) (envSchemes env),
             envMonos = map snd binds ++ envMonos env,
-            envGivens = given' ++ envGivens env
+            envGivens = given' ++ envGivens env,
+            envRefined = IntMap.union (IntMap.fromList said) (envRefined env)
           }
-  if null given'
+  if null given' && null said
     then scoped inner
     else scoped $ do
       (result, wanted) <- capture inner
@@ -364,16 +379,79 @@ withSchemes binds = local (\env -> env {envSchemes = IntMap.union (IntMap.fromLi
 -- | Make two types the same. If they cannot be, say so and leave them be.
 unify :: Type s -> Type s -> Tc s ()
 unify expected actual = do
-  ok <- lift (Unify.unify expected actual)
+  expected' <- refined expected
+  actual' <- refined actual
+  ok <- lift (Unify.unify expected' actual')
   unless ok $ do
-    e <- showType expected
-    a <- showType actual
+    e <- showType expected'
+    a <- showType actual'
     complain ("expected " ++ e ++ ", but this has type " ++ a)
+
+-- | A type with its type variables as they are known to be here: under
+-- the match of a constructor that says what some are, and in the
+-- patterns after one.
+refined :: Type s -> Tc s (Type s)
+refined t = do
+  known <- asks envRefined
+  pending <- asks refRefining >>= lift . readSTRef
+  if IntMap.null known && null pending
+    then pure t
+    else go (4 :: Int) (IntMap.union (IntMap.fromList pending) known) t
+  where
+    -- What one is known to be may mention another.
+    go n known u = do
+      u' <- lift (Unify.substitute known u)
+      left <- lift (Unify.rigids u')
+      if n > 0 && any ((`IntMap.member` known) . nameKey) left then go (n - 1) known u' else pure u'
+
+-- | Make the type matched the type a constructor makes, where the
+-- constructor makes it at types of its own choosing. Where one has a type
+-- variable and the other something else, the variable is that from here
+-- on: one of the constructor's own, which are given, or one of the
+-- program's, which is then known to be more than it was.
+--
+-- Where the two cannot be the same the match is one that never happens,
+-- and what is under it is never reached: that is let be, as GHC lets it.
+refine :: [NameId] -> Type s -> Type s -> Tc s ()
+refine own matched made = void (go matched made)
+  where
+    go a b = do
+      a' <- refined a >>= lift . Unify.shallow
+      b' <- refined b >>= lift . Unify.shallow
+      case (a', b') of
+        (Rigid x, Rigid y) | x == y -> pure True
+        (_, Rigid y) | y `elem` own -> True <$ says y a'
+        (Rigid x, _) -> True <$ says x b'
+        (_, Rigid y) -> True <$ says y a'
+        (Con x, Con y) -> pure (x == y)
+        (App f x, App g y) -> (&&) <$> go f g <*> go x y
+        (Fun x r, Fun y q) -> (&&) <$> go x y <*> go r q
+        -- What is matched is not known that far: it is found to be so.
+        _ -> lift (Unify.unify a' b')
+    says v t = note refRefining ((nameKey v, t) :)
+
+-- | Do something with more given. What is given may be that two types
+-- are the same, and then they are, for what is done.
+withGivens :: [Given s] -> Tc s a -> Tc s a
+withGivens given' inner = do
+  said <- equalities given'
+  local (\env -> env {envGivens = given' ++ envGivens env, envRefined = IntMap.union (IntMap.fromList said) (envRefined env)}) inner
+
+-- | What some givens say type variables are: those that say two types
+-- are the same.
+equalities :: [Given s] -> Tc s [(Int, Type s)]
+equalities given' = do
+  program <- asks envProgram
+  let equality c = fmap (\i -> (nameText i, nameModule i)) (nameInfo program c) == Just ("~", "Powder.Base")
+  ref <- asks refRefining
+  before <- lift (readSTRef ref <* writeSTRef ref [])
+  forM_ [(a, b) | Given c [a, b] _ <- given', equality c] (uncurry (refine []))
+  lift (readSTRef ref <* writeSTRef ref before)
 
 -- | See a type as a function's: the types of its argument and its result.
 unifyFun :: Type s -> Tc s (Type s, Type s)
 unifyFun t =
-  lift (Unify.shallow t) >>= \case
+  (refined t >>= lift . Unify.shallow) >>= \case
     Fun a r -> pure (a, r)
     other -> do
       a <- unknown
@@ -542,8 +620,9 @@ solveNoting reported wanted = do
         (Just here, Just there) -> here == there || there `elem` Map.findWithDefault [] here reach
         _ -> True
 
-    one w = do
+    one unrefined = do
       program <- asks envProgram
+      w <- (\ts -> unrefined {wantedTypes = ts}) <$> mapM refined (wantedTypes unrefined)
       known <- asks (IntMap.findWithDefault [] (nameKey (wantedClass w)) . envInstances) >>= filterM (visible w)
       given' <- asks (filter (\(Given c _ _) -> c == wantedClass w) . envGivens)
       -- What the class's dependencies say.
@@ -686,7 +765,7 @@ instance' inst = at (instanceId inst) $ do
   given' <- givens context ds
   let cls = classOf program (instanceClass inst)
       scope = IntMap.fromList (zip (map nameKey (maybe [] classVariables cls)) self)
-  local (\env -> env {envGivens = given' ++ envGivens env}) $ do
+  withGivens given' $ do
     (supers, wanted) <- capture (forM (maybe [] classSupers cls) (\(Constraint super us) -> mapM (fromSyntaxIn scope) us >>= want super))
     recordEvidence (instanceId inst) supers
     solve wanted >>= defer
@@ -755,11 +834,17 @@ constructed c arguments = case arguments of
 
 -- | The types of a data type's constructors: from its fields to itself.
 constructorSchemes :: DataType -> Tc s [(Int, Poly s)]
-constructorSchemes (DataType t parameters constructors existentials) = forM constructors $ \(c, fields) -> do
+constructorSchemes (DataType t parameters constructors existentials indices) = forM constructors $ \(c, fields) -> do
   fields' <- mapM fromSyntax fields
   let (own, asked) = fromMaybe ([], []) (lookup c existentials)
   context <- forM asked (\(Constraint k us) -> Pred k <$> mapM fromSyntax us)
-  pure (nameKey c, Poly (parameters ++ own) context (foldr Fun (foldl App (Con t) (map Rigid parameters)) fields'))
+  case lookup c indices of
+    -- One that makes the type at types of its own choosing has no
+    -- variables but its own.
+    Just at' -> do
+      made <- mapM fromSyntax at'
+      pure (nameKey c, Poly own context (foldr Fun (constructed t made) fields'))
+    Nothing -> pure (nameKey c, Poly (parameters ++ own) context (foldr Fun (foldl App (Con t) (map Rigid parameters)) fields'))
 
 -- | The type a name was declared to have, if it was. A method's is for
 -- the instances of its class.
@@ -985,6 +1070,8 @@ binding b = at (bindingId b) $ case bindingKind b of
     -- constructor's context would.
     asks refMatched >>= \ref -> lift (readSTRef ref <* writeSTRef ref []) >>= \given' ->
       unless (null given') (complain "a constructor with a context cannot be matched in a pattern that is bound: match it in a case")
+    asks refRefining >>= \ref -> lift (readSTRef ref <* writeSTRef ref []) >>= \said ->
+      unless (null said) (complain "a constructor that makes its type at types of its own choosing cannot be matched in a pattern that is bound: match it in a case")
     -- The names are in scope already, with the types they are to have.
     forM_ binds $ \(x, found) -> do
       Poly _ _ wanted <- schemeOfName x
@@ -999,7 +1086,7 @@ definition n clauses vs context t = do
   ds <- forM context (const freshKey)
   recordParameters n ds
   given' <- givens context ds
-  local (\env -> env {envGivens = given' ++ envGivens env}) $ do
+  withGivens given' $ do
     ((), wanted) <- capture (forM_ clauses (`clause` t))
     solve wanted >>= defer
   -- A signature's type variables stand for any type at all, so nothing
@@ -1066,7 +1153,14 @@ pattern' p t = at (Pat.patId p) $ do
           note refMatched (given' ++)
           lift (Unify.substitute scope whole)
       let (fields, result) = arrows constructor
-      unify t result
+      -- One that makes its type at types of its own choosing says what
+      -- the type matched is at; any other is of the type matched.
+      indexed <- asks (IntMap.member (nameKey c) . envIndexed)
+      if indexed
+        then do
+          made <- lift (Unify.rigids result)
+          refine made t result
+        else unify t result
       when (length fields /= length ps) $
         complain ("this constructor has " ++ show (length fields) ++ " fields, but is given " ++ show (length ps) ++ " patterns")
       -- The names in patterns it has no field for are still bound.
@@ -1160,7 +1254,7 @@ infer e = at (exprId e) $ do
       ds <- forM preds (const freshKey)
       recordParameters (exprId e) ds
       given' <- givens preds ds
-      local (\env -> env {envGivens = given' ++ envGivens env}) $ do
+      withGivens given' $ do
         ((), wanted) <- capture (check inner t)
         solve wanted >>= defer
       instantiate (Poly vs preds t)
@@ -1209,7 +1303,7 @@ check e expected =
       ds <- forM asked (const freshKey)
       recordParameters (exprId e) ds
       given' <- givens asked ds
-      local (\env -> env {envGivens = given' ++ envGivens env}) $ do
+      withGivens given' $ do
         ((), wanted) <- capture (check e body)
         solve wanted >>= defer
     _ -> checkAgainst e expected
