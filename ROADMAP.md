@@ -51,7 +51,7 @@ CUSKs, DeepSubsumption. MonoLocalBinds and PolyKinds change what some Haskell
 | M4 | Explicit quantification at rank 1 | done |
 | M5 | The class system | done |
 | M6 | Higher ranks and existentials | done |
-| M7 | GADTs, type families and what needs an implication solver | in progress |
+| M7 | GADTs, type families and what needs an implication solver | done |
 | M8 | Kinds | done |
 
 **M0, plumbing.** Done. LANGUAGE pragmas are read, an edition names a set of
@@ -222,9 +222,9 @@ What these do not yet do:
 - [x] DerivingVia
 - [x] TypeFamilies: functions from types to a type, open, with all their
       equations, or going with a class
-- [ ] DeriveGeneric, with `GHC.Generics`. It needs the names of types and
-      constructors as types, which is M8's
-- [ ] DefaultSignatures, which is for the same
+- [x] DeriveGeneric, with `GHC.Generics`. It needed the names of types and
+      constructors as types, which is M8's, and was done after it
+- [x] DefaultSignatures
 
 GADTs are done without the implication solver the plan called for. Matching
 a constructor that makes its type at types of its own choosing says what
@@ -263,6 +263,25 @@ What these do not yet do:
   declares it, with the equations that one gave; equations another package
   gives apart from it are that package's alone.
 - Equations given apart are not checked against each other.
+- An instance of Generic is derived by writing it out, with the type its
+  values are kept as, and reading that as if the module had it. It is not
+  derived for a type with a constructor that has type variables or a
+  context of its own, or that is given by its type. There is no
+  `Generic1`, and the types of `GHC.Generics` are instances of no classes
+  but the few derived for them. The library's own types that are
+  instances are `()`, `Bool`, `Ordering`, `Maybe`, `Either`, lists and
+  tuples of two and three. The package a type is of is always said to be
+  `main`.
+- A method's default with a type of its own is a function of its own, and
+  an instance that leaves the method out has the method be it. An
+  instance derived with no methods, by `deriving anyclass`, asks nothing
+  of the type's parameters, where GHC works out what the defaults ask: so
+  for a type with parameters it is given apart, with its context.
+- Where two types are made the same and one is a function from types
+  applied to types not yet known, that one is no longer taken apart as a
+  type applied to types: it waits. Every program built as a package now
+  has a function from types in it, `Rep`, and so is checked the slower
+  way, by about a seventh in the tests.
 
 **M8, kinds.**
 

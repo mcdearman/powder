@@ -3,7 +3,7 @@
 
 -- | The forms of a declaration. Import qualified.
 module Powder.Syntax.AST.Decl
-  ( Decl (Data, Clause, PatBind, Signature, Fixity, TypeSynonym, Class, Instance, Import, Default, Foreign, ForeignExport, PatternSynonym, PatternSignature, StandaloneDeriving, KindSignature, RoleAnnotation, TypeFamily, TypeInstance),
+  ( Decl (Data, Clause, PatBind, Signature, Fixity, TypeSynonym, Class, Instance, Import, Default, Foreign, ForeignExport, PatternSynonym, PatternSignature, StandaloneDeriving, KindSignature, RoleAnnotation, TypeFamily, TypeInstance, DefaultSignature),
     Assoc (..),
     Listed (..),
     Subordinates (..),
@@ -152,6 +152,15 @@ patBind r = (child 0 r, child 0 r)
 pattern Signature :: [Name] -> Type -> Decl
 pattern Signature names ty <- (kindIs [K.TypeSig] -> Just (signature -> (names, ty)))
 
+-- | @default m :: type@, in a class: the type a method's default has.
+pattern DefaultSignature :: [Name] -> Type -> Decl
+pattern DefaultSignature names ty <- (kindIs [K.DefaultSig] -> Just (defaultSignature -> (names, ty)))
+
+defaultSignature :: Red.Red -> ([Name], Type)
+defaultSignature r = case [n | n <- Red.nodes r, Red.kind n == K.TypeSig] of
+  n : _ -> signature n
+  [] -> signature r
+
 signature :: Red.Red -> ([Name], Type)
 signature r = ([nameOf n | n <- Red.nodes r, Red.kind n == K.Binder], child 0 r)
 
@@ -266,7 +275,7 @@ patternBuilder (syntax -> r) = [(child 0 d, child 0 d) | w <- Red.nodes r, Red.k
 pattern PatternSignature :: Decl
 pattern PatternSignature <- (kindIs [K.PatSynSig] -> Just _)
 
-{-# COMPLETE Data, Clause, PatBind, Signature, Fixity, TypeSynonym, Class, Instance, Import, Default, Foreign, ForeignExport, PatternSynonym, PatternSignature, StandaloneDeriving, KindSignature, RoleAnnotation, TypeFamily, TypeInstance #-}
+{-# COMPLETE Data, Clause, PatBind, Signature, Fixity, TypeSynonym, Class, Instance, Import, Default, Foreign, ForeignExport, PatternSynonym, PatternSignature, StandaloneDeriving, KindSignature, RoleAnnotation, TypeFamily, TypeInstance, DefaultSignature #-}
 
 -- | A function from types to a type: its name, its variables, and if it
 -- is declared with all its equations those, each what the function is

@@ -188,7 +188,8 @@ compile slot seen unseen units = do
                 linkWired = maybe (linkWired linked) (const Nothing) (linkWired (ifaceLinkage below)),
                 linkFields = mineOf (linkFields linked),
                 linkFixities = mineOf (linkFixities linked),
-                linkStrict = mineOf (linkStrict linked)
+                linkStrict = mineOf (linkStrict linked),
+                linkDefaults = mineOf (linkDefaults linked)
               },
           ifaceNames = mineOf (HIR.programNames hir),
           ifaceOrigins = IntMap.fromList [(nodeKey (instanceId i), o) | i <- instances, Just o <- [HIR.origin hir (instanceId i)]],

@@ -148,6 +148,8 @@ data SyntaxKind
   | -- | @foreign export ccall "entity" name :: type@
     ForeignExportDecl
   | TypeSig
+  | -- | @default m :: type@, in a class: the type of a method's default.
+    DefaultSig
   | FixityDecl
   | -- | @pattern P x = ...@ or @pattern P x <- ...@: a name for a pattern.
     PatSynDecl

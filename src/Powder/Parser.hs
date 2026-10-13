@@ -664,7 +664,7 @@ classDecl kind = do
   when wheres $ do
     w <- open
     advance
-    _ <- block True (KwType : declStarts) member
+    _ <- block True (KwType : KwDefault : declStarts) member
     close_ w WhereClause
   close_ m kind
   where
@@ -673,7 +673,12 @@ classDecl kind = do
     -- the class and given an equation in each instance.
     member = do
       associated <- at KwType
-      if not associated
+      -- With DefaultSignatures a method's default may be of a type of
+      -- its own, that asks more than the method's does.
+      defaulted <- (&&) <$> at KwDefault <*> on DefaultSignatures
+      if defaulted
+        then open >>= \d -> advance >> localDecl >> close_ d DefaultSig
+        else if not associated
         then localDecl
         else do
           a <- open
@@ -865,6 +870,14 @@ typeHead = do
       if quoted then expect_ ConId >> expect_ Backquote else advance
       binder'
     LParen : op : RParen : _ | operators && op `elem` [ConSym, VarSym] -> replicateM_ 3 advance >> binders
+    -- An operator between two in parentheses, and then more variables.
+    LParen : VarId : op : _ | operators && op `elem` [ConSym, VarSym] -> do
+      advance
+      binder'
+      advance
+      binder'
+      expect_ RParen
+      binders
     _ -> expect_ ConId >> binders
   where
     binder' = do

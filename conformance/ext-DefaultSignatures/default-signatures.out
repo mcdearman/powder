@@ -1,0 +1,10 @@
+thing <Red>
+number <7>
+secret <hidden>
+thing <[Red,Green]>
+pair <(Green,'x')>
+thing <Circle 3>
+1,2,3 4
+'x' 0
+'a' 'c' 'e' 3
+(True,42)
