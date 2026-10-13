@@ -1213,6 +1213,21 @@ primitive p = do
     Coerce -> Fun a b
     IntNarrow -> Fun integer integer
     FloatNarrow -> Fun double double
+    IntAnd -> arithmetic
+    IntOr -> arithmetic
+    IntXor -> arithmetic
+    IntShiftL -> arithmetic
+    IntShiftR -> arithmetic
+    BitsCount -> Fun integer integer
+    BitsLowest -> Fun integer integer
+    BitsHighest -> Fun integer integer
+    -- Bytes have no type here: the library gives them one, over this.
+    BytesNew -> Fun integer (App io integer)
+    BytesWrite -> Fun integer (Fun integer (Fun integer (App io unit)))
+    BytesCopy -> Fun integer (Fun integer (Fun integer (Fun integer (Fun integer (App io unit)))))
+    BytesRead -> arithmetic
+    BytesLength -> Fun integer integer
+    BytesCompare -> Fun integer (Fun integer (Fun integer (Fun integer (Fun integer integer))))
     FloatShowAt -> Fun double (Fun integer integer)
     CharCategory -> Fun integer integer
     CharUpper -> Fun integer integer

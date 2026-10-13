@@ -57,6 +57,8 @@ enum Value {
     /// A consumer: a frame on the stack of them, by its chunk and its
     /// place there. It is used once, and is not counted.
     Frame(u32, u32),
+    /// Bytes side by side, of a number fixed when they are made.
+    Bytes(Rc<RefCell<Vec<u8>>>),
 }
 
 /// The values a constructed value or an object holds. Most hold few, and
@@ -116,6 +118,8 @@ enum Prim {
     ArgCount, ArgChar, FileSeek, FileTruncate, FileFlush, IsTerminal, EnvChar, CellNew, CellRead, CellWrite,
     PeekInt, PeekDouble, PokeInt, PokeDouble, ErrnoGet, ErrnoSet, CallbackInt, CallbackDouble, CallbackReturnInt,
     CallbackReturnDouble,
+    IntAnd, IntOr, IntXor, IntShiftL, IntShiftR, BitsCount, BitsLowest, BitsHighest,
+    BytesNew, BytesWrite, BytesCopy, BytesRead, BytesLength, BytesCompare,
 }
 
 fn prim_named(name: &str) -> Result<Prim, String> {
@@ -141,6 +145,11 @@ fn prim_named(name: &str) -> Result<Prim, String> {
         "primPokeDouble" => PokeDouble, "primErrnoGet" => ErrnoGet, "primErrnoSet" => ErrnoSet,
         "primCallbackInt" => CallbackInt, "primCallbackDouble" => CallbackDouble,
         "primCallbackReturnInt" => CallbackReturnInt, "primCallbackReturnDouble" => CallbackReturnDouble,
+        "primIntAnd" => IntAnd, "primIntOr" => IntOr, "primIntXor" => IntXor, "primIntShiftL" => IntShiftL,
+        "primIntShiftR" => IntShiftR, "primBitsCount" => BitsCount, "primBitsLowest" => BitsLowest,
+        "primBitsHighest" => BitsHighest, "primBytesNew" => BytesNew, "primBytesWrite" => BytesWrite,
+        "primBytesCopy" => BytesCopy, "primBytesRead" => BytesRead, "primBytesLength" => BytesLength,
+        "primBytesCompare" => BytesCompare,
         other => return Err(format!("the image uses a primitive this machine has not got: {other}")),
     })
 }
@@ -449,6 +458,34 @@ fn big(v: &Value) -> Result<BigInt, String> {
     }
 }
 
+/// The low sixty-four bits of an integer.
+fn low(v: &Value) -> Result<u64, String> {
+    match v {
+        Value::Int(i) => Ok(*i as u64),
+        _ => Ok(big(v)?.mod_floor(&(BigInt::one() << 64)).to_u64().unwrap_or(0)),
+    }
+}
+
+/// Bytes, and a run of them that is all there: where it starts and ends.
+fn bytes(v: &Value) -> Result<&Rc<RefCell<Vec<u8>>>, String> {
+    match v {
+        Value::Bytes(b) => Ok(b),
+        _ => Err("type error: expected bytes".into()),
+    }
+}
+
+fn run(of: &Rc<RefCell<Vec<u8>>>, at: &Value, count: usize) -> Result<std::ops::Range<usize>, String> {
+    let at = usize::try_from(small(at)?).map_err(|_| "bytes: out of range")?;
+    match at.checked_add(count) {
+        Some(end) if end <= of.borrow().len() => Ok(at..end),
+        _ => Err("bytes: out of range".into()),
+    }
+}
+
+fn how_many(v: &Value) -> Result<usize, String> {
+    usize::try_from(small(v)?).map_err(|_| "bytes: out of range".into())
+}
+
 fn small(v: &Value) -> Result<i64, String> {
     match v {
         Value::Int(i) => Ok(*i),
@@ -726,6 +763,56 @@ impl Machine {
                 Value::Int(low as i64)
             }
             (IntToDouble, [x]) => Value::Double(big(x)?.to_f64().unwrap_or(f64::NAN)),
+            (IntAnd, [Value::Int(x), Value::Int(y)]) => Value::Int(x & y),
+            (IntOr, [Value::Int(x), Value::Int(y)]) => Value::Int(x | y),
+            (IntXor, [Value::Int(x), Value::Int(y)]) => Value::Int(x ^ y),
+            (IntAnd, [x, y]) => integer(big(x)? & big(y)?),
+            (IntOr, [x, y]) => integer(big(x)? | big(y)?),
+            (IntXor, [x, y]) => integer(big(x)? ^ big(y)?),
+            (IntShiftL, [x, by]) => {
+                let by = small(by)?.max(0);
+                match x {
+                    // Where nothing is moved off the end, it is as it was.
+                    Value::Int(x) if by < 63 && (x << by) >> by == *x => Value::Int(x << by),
+                    _ => integer(big(x)? << usize::try_from(by).map_err(|_| "a number is moved too far")?),
+                }
+            }
+            (IntShiftR, [Value::Int(x), by]) => Value::Int(x >> small(by)?.clamp(0, 63)),
+            (IntShiftR, [x, by]) => integer(big(x)? >> usize::try_from(small(by)?.max(0)).map_err(|_| "a number is moved too far")?),
+            (BitsCount, [x]) => Value::Int(low(x)?.count_ones() as i64),
+            (BitsLowest, [x]) => Value::Int(low(x)?.trailing_zeros() as i64),
+            (BitsHighest, [x]) => Value::Int(63 - low(x)?.leading_zeros() as i64),
+            (BytesNew, [n]) => Value::Bytes(Rc::new(RefCell::new(vec![0u8; usize::try_from(small(n)?).map_err(|_| "bytes cannot be fewer than none")?]))),
+            (BytesLength, [b]) => Value::Int(bytes(b)?.borrow().len() as i64),
+            (BytesRead, [b, at]) => {
+                let b = bytes(b)?;
+                let place = run(b, at, 1)?;
+                let byte = b.borrow()[place.start];
+                Value::Int(byte as i64)
+            }
+            (BytesWrite, [b, at, x]) => {
+                let b = bytes(b)?;
+                let place = run(b, at, 1)?;
+                b.borrow_mut()[place.start] = low(x)? as u8;
+                UNIT
+            }
+            (BytesCopy, [to, at, from, at_from, count]) => {
+                let (to, from, count) = (bytes(to)?, bytes(from)?, how_many(count)?);
+                let (into, out_of) = (run(to, at, count)?, run(from, at_from, count)?);
+                // The two may be the same bytes.
+                if Rc::ptr_eq(to, from) {
+                    to.borrow_mut().copy_within(out_of, into.start);
+                } else {
+                    to.borrow_mut()[into].copy_from_slice(&from.borrow()[out_of]);
+                }
+                UNIT
+            }
+            (BytesCompare, [one, at, other, at_other, count]) => {
+                let (one, other, count) = (bytes(one)?, bytes(other)?, how_many(count)?);
+                let (a, b) = (run(one, at, count)?, run(other, at_other, count)?);
+                let order = one.borrow()[a].cmp(&other.borrow()[b]);
+                Value::Int(order as i64)
+            }
             (DoubleAdd, [x, y]) => Value::Double(double(x)? + double(y)?),
             (DoubleSub, [x, y]) => Value::Double(double(x)? - double(y)?),
             (DoubleMul, [x, y]) => Value::Double(double(x)? * double(y)?),

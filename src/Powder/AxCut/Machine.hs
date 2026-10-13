@@ -25,7 +25,9 @@ import Powder.AxCut
 import Powder.Core (ConInfo (..), Export (..), Name, Prim (..), foreignArity, primName)
 import Powder.Files (Files, newFiles)
 import qualified Powder.Files as Files
-import Powder.SKI.Eval (Hooks (..), RuntimeError (..))
+import Data.Array.IO (IOUArray)
+import Data.Bits (countLeadingZeros, countTrailingZeros, popCount, shiftL, shiftR, xor, (.&.), (.|.))
+import Powder.SKI.Eval (Hooks (..), RuntimeError (..), byteAt, byteWrite, bytesCompare, bytesCopy, bytesLength, bytesNew)
 import Powder.Foreign (callForeign)
 import qualified Powder.Foreign as Foreign
 import System.Exit
@@ -36,6 +38,8 @@ data Value
   | -- | A constructed value: which constructor of its type, and its fields.
     VData Int [Value]
   | VObject (IORef Cell)
+  | -- | Bytes side by side.
+    VBytes (IOUArray Int Word8)
 
 -- | What an object is. A thunk is one of the last three in turn.
 data Cell
@@ -247,6 +251,20 @@ primitive m p given = case (p, given) of
   (IntLt, [VInt a, VInt b]) -> bool (a < b)
   (IntLe, [VInt a, VInt b]) -> bool (a <= b)
   (IntNarrow, [VInt a]) -> int (toInteger (fromInteger a :: Int64))
+  (IntAnd, [VInt a, VInt b]) -> int (a .&. b)
+  (IntOr, [VInt a, VInt b]) -> int (a .|. b)
+  (IntXor, [VInt a, VInt b]) -> int (xor a b)
+  (IntShiftL, [VInt a, VInt by]) -> int (shiftL a (fromInteger (max 0 by)))
+  (IntShiftR, [VInt a, VInt by]) -> int (shiftR a (fromInteger (max 0 by)))
+  (BitsCount, [VInt a]) -> int (toInteger (popCount (fromInteger a :: Word64)))
+  (BitsLowest, [VInt a]) -> int (toInteger (countTrailingZeros (fromInteger a :: Word64)))
+  (BitsHighest, [VInt a]) -> int (toInteger (63 - countLeadingZeros (fromInteger a :: Word64)))
+  (BytesNew, [VInt n]) -> VBytes <$> bytesNew n
+  (BytesWrite, [VBytes to, VInt at, VInt x]) -> unit <$ byteWrite to at x
+  (BytesCopy, [VBytes to, VInt at, VBytes from, VInt at', VInt count]) -> unit <$ bytesCopy to at from at' count
+  (BytesRead, [VBytes from, VInt at]) -> byteAt from at >>= int . toInteger
+  (BytesLength, [VBytes a]) -> bytesLength a >>= int
+  (BytesCompare, [VBytes one, VInt at, VBytes other, VInt at', VInt count]) -> bytesCompare one at other at' count >>= int
   (IntToDouble, [VInt a]) -> double (fromInteger a)
   (DoubleAdd, [VDouble a, VDouble b]) -> double (a + b)
   (DoubleSub, [VDouble a, VDouble b]) -> double (a - b)
