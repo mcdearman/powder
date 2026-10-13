@@ -11,7 +11,8 @@
 --   definition of its own, and a method applied to such a dictionary is
 --   that definition.
 -- * A coercion applied to something is the thing.
--- * A definition that is only another name for something is that thing.
+-- * A definition that is only another name for something is that thing,
+--   at the top of a program and inside a definition.
 -- * A small function that binds nothing but its parameters is written
 --   out where it is given them all, if doing so does nothing twice.
 --
@@ -103,7 +104,11 @@ again defs = map (second go) defs
       Var x | Just what <- Map.lookup x aliases -> what
       App f a -> reduce (App (go f) (go a))
       Lam x body -> Lam x (go body)
-      Let (NonRec x bound) body -> Let (NonRec x (go bound)) (go body)
+      -- A name for what is only a name is that name, so long as nothing
+      -- under it is called the same.
+      Let (NonRec x bound) body -> case go bound of
+        bound' | atomic bound', not (rebound bound' body) -> go (renamed x bound' body)
+        bound' -> Let (NonRec x bound') (go body)
       Let (Rec bs) body -> Let (Rec (map (second go) bs)) (go body)
       Case scrutinee alts -> Case (go scrutinee) [Alt c xs (go body) | Alt c xs body <- alts]
       _ -> e
@@ -125,6 +130,37 @@ again defs = map (second go) defs
             and [atomic a || count p body <= 1 | (p, a) <- zip ps arguments] ->
               foldl App (substitute (Map.fromList (zip ps arguments)) body) (drop (length ps) arguments)
         _ -> e
+
+-- | Whether a name, if that is what something is, is bound anew
+-- somewhere in another thing.
+rebound :: Core -> Core -> Bool
+rebound = \case
+  Var y -> binds y
+  _ -> const False
+  where
+    binds y = \case
+      App f a -> binds y f || binds y a
+      Lam x body -> x == y || binds y body
+      Let (NonRec x bound) body -> x == y || binds y bound || binds y body
+      Let (Rec bs) body -> any ((== y) . fst) bs || any (binds y . snd) bs || binds y body
+      Case scrutinee alts -> binds y scrutinee || or [y `elem` xs || binds y body | Alt _ xs body <- alts]
+      _ -> False
+
+-- | Something with a thing in place of a name, wherever the name is not
+-- bound anew.
+renamed :: Name -> Core -> Core -> Core
+renamed x what = go
+  where
+    go = \case
+      Var y -> if y == x then what else Var y
+      App f a -> App (go f) (go a)
+      Lam y body -> Lam y (if y == x then body else go body)
+      Let (NonRec y bound) body -> Let (NonRec y (go bound)) (if y == x then body else go body)
+      Let (Rec bs) body
+        | any ((== x) . fst) bs -> Let (Rec bs) body
+        | otherwise -> Let (Rec [(y, go bound) | (y, bound) <- bs]) (go body)
+      Case scrutinee alts -> Case (go scrutinee) [Alt c xs (if x `elem` xs then body else go body) | Alt c xs body <- alts]
+      e -> e
 
 -- | Whether something binds no names: it has no function in it, no
 -- definition, and takes nothing apart that has fields.
