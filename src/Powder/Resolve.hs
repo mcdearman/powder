@@ -137,7 +137,9 @@ data St = St
     kindedTypes :: [(Type.Type, KindSyntax)],
     -- | The names constraints were given, by 'NameId': each its
     -- parameters and the constraints it stands for.
-    constraintSynonyms :: Table ([NameId], [Constraint])
+    constraintSynonyms :: Table ([NameId], [Constraint]),
+    -- | The functions from types to a type, by 'NameId'.
+    families :: Table Family
   }
 
 type M = ReaderT Env (State St)
@@ -220,13 +222,13 @@ resolveAfter seed languages lenient sources extra = case reverse (problems final
   [] -> Right (program, linked {linkFields = fields final, linkFixities = fixityTable final, linkStrict = strict final})
   found -> Left found
   where
-    program = Program (bindings ++ reverse (generated final)) (names final) (origins final) (signatures final) (reverse (dataTypes final)) (synonyms final) (classes final) (reverse (instances final)) builtins spelled (defaults final) (newtypes final) (maybe [] seedModules seed ++ [(file, n) | (file, n, _) <- sources] ++ [(file, root) | Just (_, _, file, _) <- [extra]]) (maybe [] seedImports seed ++ [(n, [name | (name, _, _, _) <- importsOf n]) | n <- moduleNames]) (maybe (-1) seedFloor seed) (partials final) (kindsSaid final) (reverse (kindedTypes final))
+    program = Program (bindings ++ reverse (generated final)) (names final) (origins final) (signatures final) (reverse (dataTypes final)) (synonyms final) (classes final) (reverse (instances final)) builtins spelled (defaults final) (newtypes final) (maybe [] seedModules seed ++ [(file, n) | (file, n, _) <- sources] ++ [(file, root) | Just (_, _, file, _) <- [extra]]) (maybe [] seedImports seed ++ [(n, [name | (name, _, _, _) <- importsOf n]) | n <- moduleNames]) (maybe (-1) seedFloor seed) (partials final) (kindsSaid final) (reverse (kindedTypes final)) (families final)
     ((linked, (bindings, builtins)), final) =
       runState
         (runReaderT run (Env Map.empty Map.empty Map.empty Map.empty Map.empty Map.empty "" Nothing "" spelled Set.empty Map.empty Map.empty Map.empty Map.empty languages False))
         initial
     initial = case seed of
-      Nothing -> St 0 IntMap.empty IntMap.empty IntMap.empty IntMap.empty [] IntMap.empty [] IntMap.empty [] [] IntMap.empty [] IntMap.empty [] [] [] [] IntMap.empty IntMap.empty [] IntMap.empty [] IntMap.empty
+      Nothing -> St 0 IntMap.empty IntMap.empty IntMap.empty IntMap.empty [] IntMap.empty [] IntMap.empty [] [] IntMap.empty [] IntMap.empty [] [] [] [] IntMap.empty IntMap.empty [] IntMap.empty [] IntMap.empty IntMap.empty
       Just s ->
         St
           (seedFloor s)
@@ -254,6 +256,7 @@ resolveAfter seed languages lenient sources extra = case reverse (problems final
           []
           IntMap.empty
           []
+          IntMap.empty
           IntMap.empty
     -- What the packages before this one let be known.
     before = maybe mempty seedLinkage seed
@@ -283,7 +286,8 @@ resolveAfter seed languages lenient sources extra = case reverse (problems final
       (wiredTypes, wiredConstructors, wiredBuiltins) <- maybe wiredIn pure (linkWired before)
       -- Every name a module declares at its top, before what any of them
       -- is: types and their constructors, classes, and values.
-      declaredTypes <- forM sources $ \(file, n, m) -> inPart n file . fmap concat . forM (moduleDecls m) $ \d -> within d $ case d of
+      declaredTypes <- forM sources $ \(file, n, m) -> inPart n file . fmap concat . forM (moduleDecls m ++ concat [ds | Decl.Class _ ds <- moduleDecls m]) $ \d -> within d $ case d of
+        Decl.TypeFamily t _ _ -> (\name -> [(t, name, [], [])]) <$> newName t TypeConstructor
         Decl.Data t _ cs -> do
           name <- newName t TypeConstructor
           ids <- forM cs (\(Syntax.Constructor c _) -> (,) c . NameId <$> fresh)
@@ -425,6 +429,12 @@ resolveAfter seed languages lenient sources extra = case reverse (problems final
       -- before the instances that need to know their methods.
       forM_ parts $ \((file, n, m), ts, _) ->
         inModule n file (mapM_ (typeDecl (Map.fromList [(t, (x, map snd cs)) | (t, x, cs, _) <- ts])) (moduleDecls m))
+      -- The functions from types to a type, and then their equations,
+      -- which may be anywhere: beside them, in a class, in an instance.
+      forM_ sources $ \(file, n, m) ->
+        inModule n file (mapM_ familyDecl (moduleDecls m ++ concat [ds | Decl.Class _ ds <- moduleDecls m]))
+      forM_ sources $ \(file, n, m) ->
+        inModule n file (mapM_ familyEquation (moduleDecls m ++ concat [ds | Decl.Instance _ ds <- moduleDecls m]))
       forM_ parts $ \((file, n, m), _, cs) ->
         inModule n file (mapM_ (classDecl (Map.fromList [(c, x) | (c, x, _) <- cs])) (moduleDecls m))
       -- What a file may not say twice, or out of place; and what may not
@@ -1041,6 +1051,52 @@ typedShape = \case
       SType.Var v -> Just v
       SType.Paren inner -> variable' inner
       _ -> Nothing
+
+-- | Note a function from types to a type, with its equations if it is
+-- declared with them all.
+familyDecl :: Syntax.Decl -> M ()
+familyDecl d = within d $ case d of
+  Decl.TypeFamily t parameters equations ->
+    asks (Map.lookup t . envTypes) >>= \case
+      Nothing -> pure ()
+      Just f -> do
+        given <- mapM (uncurry familyEquationOf) (fromMaybe [] equations)
+        forM_ given $ \(f', _) -> unless (f' == Just f) (complain ("an equation of " ++ t ++ " is of " ++ t ++ " applied to types"))
+        modify (\st -> st {families = IntMap.insert (nameKey f) (Family (length parameters) (isJust equations) (map snd given)) (families st)})
+  _ -> pure ()
+
+-- | Note an equation of a function from types to a type that is given
+-- apart from it.
+familyEquation :: Syntax.Decl -> M ()
+familyEquation d = within d $ case d of
+  Decl.TypeInstance left right ->
+    familyEquationOf left right >>= \case
+      (Just f, equation) -> do
+        known <- gets (IntMap.lookup (nameKey f) . families)
+        case known of
+          Just family | not (familyClosed family) -> modify (\st -> st {families = IntMap.insert (nameKey f) family {familyEquations = familyEquations family ++ [equation]} (families st)})
+          Just _ -> complain "this is a function from types whose equations are all where it is declared"
+          Nothing -> complain "an equation is given for what is not a function from types to a type"
+      (Nothing, _) -> complain "an equation is of a function from types applied to types"
+  _ -> pure ()
+
+-- | An equation of a function from types: the function, if what is on
+-- the left is one applied to types, and the equation, whose type
+-- variables are its own.
+familyEquationOf :: SType.Type -> SType.Type -> M (Maybe NameId, ([NameId], [Type.Type], Type.Type))
+familyEquationOf left right = do
+  let (named, arguments) = case left of
+        SType.App (SType.Con f) as -> (Just f, as)
+        SType.Con f -> (Just f, [])
+        SType.Paren (SType.App (SType.Con f) as) -> (Just f, as)
+        SType.Operators [a, b] [f] -> (Just f, [a, b])
+        _ -> (Nothing, [])
+  f <- maybe (pure Nothing) (\x -> asks (Map.lookup x . envTypes)) named
+  scope <- forM (nub (concatMap typeVariables (arguments ++ [right]))) (\x -> (,) x <$> newName x TypeVariable)
+  withTypeVariables scope $ do
+    arguments' <- mapM type' arguments
+    right' <- type' right
+    pure (f, (map snd scope, arguments', right'))
 
 -- | What a declaration of a type says it is, given the names this module's
 -- types were given. Gives the constructors it declares.
@@ -2223,6 +2279,8 @@ grouped ds = map gather (NE.groupBy sameFunction (concatMap binds ds))
       Decl.StandaloneDeriving {} -> []
       Decl.KindSignature {} -> []
       Decl.RoleAnnotation -> []
+      Decl.TypeFamily {} -> []
+      Decl.TypeInstance {} -> []
     sameFunction (Left (_, f, _, _)) (Left (_, g, _, _)) = f == g
     sameFunction _ _ = False
     gather group = case NE.head group of

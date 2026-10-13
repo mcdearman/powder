@@ -192,6 +192,7 @@ implemented =
         StrictData,
         TupleSections,
         TypeApplications,
+        TypeFamilies,
         TypeOperators,
         TypeSynonymInstances,
         UndecidableInstances,

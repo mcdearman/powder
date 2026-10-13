@@ -3,7 +3,7 @@
 
 -- | The forms of a declaration. Import qualified.
 module Powder.Syntax.AST.Decl
-  ( Decl (Data, Clause, PatBind, Signature, Fixity, TypeSynonym, Class, Instance, Import, Default, Foreign, ForeignExport, PatternSynonym, PatternSignature, StandaloneDeriving, KindSignature, RoleAnnotation),
+  ( Decl (Data, Clause, PatBind, Signature, Fixity, TypeSynonym, Class, Instance, Import, Default, Foreign, ForeignExport, PatternSynonym, PatternSignature, StandaloneDeriving, KindSignature, RoleAnnotation, TypeFamily, TypeInstance),
     Assoc (..),
     Listed (..),
     Subordinates (..),
@@ -266,7 +266,29 @@ patternBuilder (syntax -> r) = [(child 0 d, child 0 d) | w <- Red.nodes r, Red.k
 pattern PatternSignature :: Decl
 pattern PatternSignature <- (kindIs [K.PatSynSig] -> Just _)
 
-{-# COMPLETE Data, Clause, PatBind, Signature, Fixity, TypeSynonym, Class, Instance, Import, Default, Foreign, ForeignExport, PatternSynonym, PatternSignature, StandaloneDeriving, KindSignature, RoleAnnotation #-}
+{-# COMPLETE Data, Clause, PatBind, Signature, Fixity, TypeSynonym, Class, Instance, Import, Default, Foreign, ForeignExport, PatternSynonym, PatternSignature, StandaloneDeriving, KindSignature, RoleAnnotation, TypeFamily, TypeInstance #-}
+
+-- | A function from types to a type: its name, its variables, and if it
+-- is declared with all its equations those, each what the function is
+-- applied to and what that is.
+pattern TypeFamily :: Name -> [Name] -> Maybe [(Type, Type)] -> Decl
+pattern TypeFamily name parameters equations <- (kindIs [K.TypeFamilyDecl] -> Just (typeFamily -> (name, parameters, equations)))
+
+typeFamily :: Red.Red -> (Name, [Name], Maybe [(Type, Type)])
+typeFamily r = (typeNameOf r, parameters, equations)
+  where
+    -- The word family is a name like any other to the tree.
+    parameters = case (drop 1 (spelled r), parametersOf r) of
+      ((K.VarId, "family") : _, "family" : rest) -> rest
+      (_, vs) -> vs
+    equations = case [w | w <- Red.nodes r, Red.kind w == K.WhereClause] of
+      w : _ -> Just [(a, b) | e <- Red.nodes w, Red.kind e == K.TypeEquation, [a, b] <- [children e]]
+      [] -> Nothing
+
+-- | An equation of a type family, apart from its declaration: what the
+-- function is applied to, and what that is.
+pattern TypeInstance :: Type -> Type -> Decl
+pattern TypeInstance left right <- (kindIs [K.TypeInstanceDecl] -> Just (children -> [left, right]))
 
 -- | What a type's parameters are to it, which is read and not used.
 pattern RoleAnnotation :: Decl

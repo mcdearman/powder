@@ -165,6 +165,10 @@ data Env s = Env
     envRefined :: IntMap.IntMap (Type s),
     -- | The types such constructors make their type at, by 'NameId'.
     envIndexed :: IntMap.IntMap [Syntax.Type],
+    -- | Two types that are to be the same and could not yet be seen to
+    -- be, one of them being a function from types applied to types not
+    -- yet known. Tried again as more is known.
+    refDeferred :: STRef s [(Type s, Type s, Maybe NodeId)],
     -- | The constructors that have type variables of their own, or a
     -- context: those, by 'NameId'.
     envExistentials :: IntMap.IntMap ([NameId], [Constraint]),
@@ -196,9 +200,10 @@ typecheckAfter theirs general program = runST $ do
   uses <- newSTRef []
   matched <- newSTRef []
   refining <- newSTRef []
+  deferred <- newSTRef []
   literals <- newSTRef []
   let instances = IntMap.fromListWith (flip (++)) [(nameKey (instanceClass i), [i]) | i <- programInstances program]
-  runReaderT run (Env program IntMap.empty [] Nothing [] IntSet.empty instances general moduleOf reach next types schemes problems wanted evidence parameters uses matched refining IntMap.empty indexed existentials literals)
+  runReaderT run (Env program IntMap.empty [] Nothing [] IntSet.empty instances general moduleOf reach next types schemes problems wanted evidence parameters uses matched refining IntMap.empty indexed deferred existentials literals)
   foundTypes <- readSTRef types >>= traverse Unify.zonk
   foundSchemes <- readSTRef schemes >>= traverse zonkPoly
   foundEvidence <- readSTRef evidence >>= traverse (mapM zonkEvidence)
@@ -379,13 +384,97 @@ withSchemes binds = local (\env -> env {envSchemes = IntMap.union (IntMap.fromLi
 -- | Make two types the same. If they cannot be, say so and leave them be.
 unify :: Type s -> Type s -> Tc s ()
 unify expected actual = do
-  expected' <- refined expected
-  actual' <- refined actual
+  expected' <- refined expected >>= normalise
+  actual' <- refined actual >>= normalise
   ok <- lift (Unify.unify expected' actual')
   unless ok $ do
-    e <- showType expected'
-    a <- showType actual'
-    complain ("expected " ++ e ++ ", but this has type " ++ a)
+    -- One of them may be a function from types whose types are not
+    -- known yet: then whether they are the same is asked again later.
+    waiting <- (||) <$> stuck expected' <*> stuck actual'
+    if waiting
+      then asks envNode >>= \n -> note refDeferred ((expected', actual', n) :)
+      else do
+        e <- showType expected'
+        a <- showType actual'
+        complain ("expected " ++ e ++ ", but this has type " ++ a)
+
+-- | Whether a type has in it a function from types applied to types.
+stuck :: Type s -> Tc s Bool
+stuck t = do
+  known <- asks (programFamilies . envProgram)
+  if IntMap.null known
+    then pure False
+    else do
+      let go = \case
+            Types.Con c -> IntMap.member (nameKey c) known
+            Types.App f a -> go f || go a
+            Types.Fun a b -> go a || go b
+            _ -> False
+      go <$> lift (Unify.zonk t)
+
+-- | Ask again of types that were to be the same and could not be seen
+-- to be. Says of those that still cannot whether they ever could.
+retry :: Bool -> Tc s ()
+retry final = do
+  ref <- asks refDeferred
+  pending <- lift (readSTRef ref <* writeSTRef ref [])
+  forM_ (reverse pending) $ \(a, b, n) -> local (\env -> env {envNode = n <|> envNode env}) $ do
+    a' <- normalise a
+    b' <- normalise b
+    ok <- lift (Unify.unify a' b')
+    unless ok $ do
+      waiting <- (||) <$> stuck a' <*> stuck b'
+      if waiting && not final
+        then note refDeferred ((a', b', n) :)
+        else do
+          e <- showType a'
+          f <- showType b'
+          complain ("expected " ++ e ++ ", but this has type " ++ f)
+
+-- | A type with every function from types in it that can be worked out,
+-- worked out: one is, where what it is applied to fits an equation of
+-- it. Of a function whose equations are all given, the first that fits,
+-- so long as those before it cannot.
+normalise :: Type s -> Tc s (Type s)
+normalise whole = do
+  known <- asks (programFamilies . envProgram)
+  if IntMap.null known then pure whole else go known (64 :: Int) whole
+  where
+    go known fuel t
+      | fuel <= 0 = pure t
+      | otherwise =
+          lift (Unify.shallow t) >>= \case
+            Fun a b -> Fun <$> go known fuel a <*> go known fuel b
+            other@(App _ _) -> applied' known fuel other
+            other@(Con _) -> applied' known fuel other
+            other -> pure other
+    applied' known fuel t = do
+      (hd, arguments) <- lift (Unify.spine t)
+      arguments' <- mapM (go known fuel) arguments
+      case hd of
+        Con f
+          | Just family <- IntMap.lookup (nameKey f) known,
+            length arguments' >= familyArity family -> do
+              let (own, rest) = splitAt (familyArity family) arguments'
+              reduce family own >>= \case
+                Just result -> go known (fuel - 1) (foldl App result rest)
+                Nothing -> pure (foldl App hd arguments')
+        Con c -> pure (constructed c arguments')
+        _ -> pure (foldl App hd arguments')
+    reduce family arguments = try (familyEquations family)
+      where
+        try [] = pure Nothing
+        try ((vs, left, right) : rest) = do
+          metas' <- forM vs (const unknown)
+          let scope = IntMap.fromList (zip (map nameKey vs) metas')
+          left' <- mapM (fromSyntaxIn scope) left
+          how <- lift (fitsApart [v | Meta v <- metas'] left' arguments)
+          case how of
+            Fits -> Just <$> fromSyntaxIn scope right
+            Misfits -> try rest
+            -- Whether this one is the one cannot be told yet, and where
+            -- they are all given a later one may not be taken before it.
+            Unsettled -> if familyClosed family then pure Nothing else try rest
 
 -- | A type with its type variables as they are known to be here: under
 -- the match of a constructor that says what some are, and in the
@@ -451,7 +540,7 @@ equalities given' = do
 -- | See a type as a function's: the types of its argument and its result.
 unifyFun :: Type s -> Tc s (Type s, Type s)
 unifyFun t =
-  (refined t >>= lift . Unify.shallow) >>= \case
+  (refined t >>= normalise >>= lift . Unify.shallow) >>= \case
     Fun a r -> pure (a, r)
     other -> do
       a <- unknown
@@ -523,7 +612,13 @@ data Fit = Fits | Misfits | Unsettled
   deriving (Eq)
 
 fit :: STRef s [Unify.Var s] -> Type s -> Type s -> ST s Fit
-fit free = go
+fit = fitWith False
+
+-- | The same, where a type variable of the program's is not known to be
+-- other than what the pattern has there: it stands for any type, and
+-- some type it could be may be that.
+fitWith :: Bool -> STRef s [Unify.Var s] -> Type s -> Type s -> ST s Fit
+fitWith open free = go
   where
     go pattern'' target = do
       p <- Unify.shallow pattern''
@@ -542,7 +637,9 @@ fit free = go
         (Meta _, _) -> pure Unsettled
         (_, Meta _) -> pure Unsettled
         (Con a, Con b) -> pure (if a == b then Fits else Misfits)
-        (Rigid a, Rigid b) -> pure (if a == b then Fits else Misfits)
+        (Rigid a, Rigid b) | a == b -> pure Fits
+        (_, Rigid _) | open -> pure Unsettled
+        (Rigid _, Rigid _) -> pure Misfits
         (App f x, App g y) -> both <$> go f g <*> go x y
         (Fun a r, Fun b q) -> both <$> go a b <*> go r q
         _ -> pure Misfits
@@ -554,9 +651,16 @@ fit free = go
     _ /=? _ = True
 
 fits :: [Unify.Var s] -> [Type s] -> [Type s] -> ST s Fit
-fits own patterns targets = do
+fits = fitsWith False
+
+-- | How types fit the left of an equation of a function from types.
+fitsApart :: [Unify.Var s] -> [Type s] -> [Type s] -> ST s Fit
+fitsApart = fitsWith True
+
+fitsWith :: Bool -> [Unify.Var s] -> [Type s] -> [Type s] -> ST s Fit
+fitsWith open own patterns targets = do
   free <- newSTRef own
-  foldr worst Fits <$> zipWithM (fit free) patterns targets
+  foldr worst Fits <$> zipWithM (fitWith open free) patterns targets
   where
     worst a b
       | Misfits `elem` [a, b] = Misfits
@@ -588,6 +692,7 @@ opened inst = do
 -- string to be a number twice over, for the number and for the adding.
 solve :: [Wanted s] -> Tc s [Wanted s]
 solve wanted = do
+  retry False
   reported <- lift (newSTRef [])
   solveNoting reported wanted
 
@@ -622,7 +727,7 @@ solveNoting reported wanted = do
 
     one unrefined = do
       program <- asks envProgram
-      refinedTypes <- mapM refined (wantedTypes unrefined)
+      refinedTypes <- mapM (refined >=> normalise) (wantedTypes unrefined)
       let coercing = fmap (\i -> (nameText i, nameModule i)) (nameInfo program (wantedClass unrefined)) == Just ("Coercible", "Powder.Base")
       if coercing then coercion unrefined {wantedTypes = refinedTypes} else matching unrefined {wantedTypes = refinedTypes}
 
@@ -677,6 +782,16 @@ solveNoting reported wanted = do
     newtypeOf program t = listToMaybe [(dataParameters d, of') | d <- programDataTypes program, dataName d == t, [(k, [of'])] <- [dataConstructors d], k `elem` programNewtypes program]
 
     matching w = do
+      -- What is given may be of a function from types that cannot be
+      -- worked out, and is then what is wanted as it stands.
+      sought <- mapM (lift . Unify.zonk) (wantedTypes w)
+      said <- asks envGivens >>= filterM (\(Given c ts _) -> if c == wantedClass w then (== sought) <$> mapM (lift . Unify.zonk) ts else pure False)
+      waiting <- or <$> mapM stuck (wantedTypes w)
+      case said of
+        Given _ _ evidence : _ -> [] <$ lift (writeSTRef (wantedHole w) (Just evidence))
+        [] -> if waiting then pure [w] else matched' w
+
+    matched' w = do
       program <- asks envProgram
       known <- asks (IntMap.findWithDefault [] (nameKey (wantedClass w)) . envInstances) >>= filterM (visible w)
       given' <- asks (filter (\(Given c _ _) -> c == wantedClass w) . envGivens)
@@ -803,6 +918,7 @@ settle = do
       Meta _ -> void (lift (Unify.unify still (Con (builtinChar builtins))))
       _ -> pure ()
   unsettled <- solve waiting
+  retry True
   forM_ unsettled $ \w -> local (\env -> env {envNode = wantedNode w}) $ do
     let cls = maybe "?" nameText (nameInfo program (wantedClass w))
     complain ("the type of this is ambiguous: nothing says which instance of " ++ cls ++ " is meant")

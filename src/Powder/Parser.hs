@@ -516,7 +516,13 @@ topDecl = do
       standalone <- on StandaloneKindSignatures
       roles <- on RoleAnnotations
       role <- atText "role"
+      families <- on TypeFamilies
+      family <- atText "family"
       case kinds of
+        -- A function from types to a type: declared, with perhaps all its
+        -- equations; or one more equation of one that is open to them.
+        VarId : next : _ | families && family && next `elem` [ConId, LParen] -> advance >> typeFamily m
+        KwInstance : _ | families -> advance >> typeEquation >> close_ m TypeInstanceDecl
         -- What a type's parameters are to it, which is said and not used.
         VarId : next : _ | roles && role && next `elem` [ConId, LParen] -> restOfDecl >> close_ m RoleDecl
         _ : DoubleColon : _ | standalone -> do
@@ -658,9 +664,28 @@ classDecl kind = do
   when wheres $ do
     w <- open
     advance
-    _ <- block True declStarts localDecl
+    _ <- block True (KwType : declStarts) member
     close_ w WhereClause
   close_ m kind
+  where
+    -- What a class or an instance has in it: definitions and signatures,
+    -- and with TypeFamilies a type that goes with the class, declared in
+    -- the class and given an equation in each instance.
+    member = do
+      associated <- at KwType
+      if not associated
+        then localDecl
+        else do
+          a <- open
+          allowed <- on TypeFamilies
+          unless allowed (problem "a class has a type that goes with it only if TypeFamilies is on")
+          advance
+          worded <- (||) <$> at KwInstance <*> ((&&) <$> ((&&) <$> at VarId <*> atText "family") <*> ((`elem` [ConId, LParen]) <$> nth 1))
+          when worded advance
+          kinds <- ahead 0
+          if stoppedAt (scan [Equals] kinds) == Equals
+            then typeEquation >> close_ a TypeInstanceDecl
+            else typeFamily a
 
 dataDecl :: P ()
 dataDecl = do
@@ -799,6 +824,26 @@ dataDecl = do
     atField = do
       strict <- atStrict
       (strict ||) <$> atAny [ConId, QConId, VarId, LParen, LBracket]
+
+-- | The rest of the declaration of a type family, after the words: its
+-- name and variables, perhaps its kind, and perhaps after a where the
+-- equations that are all it has.
+typeFamily :: MarkOpened -> P ()
+typeFamily m = do
+  typeHead
+  kinded <- at DoubleColon
+  when kinded (advance >> kind)
+  closed <- at KwWhere
+  when closed $ do
+    w <- open
+    advance
+    _ <- block True typeStarts (open >>= \e -> typeEquation >> close_ e TypeEquation)
+    close_ w WhereClause
+  close_ m TypeFamilyDecl
+
+-- | @F Int [a] = a@
+typeEquation :: P ()
+typeEquation = type_ >> expect_ Equals >> type_
 
 -- | The head of a declaration of a type: its name and then its
 -- variables, or with TypeOperators an operator between two.

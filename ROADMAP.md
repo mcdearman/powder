@@ -220,9 +220,11 @@ What these do not yet do:
 - [x] MonoLocalBinds, which is accepted and changes nothing
 - [x] Coercible, with `Data.Coerce`
 - [x] DerivingVia
-- [ ] TypeFamilies
-- [ ] DeriveGeneric, with `GHC.Generics`, which needs TypeFamilies
-- [ ] DefaultSignatures
+- [x] TypeFamilies: functions from types to a type, open, with all their
+      equations, or going with a class
+- [ ] DeriveGeneric, with `GHC.Generics`. It needs the names of types and
+      constructors as types, which is M8's
+- [ ] DefaultSignatures, which is for the same
 
 GADTs are done without the implication solver the plan called for. Matching
 a constructor that makes its type at types of its own choosing says what
@@ -250,6 +252,16 @@ What these do not yet do:
 - An instance is derived by way of another type beside the type's
   declaration, and not apart from it; and not for a class of type
   constructors.
+- A function from types is worked out wherever two types are made the same
+  and wherever something is wanted of a type. Where what it is applied to is
+  not known yet, whether two types are the same is asked again later. That
+  one is some type cannot be given in a context: `(F a ~ Int) =>` is read
+  and not used.
+- There are no data families, no defaults for a type that goes with a class,
+  and nothing says a function from types is one to one.
+- A function from types and its equations are known in the package that
+  declares them, and not in another compiled apart.
+- Equations given apart are not checked against each other.
 
 **M8, kinds.** PolyKinds, DataKinds, type-level literals, Typeable and
 DeriveDataTypeable. This replaces `src/Powder/Kinds.hs`.

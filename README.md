@@ -378,6 +378,7 @@ means:
 | `OverloadedStrings` | A string written in a program is of any type in the class `IsString`, of `Data.String` |
 | `PartialTypeSignatures`, `NamedWildCards` | `f :: _ -> Int`: a type with parts left out, which are found |
 | `AllowAmbiguousTypes` | A method's type need not mention its class's variable: applying it to a type says which instance is meant |
+| `TypeFamilies` | `type family Elem c where Elem [a] = a`: a function from types to a type, with all its equations; or open, with `type instance`; or going with a class, `type Item f`, and given in each instance |
 | `UndecidableInstances` | Accepted, and says nothing: no instance is checked to be one whose use must end |
 
 And one of Powder's own, which only `Haskell2010` has on:
