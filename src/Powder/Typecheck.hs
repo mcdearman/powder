@@ -173,7 +173,12 @@ data Env s = Env
     -- context: those, by 'NameId'.
     envExistentials :: IntMap.IntMap ([NameId], [Constraint]),
     -- | The numbers.
-    refLiterals :: STRef s [NodeId]
+    refLiterals :: STRef s [NodeId],
+    -- | The type variables the patterns just checked made for the
+    -- constructors in them that have their own. Taken, as 'refMatched'
+    -- is, where the names the patterns bind come into scope: they are
+    -- known only there.
+    refOwn :: STRef s [Int]
   }
 
 type Tc s = ReaderT (Env s) (ST s)
@@ -202,8 +207,9 @@ typecheckAfter theirs general program = runST $ do
   refining <- newSTRef []
   deferred <- newSTRef []
   literals <- newSTRef []
+  ownVariables <- newSTRef []
   let instances = IntMap.fromListWith (flip (++)) [(nameKey (instanceClass i), [i]) | i <- programInstances program]
-  runReaderT run (Env program IntMap.empty [] Nothing [] IntSet.empty instances general moduleOf reach next types schemes problems wanted evidence parameters uses matched refining IntMap.empty indexed deferred existentials literals)
+  runReaderT run (Env program IntMap.empty [] Nothing [] IntSet.empty instances general moduleOf reach next types schemes problems wanted evidence parameters uses matched refining IntMap.empty indexed deferred existentials literals ownVariables)
   foundTypes <- readSTRef types >>= traverse Unify.zonk
   foundSchemes <- readSTRef schemes >>= traverse zonkPoly
   foundEvidence <- readSTRef evidence >>= traverse (mapM zonkEvidence)
@@ -351,7 +357,32 @@ schemeOfName x = asks (IntMap.lookup (nameKey x) . envSchemes) >>= maybe (Poly [
 -- and what is wanted while they are in scope is seen to before they go
 -- out of it, since nothing outside knows what they gave.
 withMonos :: [(NameId, Type s)] -> Tc s a -> Tc s a
-withMonos binds inner = do
+withMonos binds = withMonosTo binds [] (const [])
+
+-- | The same, given the types what is checked under the names is to
+-- have, and how to find others in what checking it gives. A type
+-- variable that is a constructor's own, which the patterns made, may be
+-- in none of them, nor in the type of anything that was in scope
+-- before: it is known only under the match.
+withMonosTo :: [(NameId, Type s)] -> [Type s] -> (a -> [Type s]) -> Tc s a -> Tc s a
+withMonosTo binds results found inner = do
+  own <- asks refOwn >>= \r -> lift (readSTRef r <* writeSTRef r [])
+  outer <- asks envMonos
+  result <- withMonosIn binds inner
+  unless (null own) $ do
+    reached <- mapM (lift . Unify.zonk) (results ++ found result ++ outer)
+    let mentions = \case
+          Types.Rigid (NameId k) -> k `elem` own
+          Types.App f a -> mentions f || mentions a
+          Types.Fun a b -> mentions a || mentions b
+          Types.Quantified _ context body -> mentions body || any (\(Types.Pred _ ts) -> any mentions ts) context
+          _ -> False
+    when (any mentions reached) $
+      complain "a type a constructor keeps to itself is let out of where the constructor is matched: its type is known only there"
+  pure result
+
+withMonosIn :: [(NameId, Type s)] -> Tc s a -> Tc s a
+withMonosIn binds inner = do
   ref <- asks refMatched
   given' <- lift (readSTRef ref <* writeSTRef ref [])
   same <- equalities given'
@@ -1311,7 +1342,7 @@ clause c t = at (clauseId c) $ do
     go (p : ps) function = do
       (argument, result) <- unifyFun function
       binds <- pattern' p argument
-      withMonos binds (go ps result)
+      withMonosTo binds [result] (const []) (go ps result)
 
 -- | Check a right-hand side against a type: each condition is a Bool, and
 -- each body has the type.
@@ -1349,7 +1380,8 @@ pattern' p t = at (Pat.patId p) $ do
         -- what its context says, which what is matched gives.
         Just (own, _) -> do
           Poly vs context whole <- schemeOfName c
-          scope <- IntMap.fromList <$> forM vs (\v -> (,) (nameKey v) <$> if v `elem` own then Rigid . NameId <$> freshKey else unknown)
+          scope <- fmap IntMap.fromList . forM vs $ \v ->
+            (,) (nameKey v) <$> if v `elem` own then freshKey >>= \k -> Rigid (NameId k) <$ note refOwn (k :) else unknown
           context' <- forM context (\(Pred k as) -> Pred k <$> lift (mapM (Unify.substitute scope) as))
           ds <- forM context' (const freshKey)
           recordParameters (Pat.patId p) ds
@@ -1440,7 +1472,7 @@ infer e = at (exprId e) $ do
     HIR.Lam ps body -> do
       arguments <- mapM (const unknown) ps
       binds <- concat <$> zipWithM pattern' ps arguments
-      result <- withMonos binds (infer body)
+      result <- withMonosTo binds [] pure (infer body)
       pure (foldr Fun result arguments)
     HIR.Let bs body -> bindings bs (infer body)
     HIR.If c t f -> do
@@ -1521,7 +1553,7 @@ checkAgainst e expected = at (exprId e) $ case exprKind e of
         go (p : rest) function = do
           (argument, result) <- unifyFun function
           binds <- pattern' p argument
-          withMonos binds (go rest result)
+          withMonosTo binds [result] (const []) (go rest result)
     go ps expected
   HIR.Let bs body -> record (exprId e) expected >> bindings bs (check body expected)
   HIR.If c t f -> do
@@ -1540,4 +1572,4 @@ alternatives scrutinee alts result = do
   forM_ alts $ \a -> at (altId a) $ do
     record (altId a) result
     binds <- pattern' (altPat a) matched
-    withMonos binds (rhs (altRhs a) result)
+    withMonosTo binds [result] (const []) (rhs (altRhs a) result)

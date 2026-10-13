@@ -201,9 +201,10 @@ What these do not yet do:
 
 What these do not yet do:
 
-- A type variable a constructor has of its own is not checked to stay
-  where it is matched: a program that lets one out is not refused, and is
-  wrong.
+- A type variable a constructor has of its own is checked to stay where it
+  is matched: it may not be in the type of what the match gives, nor in the
+  type of anything that was in scope before. The variables of a type for
+  all types, where something is checked against one, are not checked so.
 - A constructor with a context, or type variables of its own, does not have
   its fields named, has no instances derived for it, and is not matched in a
   pattern that is bound.
@@ -238,8 +239,8 @@ What these do not yet do:
 - A local definition under such a match is generalised as anywhere else.
   MonoLocalBinds would not have it be, and a program that leans on the
   difference may be accepted here and refused by GHC.
-- Nothing checks that a type variable such a match learns about stays under
-  the match, as nothing does for a constructor's own.
+- Nothing checks that what such a match learns of a type variable stays
+  under the match.
 - A constructor that makes its type at types of its own choosing does not
   have its fields named, and has no instances derived.
 - That two types are the same can be asked for and given in a context. It is
