@@ -74,10 +74,18 @@ what GHC's Prelude has in the rest.
       and `Data.Functor.Const`, `Data.Either`, `Data.Ord`, `Data.Tuple`,
       `Data.Bool`, `Data.Bifunctor`, `Data.IORef`
 
-Left for the milestones that make them possible: `Control.Exception`, whose
-`SomeException` is an existential type over a class with `Typeable` above it
-(M6 and M8); `Data.Coerce` (M7); `Data.Kind`, `Data.Proxy` and `Data.Void`'s
-`absurd` over an empty case are small and come with M4.
+Since, with the milestones that made them possible: `Data.Kind`,
+`Data.Coerce`, `Data.Proxy`, `Data.Typeable`, `Data.Type.Equality`,
+`GHC.TypeLits` and `GHC.Generics`. Still to write, and nothing stands in
+their way now: `Control.Exception`, whose `SomeException` is an existential
+type over a class with `Typeable` above it, and `Data.Void`.
+
+Beside `base`, of the containers package: `Data.Map`, `Data.Set`,
+`Data.IntMap` and `Data.IntSet`, with `Data.Map.Strict` and
+`Data.IntMap.Strict`. They are trees balanced by their sizes, as that
+package's are, and are checked against it. A map is lazy in its values under
+either name, and a map or a set of `Int` is the map or the set at that type,
+not a type of its own.
 
 **M2, extensions that are only syntax.**
 
@@ -358,10 +366,9 @@ what stands in the way: the extensions its sources use are done, Generic among
 them. What does is what it is built from. Its lexer is made by Alex. It
 depends on containers, mtl, text, bytestring, binary, array, directory,
 filepath, unix, prettyprinter and diagnose, and the library here has none of
-`Data.Map`, `Data.Set`, `Data.IntMap`, `Control.Monad.State` and
-`Control.Monad.Reader`, `Control.Monad.ST` and `Data.STRef`, or `Data.Text`.
-Those are the next thing to write: maps and sets first, then the monads, which
-functional dependencies and the classes of M5 now allow. bytestring, binary
+`Control.Monad.State` and `Control.Monad.Reader`, `Control.Monad.ST` and
+`Data.STRef`, or `Data.Text`. Maps and sets are written; the monads are next,
+which functional dependencies and the classes of M5 now allow. bytestring, binary
 and diagnose are better replaced in the compiler by modules of its own than
 compiled.
 
