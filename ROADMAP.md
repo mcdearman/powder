@@ -201,9 +201,10 @@ What these do not yet do:
 
 What these do not yet do:
 
-- A type variable a constructor has of its own is not checked to stay
-  where it is matched: a program that lets one out is not refused, and is
-  wrong.
+- A type variable a constructor has of its own is checked to stay where it
+  is matched: it may not be in the type of what the match gives, nor in the
+  type of anything that was in scope before. The variables of a type for
+  all types, where something is checked against one, are not checked so.
 - A constructor with a context, or type variables of its own, does not have
   its fields named, has no instances derived for it, and is not matched in a
   pattern that is bound.
@@ -216,7 +217,8 @@ What these do not yet do:
 
 - [x] GADTs
 - [x] Type equality, `a ~ b`, in a context
-- [x] RoleAnnotations, which are read and say nothing
+- [x] RoleAnnotations, and what a type's parameters are to it found where
+      it is not said
 - [x] MonoLocalBinds, which is accepted and changes nothing
 - [x] Coercible, with `Data.Coerce`
 - [x] DerivingVia
@@ -238,17 +240,19 @@ What these do not yet do:
 - A local definition under such a match is generalised as anywhere else.
   MonoLocalBinds would not have it be, and a program that leans on the
   difference may be accepted here and refused by GHC.
-- Nothing checks that a type variable such a match learns about stays under
-  the match, as nothing does for a constructor's own.
+- Nothing checks that what such a match learns of a type variable stays
+  under the match.
 - A constructor that makes its type at types of its own choosing does not
   have its fields named, and has no instances derived.
 - That two types are the same can be asked for and given in a context. It is
   a class in the library, with one instance, and a dictionary that holds
   nothing is passed for it.
-- Coercible takes every parameter of a type to be one whose values may be
-  taken as another's: there are no roles, so `coerce` between two sets of
-  different orderings is not refused. A newtype is seen through whether or
-  not its constructor is in scope.
+- Coercible takes a type at one type as the type at another as far as
+  the type's parameters allow, which is found from its fields and may be
+  said. What is said is asked besides what is found, and is not refused
+  for asking less than the fields do, as GHC refuses it. A class's
+  parameters have nothing said of them. A newtype is seen through whether
+  or not its constructor is in scope.
 - An instance is derived by way of another type beside the type's
   declaration, and not apart from it; and not for a class of type
   constructors.

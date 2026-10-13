@@ -300,5 +300,12 @@ pattern TypeInstance :: Type -> Type -> Decl
 pattern TypeInstance left right <- (kindIs [K.TypeInstanceDecl] -> Just (children -> [left, right]))
 
 -- | What a type's parameters are to it, which is read and not used.
-pattern RoleAnnotation :: Decl
-pattern RoleAnnotation <- (kindIs [K.RoleDecl] -> Just _)
+pattern RoleAnnotation :: Name -> [Name] -> Decl
+pattern RoleAnnotation name roles <- (kindIs [K.RoleDecl] -> Just (roleAnnotation -> (name, roles)))
+
+-- | The type a role annotation is of, and the roles it says, in order:
+-- each a word, or an underscore for one left to be found.
+roleAnnotation :: Red.Red -> (Name, [Name])
+roleAnnotation r = case break ((`elem` [K.ConId, K.QConId, K.ConSym]) . fst) (spelled r) of
+  (_, (_, name) : after) -> (name, [t | (k, t) <- after, k `elem` [K.VarId, K.Underscore]])
+  _ -> ("", [])

@@ -156,7 +156,9 @@ data St = St
     defaultSigned :: Table NameId,
     -- | The numbers and strings met as types that have no instance yet
     -- of the class that says which they are: met before the class was.
-    literalsPending :: [(NameId, Literal, Name)]
+    literalsPending :: [(NameId, Literal, Name)],
+    -- | What types' parameters were said to be to them, by 'NameId'.
+    rolesSaid :: Table [Role]
   }
 
 type M = ReaderT Env (State St)
@@ -232,7 +234,8 @@ data Seed = Seed
     -- | The kinds the packages before said types and their variables
     -- have, and their functions from types.
     seedKinds :: Table KindSyntax,
-    seedFamilies :: Table Family
+    seedFamilies :: Table Family,
+    seedRoles :: Table [Role]
   }
 
 -- | Resolve modules as 'resolve' does, as a package compiled after
@@ -246,13 +249,13 @@ resolveAfter seed languages lenient sources extra = case reverse (problems final
   [] -> Right (program, linked {linkFields = fields final, linkFixities = fixityTable final, linkStrict = strict final, linkDefaults = defaultSigned final})
   found -> Left found
   where
-    program = Program (bindings ++ reverse (generated final)) (names final) (origins final) (signatures final) (reverse (dataTypes final)) (synonyms final) (classes final) (reverse (instances final)) builtins spelled (defaults final) (newtypes final) (maybe [] seedModules seed ++ [(file, n) | (file, n, _) <- sources] ++ [(file, root) | Just (_, _, file, _) <- [extra]]) (maybe [] seedImports seed ++ [(n, [name | (name, _, _, _) <- importsOf n]) | n <- moduleNames]) (maybe (-1) seedFloor seed) (partials final) (kindsSaid final) (reverse (kindedTypes final)) (families final)
+    program = Program (bindings ++ reverse (generated final)) (names final) (origins final) (signatures final) (reverse (dataTypes final)) (synonyms final) (classes final) (reverse (instances final)) builtins spelled (defaults final) (newtypes final) (maybe [] seedModules seed ++ [(file, n) | (file, n, _) <- sources] ++ [(file, root) | Just (_, _, file, _) <- [extra]]) (maybe [] seedImports seed ++ [(n, [name | (name, _, _, _) <- importsOf n]) | n <- moduleNames]) (maybe (-1) seedFloor seed) (partials final) (kindsSaid final) (reverse (kindedTypes final)) (families final) (rolesSaid final)
     ((linked, (bindings, builtins)), final) =
       runState
         (runReaderT run (Env Map.empty Map.empty Map.empty Map.empty Map.empty Map.empty "" Nothing "" spelled Set.empty Map.empty Map.empty Map.empty Map.empty languages False Map.empty mempty))
         initial
     initial = case seed of
-      Nothing -> St 0 IntMap.empty IntMap.empty IntMap.empty IntMap.empty [] IntMap.empty [] IntMap.empty [] [] IntMap.empty [] IntMap.empty [] [] [] [] IntMap.empty IntMap.empty [] IntMap.empty [] IntMap.empty IntMap.empty Map.empty IntMap.empty []
+      Nothing -> St 0 IntMap.empty IntMap.empty IntMap.empty IntMap.empty [] IntMap.empty [] IntMap.empty [] [] IntMap.empty [] IntMap.empty [] [] [] [] IntMap.empty IntMap.empty [] IntMap.empty [] IntMap.empty IntMap.empty Map.empty IntMap.empty [] IntMap.empty
       Just s ->
         St
           (seedFloor s)
@@ -285,6 +288,7 @@ resolveAfter seed languages lenient sources extra = case reverse (problems final
           Map.empty
           (linkDefaults before)
           []
+          (seedRoles s)
     -- What the packages before this one let be known.
     before = maybe mempty seedLinkage seed
     -- In a package every name is spelled with its module's: no module is
@@ -1098,6 +1102,20 @@ typedShape = \case
 -- declared with them all.
 familyDecl :: Syntax.Decl -> M ()
 familyDecl d = within d $ case d of
+  -- What a type's parameters are to it, as far as is said.
+  Decl.RoleAnnotation t said ->
+    asks (Map.lookup t . envTypes) >>= \case
+      Nothing -> complain ("unknown type " ++ t)
+      Just n -> do
+        roles <- forM said $ \case
+          "nominal" -> pure Nominal
+          "representational" -> pure Representational
+          "phantom" -> pure Phantom
+          "_" -> pure Phantom
+          other -> Phantom <$ complain (other ++ " is not what a type's parameter can be to it: nominal, representational or phantom")
+        parameters <- gets (\st -> listToMaybe [length (dataParameters dt) | dt <- dataTypes st, dataName dt == n])
+        when (maybe False (/= length roles) parameters) (complain ("the type " ++ t ++ " does not have as many parameters as this says of"))
+        modify (\st -> st {rolesSaid = IntMap.insert (nameKey n) roles (rolesSaid st)})
   Decl.TypeFamily t parameters equations ->
     asks (Map.lookup t . envTypes) >>= \case
       Nothing -> pure ()
@@ -2531,7 +2549,7 @@ grouped ds = map gather (NE.groupBy sameFunction (concatMap binds ds))
       Decl.PatternSignature -> []
       Decl.StandaloneDeriving {} -> []
       Decl.KindSignature {} -> []
-      Decl.RoleAnnotation -> []
+      Decl.RoleAnnotation {} -> []
       Decl.TypeFamily {} -> []
       Decl.TypeInstance {} -> []
       Decl.DefaultSignature {} -> []

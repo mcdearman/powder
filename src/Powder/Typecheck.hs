@@ -173,7 +173,14 @@ data Env s = Env
     -- context: those, by 'NameId'.
     envExistentials :: IntMap.IntMap ([NameId], [Constraint]),
     -- | The numbers.
-    refLiterals :: STRef s [NodeId]
+    refLiterals :: STRef s [NodeId],
+    -- | The type variables the patterns just checked made for the
+    -- constructors in them that have their own. Taken, as 'refMatched'
+    -- is, where the names the patterns bind come into scope: they are
+    -- known only there.
+    refOwn :: STRef s [Int],
+    -- | What each type's parameters are to it, by 'NameId'.
+    envRoles :: IntMap.IntMap [Role]
   }
 
 type Tc s = ReaderT (Env s) (ST s)
@@ -202,8 +209,9 @@ typecheckAfter theirs general program = runST $ do
   refining <- newSTRef []
   deferred <- newSTRef []
   literals <- newSTRef []
+  ownVariables <- newSTRef []
   let instances = IntMap.fromListWith (flip (++)) [(nameKey (instanceClass i), [i]) | i <- programInstances program]
-  runReaderT run (Env program IntMap.empty [] Nothing [] IntSet.empty instances general moduleOf reach next types schemes problems wanted evidence parameters uses matched refining IntMap.empty indexed deferred existentials literals)
+  runReaderT run (Env program IntMap.empty [] Nothing [] IntSet.empty instances general moduleOf reach next types schemes problems wanted evidence parameters uses matched refining IntMap.empty indexed deferred existentials literals ownVariables (rolesOf program))
   foundTypes <- readSTRef types >>= traverse Unify.zonk
   foundSchemes <- readSTRef schemes >>= traverse zonkPoly
   foundEvidence <- readSTRef evidence >>= traverse (mapM zonkEvidence)
@@ -351,7 +359,32 @@ schemeOfName x = asks (IntMap.lookup (nameKey x) . envSchemes) >>= maybe (Poly [
 -- and what is wanted while they are in scope is seen to before they go
 -- out of it, since nothing outside knows what they gave.
 withMonos :: [(NameId, Type s)] -> Tc s a -> Tc s a
-withMonos binds inner = do
+withMonos binds = withMonosTo binds [] (const [])
+
+-- | The same, given the types what is checked under the names is to
+-- have, and how to find others in what checking it gives. A type
+-- variable that is a constructor's own, which the patterns made, may be
+-- in none of them, nor in the type of anything that was in scope
+-- before: it is known only under the match.
+withMonosTo :: [(NameId, Type s)] -> [Type s] -> (a -> [Type s]) -> Tc s a -> Tc s a
+withMonosTo binds results found inner = do
+  own <- asks refOwn >>= \r -> lift (readSTRef r <* writeSTRef r [])
+  outer <- asks envMonos
+  result <- withMonosIn binds inner
+  unless (null own) $ do
+    reached <- mapM (lift . Unify.zonk) (results ++ found result ++ outer)
+    let mentions = \case
+          Types.Rigid (NameId k) -> k `elem` own
+          Types.App f a -> mentions f || mentions a
+          Types.Fun a b -> mentions a || mentions b
+          Types.Quantified _ context body -> mentions body || any (\(Types.Pred _ ts) -> any mentions ts) context
+          _ -> False
+    when (any mentions reached) $
+      complain "a type a constructor keeps to itself is let out of where the constructor is matched: its type is known only there"
+  pure result
+
+withMonosIn :: [(NameId, Type s)] -> Tc s a -> Tc s a
+withMonosIn binds inner = do
   ref <- asks refMatched
   given' <- lift (readSTRef ref <* writeSTRef ref [])
   same <- equalities given'
@@ -430,6 +463,38 @@ carefully a b = do
         (Fun x y, Fun x' y') -> (&&) <$> carefully x x' <*> carefully y y'
         (App f x, App g y) -> (&&) <$> carefully f g <*> carefully x y
         _ -> lift (Unify.unify a' b')
+
+-- | What each type's parameters are to it. A parameter is as much as
+-- any place it is in asks: nothing where it is not in a field at all;
+-- kept as it is where it is in one; and the same type where it is what a
+-- function from types or a type variable is applied to, or in a place
+-- that itself asks as much. A type with a constructor that has type
+-- variables or a context of its own, or that makes its type at types of
+-- its own choosing, asks the most of all its parameters, and a type with
+-- no constructors, which may be the language's own, that they be kept.
+-- What a program says of a type's parameters is asked besides.
+rolesOf :: Program -> IntMap.IntMap [Role]
+rolesOf program = settle (IntMap.fromList [(nameKey (dataName d), map (const Phantom) (dataParameters d)) | d <- programDataTypes program])
+  where
+    settle roles = let next = IntMap.fromList [(nameKey (dataName d), found roles d) | d <- programDataTypes program] in if next == roles then roles else settle next
+    found roles d
+      | not (null (dataExistentials d)) || not (null (dataIndices d)) = map (const Nominal) (dataParameters d)
+      | null (dataConstructors d) = zipWith max (said d) (map (const Representational) (dataParameters d))
+      | otherwise = zipWith max (said d) [maximum (Phantom : concat [occurs roles p Representational field | (_, fields) <- dataConstructors d, field <- fields]) | p <- dataParameters d]
+    said d = IntMap.findWithDefault [] (nameKey (dataName d)) (programRoles program) ++ repeat Phantom
+    occurs roles p = walk
+      where
+        walk around t = case spine t [] of
+          (Syntax.Var v, arguments) -> [around | v == p] ++ concatMap (walk Nominal) arguments
+          (Syntax.Con c, arguments)
+            | IntMap.member (nameKey c) (programFamilies program) || IntMap.member (nameKey c) (programSynonyms program) -> concatMap (walk Nominal) arguments
+            | otherwise -> concat (zipWith (\role a -> case role of Phantom -> []; Representational -> walk around a; Nominal -> walk Nominal a) (IntMap.findWithDefault [] (nameKey c) roles ++ repeat Representational) arguments)
+          (Syntax.Fun a b, _) -> walk around a ++ walk around b
+          (Syntax.Forall _ context body, _) -> walk around body ++ concat [walk Nominal a | (_, as) <- context, a <- as]
+          _ -> []
+        spine t arguments = case Syntax.typeForm t of
+          Syntax.App f a -> spine f (a : arguments)
+          form -> (form, arguments)
 
 -- | Whether a type has in it a function from types applied to types.
 stuck :: Type s -> Tc s Bool
@@ -796,11 +861,22 @@ solveNoting reported wanted = do
             (_, Con t) | Just (parameters, of') <- newtypeOf program t, length parameters <= length argsB -> do
               inner <- fromSyntaxIn (IntMap.fromList (zip (map nameKey parameters) argsB)) of'
               coercible (depth - 1) a (foldl App inner (drop (length parameters) argsB))
-            (Con t, Con u) | t == u && length argsA == length argsB -> allOf <$> zipWithM (coercible (depth - 1)) argsA argsB
-            (Rigid x, Rigid y) | x == y && length argsA == length argsB -> allOf <$> zipWithM (coercible (depth - 1)) argsA argsB
+            -- One type at types that may be taken as each other, each as
+            -- the type's parameter there allows.
+            (Con t, Con u) | t == u && length argsA == length argsB -> do
+              roles <- asks (IntMap.findWithDefault [] (nameKey t) . envRoles)
+              allOf <$> sequence (zipWith3 (\role x y -> case role of Phantom -> pure (Just True); Representational -> coercible (depth - 1) x y; Nominal -> identical x y) (roles ++ repeat Representational) argsA argsB)
+            -- What a type variable is applied to must be the same.
+            (Rigid x, Rigid y) | x == y && length argsA == length argsB -> allOf <$> zipWithM identical argsA argsB
             (Meta _, _) -> pure Nothing
             (_, Meta _) -> pure Nothing
             _ -> pure (Just False)
+
+    -- Whether two types are the same one: or not yet to be said.
+    identical x y = do
+      x' <- lift (Unify.zonk x)
+      y' <- lift (Unify.zonk y)
+      pure (if x' == y' then Just True else if null (Types.metas x') && null (Types.metas y') then Just False else Nothing)
 
     allOf results
       | Just False `elem` results = Just False
@@ -1311,7 +1387,7 @@ clause c t = at (clauseId c) $ do
     go (p : ps) function = do
       (argument, result) <- unifyFun function
       binds <- pattern' p argument
-      withMonos binds (go ps result)
+      withMonosTo binds [result] (const []) (go ps result)
 
 -- | Check a right-hand side against a type: each condition is a Bool, and
 -- each body has the type.
@@ -1349,7 +1425,8 @@ pattern' p t = at (Pat.patId p) $ do
         -- what its context says, which what is matched gives.
         Just (own, _) -> do
           Poly vs context whole <- schemeOfName c
-          scope <- IntMap.fromList <$> forM vs (\v -> (,) (nameKey v) <$> if v `elem` own then Rigid . NameId <$> freshKey else unknown)
+          scope <- fmap IntMap.fromList . forM vs $ \v ->
+            (,) (nameKey v) <$> if v `elem` own then freshKey >>= \k -> Rigid (NameId k) <$ note refOwn (k :) else unknown
           context' <- forM context (\(Pred k as) -> Pred k <$> lift (mapM (Unify.substitute scope) as))
           ds <- forM context' (const freshKey)
           recordParameters (Pat.patId p) ds
@@ -1440,7 +1517,7 @@ infer e = at (exprId e) $ do
     HIR.Lam ps body -> do
       arguments <- mapM (const unknown) ps
       binds <- concat <$> zipWithM pattern' ps arguments
-      result <- withMonos binds (infer body)
+      result <- withMonosTo binds [] pure (infer body)
       pure (foldr Fun result arguments)
     HIR.Let bs body -> bindings bs (infer body)
     HIR.If c t f -> do
@@ -1521,7 +1598,7 @@ checkAgainst e expected = at (exprId e) $ case exprKind e of
         go (p : rest) function = do
           (argument, result) <- unifyFun function
           binds <- pattern' p argument
-          withMonos binds (go rest result)
+          withMonosTo binds [result] (const []) (go rest result)
     go ps expected
   HIR.Let bs body -> record (exprId e) expected >> bindings bs (check body expected)
   HIR.If c t f -> do
@@ -1540,4 +1617,4 @@ alternatives scrutinee alts result = do
   forM_ alts $ \a -> at (altId a) $ do
     record (altId a) result
     binds <- pattern' (altPat a) matched
-    withMonos binds (rhs (altRhs a) result)
+    withMonosTo binds [result] (const []) (rhs (altRhs a) result)
