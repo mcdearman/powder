@@ -1026,6 +1026,18 @@ settle = do
     case still of
       Meta _ -> void (lift (Unify.unify still (Con (builtinChar builtins))))
       _ -> pure ()
+  -- A type that a string written out is of, with nothing more said of it
+  -- than classes ask, is a String, if a list is all they ask: as GHC has
+  -- it where strings may be of any such type.
+  let string c = fmap (\i -> (nameText i, nameModule i)) (nameInfo program c) == Just ("IsString", "Powder.Base")
+  forM_ placed $ \(w, at') -> forM_ at' $ \v -> when (string (wantedClass w)) $ do
+    still <- lift (Unify.shallow (Meta v))
+    case still of
+      Meta _ -> do
+        let wantedOfIt = [wantedClass w' | (w', Just v') <- placed, v' == v]
+        when (all (\k -> instanceAt instances k (builtinList builtins)) wantedOfIt) $
+          void (lift (Unify.unify still (App (Con (builtinList builtins)) (Con (builtinChar builtins)))))
+      _ -> pure ()
   unsettled <- solve waiting
   retry True
   forM_ unsettled $ \w -> local (\env -> env {envNode = wantedNode w}) $ do

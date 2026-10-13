@@ -17,7 +17,7 @@ csv = "name,age,,city\nAda,36,,London\nBo,,x,"
 main :: IO ()
 main = do
   print (sample, T.pack "packed", T.unpack "unpacked", T.singleton 'x', T.empty, T.show (42 :: Int, True))
-  print (T.cons '>' "abc", T.snoc "abc" '<', T.append "ab" "cd", ("ab" :: Text) <> "cd" <> mempty, mconcat ["x", "y", "z" :: Text])
+  print (T.cons '>' "abc", T.snoc "abc" '<', T.append "ab" "cd", "ab" <> "cd" <> mempty, mconcat ["x", "y", "z" :: Text])
   print (T.uncons "abc", T.uncons "", T.unsnoc "abc", T.unsnoc "", T.head "abc", T.last "abc", T.tail "abc", T.init "abc")
   print (T.null "", T.null "a", T.length sample, T.compareLength "abc" 2, T.compareLength "abc" 3, T.compareLength "abc" 4)
   print (T.map toUpper "shout", T.intercalate ", " ["a", "b", "c"], T.intercalate "-" [], T.intersperse '.' "abc", T.transpose ["abc", "de", "f"], T.reverse "stressed")
