@@ -3,7 +3,7 @@
 
 -- | The forms of a type. Import qualified.
 module Powder.Syntax.AST.Type
-  ( Type (Var, Con, App, Fun, Tuple, List, Paren, Qualified, Forall, Wild, Kinded, Operators, PromotedList),
+  ( Type (Var, Con, App, Fun, Tuple, List, Paren, Qualified, Forall, Wild, Kinded, Operators, PromotedList, Lit),
     forallKinds,
   )
 where
@@ -82,4 +82,8 @@ pattern Wild <- (kindIs K.TyWild -> Just _)
 pattern PromotedList :: [Type] -> Type
 pattern PromotedList elements <- (kindIs K.TyPromotedList -> Just (children -> elements))
 
-{-# COMPLETE Var, Con, App, Fun, Tuple, List, Paren, Qualified, Forall, Wild, Kinded, Operators, PromotedList #-}
+-- | A number or a string, as a type.
+pattern Lit :: Literal -> Type
+pattern Lit l <- (kindIs K.TyLit -> Just (literalOf -> l))
+
+{-# COMPLETE Var, Con, App, Fun, Tuple, List, Paren, Qualified, Forall, Wild, Kinded, Operators, PromotedList, Lit #-}

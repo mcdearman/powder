@@ -45,6 +45,8 @@ import Powder.HIR
   ( Binding (..),
     BindingKind (..),
     Builtins (..),
+    Family (..),
+    KindSyntax (..),
     Class (..),
     Constraint (..),
     Overlap (..),
@@ -97,16 +99,20 @@ data Interface = Interface
     ifaceNewtypes :: [NameId],
     ifaceModules :: [(FilePath, String)],
     ifaceImports :: [(String, [String])],
-    ifaceSchemes :: Table Scheme
+    ifaceSchemes :: Table Scheme,
+    -- | The kinds types and their variables were said to have, and the
+    -- functions from types to a type.
+    ifaceKinds :: Table KindSyntax,
+    ifaceFamilies :: Table Family
   }
   deriving (Generic, Binary)
 
 instance Semigroup Interface where
-  Interface a b c d e f g h i j k l <> Interface a' b' c' d' e' f' g' h' i' j' k' l' =
-    Interface (a <> a') (IntMap.union b b') (IntMap.union c c') (IntMap.union d d') (IntMap.union e e') (f ++ f') (g ++ g') (h ++ h') (i ++ i') (j ++ j') (k ++ k') (IntMap.union l l')
+  Interface a b c d e f g h i j k l m n <> Interface a' b' c' d' e' f' g' h' i' j' k' l' m' n' =
+    Interface (a <> a') (IntMap.union b b') (IntMap.union c c') (IntMap.union d d') (IntMap.union e e') (f ++ f') (g ++ g') (h ++ h') (i ++ i') (j ++ j') (k ++ k') (IntMap.union l l') (IntMap.union m m') (IntMap.union n n')
 
 instance Monoid Interface where
-  mempty = Interface mempty IntMap.empty IntMap.empty IntMap.empty IntMap.empty [] [] [] [] [] [] IntMap.empty
+  mempty = Interface mempty IntMap.empty IntMap.empty IntMap.empty IntMap.empty [] [] [] [] [] [] IntMap.empty IntMap.empty IntMap.empty
 
 -- | A class without its code: its name, variables, superclasses,
 -- dependencies and methods, and which methods have a definition by
@@ -166,7 +172,9 @@ compile slot seen unseen units = do
           seedInstances = [Instance n c ts vs context [] (overlapOf overlap) | InstanceShape n c ts vs context overlap <- ifaceInstances below],
           seedNewtypes = ifaceNewtypes below,
           seedModules = ifaceModules below,
-          seedImports = ifaceImports below
+          seedImports = ifaceImports below,
+          seedKinds = ifaceKinds below,
+          seedFamilies = ifaceFamilies below
         }
     mineOf = IntMap.filterWithKey (\k _ -> own k)
     interface hir linked found =
@@ -195,7 +203,11 @@ compile slot seen unseen units = do
           ifaceNewtypes = [c | c <- HIR.programNewtypes hir, own (nameKey c)],
           ifaceModules = [(file, m) | (file, m) <- HIR.programModules hir, m `Set.member` modules],
           ifaceImports = [(m, is) | (m, is) <- HIR.programImports hir, m `Set.member` modules],
-          ifaceSchemes = mineOf (checkedSchemes found)
+          ifaceSchemes = mineOf (checkedSchemes found),
+          ifaceKinds = mineOf (HIR.programKinds hir),
+          -- A function from types is this package's with all its
+          -- equations, those given apart from it in this package too.
+          ifaceFamilies = mineOf (HIR.programFamilies hir)
         }
       where
         instances = [i | i <- HIR.programInstances hir, own (nodeKey (instanceId i))]
@@ -240,6 +252,10 @@ deriving instance Generic HIR.Type.Form
 deriving instance Generic DataType
 
 deriving instance Generic Synonym
+
+deriving instance Generic KindSyntax
+
+deriving instance Generic Family
 
 deriving instance Generic Builtins
 
@@ -292,6 +308,10 @@ instance Binary HIR.Type.Form
 instance Binary DataType
 
 instance Binary Synonym
+
+instance Binary KindSyntax
+
+instance Binary Family
 
 instance Binary Builtins
 

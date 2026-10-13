@@ -1,4 +1,4 @@
-{-# LANGUAGE MultiParamTypeClasses, FunctionalDependencies, FlexibleInstances, TypeOperators #-}
+{-# LANGUAGE MultiParamTypeClasses, FunctionalDependencies, FlexibleInstances, TypeOperators, KindSignatures, DataKinds, PolyKinds #-}
 -- Everything the prelude and the libraries beside it are made of, written
 -- in the language the compilers accept. The modules a program imports
 -- are selections from this one: Prelude, Data.List, Data.Char and the
@@ -206,6 +206,33 @@ instance a ~ a
 -- the same way: a newtype and what it is of, and types made of such in
 -- the same places. No instance is written: the compiler says when it is
 -- so.
+-- The kinds of a number and of a string written as a type, and the
+-- classes that say which number or string a type is. The compiler makes
+-- the instance for each one a program writes.
+data Nat
+
+data Symbol
+
+data LiteralOf (n :: k) = LiteralOf
+
+class KnownNat (n :: Nat) where
+  natInteger :: LiteralOf n -> Integer
+
+class KnownSymbol (s :: Symbol) where
+  symbolString :: LiteralOf s -> String
+
+literalOf :: proxy n -> LiteralOf n
+literalOf _ = LiteralOf
+
+natVal :: KnownNat n => proxy n -> Integer
+natVal p = natInteger (literalOf p)
+
+symbolVal :: KnownSymbol s => proxy s -> String
+symbolVal p = symbolString (literalOf p)
+
+-- A value that stands for a type, of any kind.
+data Proxy (t :: k) = Proxy
+
 class Coercible a b
 
 coerce :: Coercible a b => a -> b

@@ -96,7 +96,7 @@ instance Ast Rhs where
   syntax (RhsNode r) = r
 
 instance Ast Type where
-  cast = wrap TypeNode [K.TyVar, K.TyCon, K.TyApp, K.TyFun, K.TyTuple, K.TyList, K.TyParen, K.TyQual, K.TyForall, K.TyWild, K.TyKinded, K.TyInfix, K.TyPromotedList]
+  cast = wrap TypeNode [K.TyVar, K.TyCon, K.TyApp, K.TyFun, K.TyTuple, K.TyList, K.TyParen, K.TyQual, K.TyForall, K.TyWild, K.TyKinded, K.TyInfix, K.TyPromotedList, K.TyLit]
   syntax (TypeNode r) = r
 
 instance Ast Expr where

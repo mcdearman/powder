@@ -1091,18 +1091,23 @@ btype = void btype'
 -- | A type applied to types, or just the one.
 btype' :: P MarkClosed
 btype' = do
-  starts <- atAny typeStarts
+  starts <- typeStarting
   if not starts
     then missing "expected a type"
     else do
       first <- atype'
-      more <- atAny typeStarts
+      more <- typeStarting
       if not more
         then pure first
         else do
           m <- openBefore first
-          whileM (atAny typeStarts) atype
+          whileM typeStarting atype
           close m TyApp
+
+-- | Whether a type starts here. With DataKinds a number or a string is
+-- one.
+typeStarting :: P Bool
+typeStarting = (||) <$> atAny typeStarts <*> ((&&) <$> on DataKinds <*> atAny [IntegerLit, StringLit])
 
 atype :: P ()
 atype = void atype'
@@ -1114,6 +1119,7 @@ atype' = do
   case kinds of
     VarId : _ -> advance >> close m TyVar
     Underscore : _ -> advance >> close m TyWild
+    k : _ | k `elem` [IntegerLit, StringLit] -> advance >> close m TyLit
     k : _ | k `elem` [ConId, QConId] -> advance >> close m TyCon
     LParen : RParen : _ -> advance >> advance >> close m TyTuple
     -- A constructor with no name of its own: a tuple's, or the arrow.

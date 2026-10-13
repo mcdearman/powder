@@ -61,11 +61,6 @@ tokens :-
 
   @varid                                     { identifier }
   @conid                                     { plain ConId }
-  -- With DataKinds a constructor is a type, and may be said to be one
-  -- with a tick before it; as may the list's two, and a list of types.
-  \' @conid / { on DataKinds }                { plain ConId }
-  \' \: $symbol* / { on DataKinds }           { plain ConSym }
-  \' \[ / { on DataKinds }                    { plain LBracket }
   @qual @varid                               { plain QVarId }
   @qual @conid                               { plain QConId }
   -- What an operator is can depend on what touches it, as in GHC's lexer:
@@ -100,6 +95,12 @@ tokens :-
   0 [bB] \_* [01]+ (\_+ [01]+)* / { on BinaryLiterals `alexAndPred` on NumericUnderscores } { plain IntegerLit }
 
   \' @charbody \'                            { plain CharLit }
+  -- With DataKinds a constructor is a type, and may be said to be one
+  -- with a tick before it; as may the list's two, and a list of types.
+  -- They come after a character's: 'A' is the character.
+  \' @conid / { on DataKinds }                { plain ConId }
+  \' \: $symbol* / { on DataKinds }           { plain ConSym }
+  \' \[ / { on DataKinds }                    { plain LBracket }
   \" @strbody \"                             { plain StringLit }
   \" @strbody                                { plain Error }
 

@@ -259,8 +259,9 @@ What these do not yet do:
   and not used.
 - There are no data families, no defaults for a type that goes with a class,
   and nothing says a function from types is one to one.
-- A function from types and its equations are known in the package that
-  declares them, and not in another compiled apart.
+- A function from types is known to a package compiled after the one that
+  declares it, with the equations that one gave; equations another package
+  gives apart from it are that package's alone.
 - Equations given apart are not checked against each other.
 
 **M8, kinds.**
@@ -268,7 +269,7 @@ What these do not yet do:
 - [x] DataKinds: a data type as a kind, its constructors as types, and
       lists of types
 - [x] PolyKinds, where a kind is written with a variable in it
-- [ ] Type-level literals, with `GHC.TypeLits`
+- [x] Numbers and strings as types, with `GHC.TypeLits` and `Data.Proxy`
 - [ ] Typeable, with `Data.Typeable`, and DeriveDataTypeable
 
 `src/Powder/Kinds.hs` was to be replaced. It was added to: a kind may now be
@@ -291,8 +292,15 @@ What these do not yet do:
   is not a kind or a type by promotion: only a data type and its
   constructors are.
 - A tuple of types, `'(a, b)`, is not a type.
-- A kind said of a type or of a parameter is known in the package that
-  says it, and not in another compiled apart.
+- A number or a string written as a type is a type of its own, made
+  where it is first written, with an instance of `KnownNat` or of
+  `KnownSymbol` made beside it. It is the same type throughout a package,
+  and not in two compiled apart: the `3` of one is not the `3` of another,
+  and each makes the instance.
+- `Nat` and `Symbol` are two types with no values, and `Nat` is not
+  `Natural`. There is no arithmetic on numbers as types and nothing
+  compares them or joins strings: no `+`, `<=`, `CmpNat`, `AppendSymbol`;
+  and no `someNatVal`, `sameNat` or `TypeError`.
 
 ### On the side
 

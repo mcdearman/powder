@@ -139,7 +139,10 @@ data St = St
     -- parameters and the constraints it stands for.
     constraintSynonyms :: Table ([NameId], [Constraint]),
     -- | The functions from types to a type, by 'NameId'.
-    families :: Table Family
+    families :: Table Family,
+    -- | The numbers and strings met as types, each as it is shown, and
+    -- the type each is.
+    literalTypes :: Map.Map String NameId
   }
 
 type M = ReaderT Env (State St)
@@ -208,7 +211,11 @@ data Seed = Seed
     seedInstances :: [Instance],
     seedNewtypes :: [NameId],
     seedModules :: [(FilePath, String)],
-    seedImports :: [(String, [String])]
+    seedImports :: [(String, [String])],
+    -- | The kinds the packages before said types and their variables
+    -- have, and their functions from types.
+    seedKinds :: Table KindSyntax,
+    seedFamilies :: Table Family
   }
 
 -- | Resolve modules as 'resolve' does, as a package compiled after
@@ -228,7 +235,7 @@ resolveAfter seed languages lenient sources extra = case reverse (problems final
         (runReaderT run (Env Map.empty Map.empty Map.empty Map.empty Map.empty Map.empty "" Nothing "" spelled Set.empty Map.empty Map.empty Map.empty Map.empty languages False))
         initial
     initial = case seed of
-      Nothing -> St 0 IntMap.empty IntMap.empty IntMap.empty IntMap.empty [] IntMap.empty [] IntMap.empty [] [] IntMap.empty [] IntMap.empty [] [] [] [] IntMap.empty IntMap.empty [] IntMap.empty [] IntMap.empty IntMap.empty
+      Nothing -> St 0 IntMap.empty IntMap.empty IntMap.empty IntMap.empty [] IntMap.empty [] IntMap.empty [] [] IntMap.empty [] IntMap.empty [] [] [] [] IntMap.empty IntMap.empty [] IntMap.empty [] IntMap.empty IntMap.empty Map.empty
       Just s ->
         St
           (seedFloor s)
@@ -254,10 +261,11 @@ resolveAfter seed languages lenient sources extra = case reverse (problems final
           IntMap.empty
           IntMap.empty
           []
-          IntMap.empty
+          (seedKinds s)
           []
           IntMap.empty
-          IntMap.empty
+          (seedFamilies s)
+          Map.empty
     -- What the packages before this one let be known.
     before = maybe mempty seedLinkage seed
     -- In a package every name is spelled with its module's: no module is
@@ -1241,6 +1249,32 @@ type' t = within t $ case t of
       Just n -> mkType (Type.Var n)
       Nothing -> complain ("type variable not in scope: " ++ x) >> mkType Type.Error
   SType.Con c -> typeConstructor c
+  -- A number or a string, as a type: one type for each, the same
+  -- wherever it is written. The first time one is met an instance is
+  -- made that says which it is.
+  SType.Lit written -> do
+    promoted <- enabled DataKinds
+    unless promoted (complain "a number or a string is a type only if DataKinds is on")
+    literal written >>= \case
+      Just l | Just (shown, method) <- literalType l ->
+        gets (Map.lookup shown . literalTypes) >>= \case
+          Just n -> mkType (Type.Con n)
+          Nothing -> do
+            n <- newName shown TypeConstructor
+            modify (\st -> st {literalTypes = Map.insert shown n (literalTypes st)})
+            m <- asks (Map.lookup method . envGlobals)
+            cls <- gets (\st -> listToMaybe [k | k <- IntMap.elems (classes st), Just m' <- [m], m' `elem` classMethods k])
+            forM_ cls $ \k -> do
+              -- Its kind is the one the class says its variable is of.
+              forM_ (take 1 (classVariables k)) $ \v ->
+                gets (IntMap.lookup (nameKey v) . kindsSaid) >>= mapM_ (\said -> modify (\st -> st {kindsSaid = IntMap.insert (nameKey n) said (kindsSaid st)}))
+              anything <- mkPat Pat.Wild
+              b <- mk (Lit l) >>= \body -> equations method [([anything], body)]
+              i <- node
+              at' <- mkType (Type.Con n)
+              modify (\st -> st {instances = Instance i (className k) [at'] [] [] [b] Exactly : instances st})
+            mkType (Type.Con n)
+      _ -> complain "only a number or a string is a type" >> mkType Type.Error
   -- A list of types, as a type: the list's constructors, as types.
   SType.PromotedList elements -> do
     promoted <- enabled DataKinds
@@ -1312,6 +1346,12 @@ type' t = within t $ case t of
   where
     mkType form = (`Type.Type` form) <$> node
     applyType = foldM (\f a -> mkType (Type.App f a))
+    -- How a number or a string is shown as a type, and the method of
+    -- the class that says which one a type is.
+    literalType = \case
+      Number n | n >= 0 -> Just (show n, "natInteger")
+      Text s -> Just (show s, "symbolString")
+      _ -> Nothing
     -- With DataKinds a constructor is a type too: where a tick says so,
     -- or where no type goes by the name.
     typeConstructor c = do
@@ -1343,6 +1383,7 @@ typeVariables = \case
   SType.Kinded inner _ -> typeVariables inner
   SType.Operators operands _ -> concatMap typeVariables operands
   SType.PromotedList elements -> concatMap typeVariables elements
+  SType.Lit _ -> []
 
 -- | Note the types a scope's signatures declare, for the names that scope
 -- defines, which are in scope. A signature quantifies over the variables

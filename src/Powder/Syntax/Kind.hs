@@ -183,6 +183,8 @@ data SyntaxKind
     TyInfix
   | -- | @'[a, b]@: a list of types, as a type.
     TyPromotedList
+  | -- | A number or a string, as a type.
+    TyLit
   | -- | A kind, as its tokens.
     KindSig
   | -- | @(a :: kind)@, where a type variable is named.
