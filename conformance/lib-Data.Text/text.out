@@ -1,0 +1,32 @@
+("  The quick brown fox, the lazy dog.  ","packed","unpacked","x","","(42,True)")
+(">abc","abc<","abcd","abcd","xyz")
+(Just ('a',"bc"),Nothing,Just ("ab",'c'),Nothing,'a','c',"bc","ab")
+(True,False,38,GT,EQ,LT)
+("SHOUT","a, b, c","","a.b.c",["adf","be","c"],"desserts")
+("  The quick brown fox, a lazy dog.  ","f00 b00","bba","abc","abab")
+("mixed 123","MIXED 123","The Quick  Brown-fox Isn't Here","strasse abc")
+("ab.....",".....ab","...ab..","...abc..","abc","abc")
+(1234,"cba","abc","abcd","aabbcc")
+(True,False,True,True,'o','e')
+("abc","abc","","ef","def","abcd","","abc")
+("123","456","abc456","123abc","abc")
+("The quick brown fox, the lazy dog.","The quick brown fox, the lazy dog.  ","  The quick brown fox, the lazy dog.","","none")
+(("abc","def"),("","abc"),("abc",""),("ab",",cd,ef"),("12","ab"),("nospace",""))
+(("a","::b::c"),("nothing",""),("a::b::","c"),("","nothing"),[("a","::b::c"),("a::b","::c")],[("","aaaa"),("aa","aa")],[])
+(["aa","b","ccc"],["ab","12","cd","3"],["","a","ab","abc"],["abc","bc","c",""])
+(["a","b","","c"],[""],["a","b,c","d"],["","","a"],["",""],["","a",""])
+(["a","b","","c"],["","a","","b",""],[""],["abc","def","gh"],[],[])
+(["name,age,,city","Ada,36,,London","Bo,,x,"],["one","","two"],[],["The","quick","brown","fox,","the","lazy","dog."],[],"a\nb\n","a b c")
+(True,True,False,True,True,False,True)
+(Just "bar",Nothing,Just "foo",Nothing,Just "x")
+(Just ("foo","bar","quux"),Nothing,Just ("same","",""),Nothing)
+("HW",Just '3',Nothing,True,True,("123","abc"))
+('b',Just 2,Nothing,1,2,0)
+([('a','1'),('b','2')],"bdz","ababab","","")
+(True,True,GT,"zebra","read\tin")
+("\"quote\\\"d\\n\"","\"in\"",["1","2","3"])
+name | age |   | city  
+Ada  | 36  |   | London
+Bo   |     | x |       
+no newline
+**a** **bb* *ccc*
