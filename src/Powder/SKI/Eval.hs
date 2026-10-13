@@ -6,12 +6,20 @@ module Powder.SKI.Eval
     run,
     Value (..),
     eval,
+    bytesNew,
+    bytesLength,
+    byteAt,
+    byteWrite,
+    bytesCopy,
+    bytesCompare,
   )
 where
 
 import Control.Exception
 import Control.Monad
 import Data.Char (chr, generalCategory, ord, toLower, toTitle, toUpper)
+import Data.Array.IO (IOUArray, getBounds, newArray, readArray, writeArray)
+import Data.Bits (countLeadingZeros, countTrailingZeros, popCount, shiftL, shiftR, xor, (.&.), (.|.))
 import Data.Functor ((<&>))
 import Data.IORef
 import Data.Ratio ((%))
@@ -43,6 +51,8 @@ data Node
   | NPrim !Prim
   | -- | A C function: its name, its arguments' kinds and its result's.
     NForeign String String Char
+  | -- | Bytes side by side.
+    NBytes !(IOUArray Int Word8)
 
 -- | How the program talks to the outside world.
 data Hooks = Hooks
@@ -133,7 +143,7 @@ eval h defs root = do
     else maybe VOther VInt <$> asInt r
   where
     asInt r = readIORef r <&> \case NInt n -> Just n; _ -> Nothing
-    ioArity = [(Return, 1), (Bind, 2), (PutChar, 2), (GetChar, 0), (Exit, 1), (PathChar, 1), (Throw, 2), (Catch, 2), (FileOpen, 1), (HGetChar, 1), (FileClose, 1), (HIsEOF, 1), (ArgCount, 0), (ArgChar, 2), (FileSeek, 3), (FileTruncate, 2), (FileFlush, 1), (IsTerminal, 1), (EnvChar, 2), (CellNew, 1), (CellRead, 1), (CellWrite, 2), (PeekInt, 2), (PeekDouble, 2), (PokeInt, 3), (PokeDouble, 3), (ErrnoGet, 0), (ErrnoSet, 1), (CallbackInt, 1), (CallbackDouble, 1), (CallbackReturnInt, 1), (CallbackReturnDouble, 1)]
+    ioArity = [(Return, 1), (Bind, 2), (PutChar, 2), (GetChar, 0), (Exit, 1), (PathChar, 1), (Throw, 2), (Catch, 2), (FileOpen, 1), (HGetChar, 1), (FileClose, 1), (HIsEOF, 1), (ArgCount, 0), (ArgChar, 2), (FileSeek, 3), (FileTruncate, 2), (FileFlush, 1), (IsTerminal, 1), (EnvChar, 2), (CellNew, 1), (CellRead, 1), (CellWrite, 2), (PeekInt, 2), (PeekDouble, 2), (PokeInt, 3), (PokeDouble, 3), (ErrnoGet, 0), (ErrnoSet, 1), (CallbackInt, 1), (CallbackDouble, 1), (CallbackReturnInt, 1), (CallbackReturnDouble, 1), (BytesNew, 1), (BytesWrite, 3), (BytesCopy, 5)]
 
 start :: Hooks -> [(Name, Comb)] -> Name -> IO (Machine, Ref)
 start h defs root = do
@@ -277,6 +287,26 @@ whnf m root = do
       IntToChar | (n, a) : s <- stk -> redirect n a s
       Coerce | (n, a) : s <- stk -> redirect n a s
       IntNarrow | (n, a) : s <- stk -> int m a >>= \x -> update n (NInt (toInteger (fromInteger x :: Int64))) s
+      IntAnd -> arith (.&.)
+      IntOr -> arith (.|.)
+      IntXor -> arith xor
+      IntShiftL -> arith (\x by -> shiftL x (fromInteger (max 0 by)))
+      IntShiftR -> arith (\x by -> shiftR x (fromInteger (max 0 by)))
+      BitsCount | (n, a) : s <- stk -> int m a >>= \x -> update n (NInt (toInteger (popCount (fromInteger x :: Word64)))) s
+      BitsLowest | (n, a) : s <- stk -> int m a >>= \x -> update n (NInt (toInteger (countTrailingZeros (fromInteger x :: Word64)))) s
+      BitsHighest | (n, a) : s <- stk -> int m a >>= \x -> update n (NInt (toInteger (63 - countLeadingZeros (fromInteger x :: Word64)))) s
+      BytesLength | (n, a) : s <- stk -> bytes m a >>= bytesLength >>= \size -> update n (NInt size) s
+      BytesRead | (_, a) : (n, i) : s <- stk -> do
+        from <- bytes m a
+        at <- int m i
+        byteAt from at >>= \b -> update n (NInt (toInteger b)) s
+      BytesCompare | (_, a) : (_, i) : (_, b) : (_, j) : (n, len) : s <- stk -> do
+        one <- bytes m a
+        at <- int m i
+        other <- bytes m b
+        at' <- int m j
+        count <- int m len
+        bytesCompare one at other at' count >>= \o -> update n (NInt o) s
       FloatNarrow | (n, a) : s <- stk -> double m a >>= \x -> update n (NDbl (realToFrac (realToFrac x :: Float))) s
       CharCategory | (n, a) : s <- stk -> int m a >>= \c -> update n (NInt (toInteger (fromEnum (generalCategory (chr (fromInteger c)))))) s
       CharUpper | (n, a) : s <- stk -> int m a >>= \c -> update n (NInt (toInteger (ord (toUpper (chr (fromInteger c)))))) s
@@ -363,6 +393,57 @@ narrowed kind n = case kind of
   'Q' -> toInteger (fromIntegral n :: Word64)
   _ -> toInteger n
 
+bytes :: Machine -> Ref -> IO (IOUArray Int Word8)
+bytes m r =
+  whnf m r >>= readIORef >>= \case
+    NBytes a -> pure a
+    _ -> failure "type error: expected bytes"
+
+-- Bytes, for this machine and the one for AxCut.
+
+bytesNew :: Integer -> IO (IOUArray Int Word8)
+bytesNew n
+  | n < 0 = failure "bytes cannot be fewer than none"
+  | otherwise = newArray (0, fromInteger n - 1) 0
+
+bytesLength :: IOUArray Int Word8 -> IO Integer
+bytesLength a = (\(_, top) -> toInteger top + 1) <$> getBounds a
+
+-- | A run of bytes that is all there, or a failure.
+within :: IOUArray Int Word8 -> Integer -> Integer -> IO ()
+within a at count = do
+  size <- bytesLength a
+  when (at < 0 || count < 0 || at + count > size) (failure "bytes: out of range")
+
+byteAt :: IOUArray Int Word8 -> Integer -> IO Word8
+byteAt a at = within a at 1 >> readArray a (fromInteger at)
+
+byteWrite :: IOUArray Int Word8 -> Integer -> Integer -> IO ()
+byteWrite a at x = within a at 1 >> writeArray a (fromInteger at) (fromInteger x)
+
+bytesCopy :: IOUArray Int Word8 -> Integer -> IOUArray Int Word8 -> Integer -> Integer -> IO ()
+bytesCopy to at from at' count = do
+  within to at count
+  within from at' count
+  -- Read before any is written: the two may be the same bytes.
+  taken <- mapM (readArray from . fromInteger) [at' .. at' + count - 1]
+  zipWithM_ (writeArray to . fromInteger) [at ..] taken
+
+bytesCompare :: IOUArray Int Word8 -> Integer -> IOUArray Int Word8 -> Integer -> Integer -> IO Integer
+bytesCompare one at other at' count = do
+  within one at count
+  within other at' count
+  let go k
+        | k >= count = pure 0
+        | otherwise = do
+            x <- readArray one (fromInteger (at + k))
+            y <- readArray other (fromInteger (at' + k))
+            case compare x y of
+              LT -> pure (-1)
+              GT -> pure 1
+              EQ -> go (k + 1)
+  go 0
+
 int :: Machine -> Ref -> IO Integer
 int m r =
   whnf m r >>= readIORef >>= \case
@@ -418,6 +499,17 @@ runIO m r = do
     (NPrim EnvChar, [i, j]) -> do
       i' <- int m i
       int m j >>= Files.environment i' >>= code
+    (NPrim BytesNew, [n]) -> int m n >>= bytesNew >>= newIORef . NBytes
+    (NPrim BytesWrite, [b, i, x]) -> do
+      to <- bytes m b
+      at <- int m i
+      int m x >>= byteWrite to at >> unit
+    (NPrim BytesCopy, [a, i, b, j, len]) -> do
+      to <- bytes m a
+      at <- int m i
+      from <- bytes m b
+      at' <- int m j
+      int m len >>= bytesCopy to at from at' >> unit
     (NPrim CellNew, [x]) -> do
       n <- toInteger . Map.size <$> readIORef (cells m)
       modifyIORef' (cells m) (Map.insert n x)

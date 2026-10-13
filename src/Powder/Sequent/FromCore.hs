@@ -186,6 +186,10 @@ arity = \case
   ArgCount -> 0
   FileSeek -> 3
   PokeInt -> 3
+  BytesWrite -> 3
+  BytesCopy -> 5
+  BytesCompare -> 5
+  p | p `elem` [IntAnd, IntOr, IntXor, IntShiftL, IntShiftR, BytesRead] -> 2
   PokeDouble -> 3
   ErrnoGet -> 0
   p | p `elem` [Seq, Bind, PutChar, Throw, Catch, ArgChar, FileTruncate, EnvChar, CellWrite, PeekInt, PeekDouble, DoubleShowAt, FloatShowAt, DoubleFun, DoubleEncode, DoubleFromRatio] -> 2
@@ -227,7 +231,7 @@ action p = case p of
       err <- fresh "err"
       Action ok err <$> body ok err
     wrong = error "Powder.Sequent.FromCore: an action given the wrong number of arguments"
-    effects = [PutChar, GetChar, Exit, PathChar, FileOpen, HGetChar, FileClose, HIsEOF, ArgCount, ArgChar, FileSeek, FileTruncate, FileFlush, IsTerminal, EnvChar, CellNew, CellRead, CellWrite, PeekInt, PeekDouble, PokeInt, PokeDouble, ErrnoGet, ErrnoSet, CallbackInt, CallbackDouble, CallbackReturnInt, CallbackReturnDouble]
+    effects = [PutChar, GetChar, Exit, PathChar, FileOpen, HGetChar, FileClose, HIsEOF, ArgCount, ArgChar, FileSeek, FileTruncate, FileFlush, IsTerminal, EnvChar, CellNew, CellRead, CellWrite, PeekInt, PeekDouble, PokeInt, PokeDouble, ErrnoGet, ErrnoSet, CallbackInt, CallbackDouble, CallbackReturnInt, CallbackReturnDouble, BytesNew, BytesWrite, BytesCopy]
 
 -- | A primitive given all its arguments, with where its result goes.
 primitive :: Prim -> [Core] -> Consumer -> M Statement

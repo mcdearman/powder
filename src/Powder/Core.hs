@@ -153,6 +153,32 @@ data Prim
   | DoubleEncode
   | -- | The double nearest the ratio of two integers.
     DoubleFromRatio
+  | -- | Integers a bit at a time, as two's complement without end: where
+    -- both have a bit, where either has, where one has; and an integer
+    -- with its bits moved up or down some places, the sign kept.
+    IntAnd
+  | IntOr
+  | IntXor
+  | IntShiftL
+  | IntShiftR
+  | -- | Of the low sixty-four bits of an integer: how many are set; the
+    -- place of the lowest that is, or 64; and of the highest, or -1.
+    BitsCount
+  | BitsLowest
+  | BitsHighest
+  | -- | Bytes side by side, of a number fixed when they are made. Make
+    -- some, all nothing; write one at a place; and copy a run of them
+    -- from one to another: to, at, from, at, how many. These are actions.
+    BytesNew
+  | BytesWrite
+  | BytesCopy
+  | -- | The byte at a place, and how many there are; and two runs
+    -- compared a byte at a time, giving -1, 0 or 1: one, at, the other,
+    -- at, how many. These are not actions, and are for bytes that are no
+    -- longer written.
+    BytesRead
+  | BytesLength
+  | BytesCompare
   deriving (Eq, Ord, Show, Enum, Bounded)
 
 primName :: Prim -> Name
