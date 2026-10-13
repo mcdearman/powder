@@ -78,7 +78,7 @@ Since, with the milestones that made them possible: `Data.Kind`,
 `Data.Coerce`, `Data.Proxy`, `Data.Typeable`, `Data.Type.Equality`,
 `GHC.TypeLits` and `GHC.Generics`. Still to write, and nothing stands in
 their way now: `Control.Exception`, whose `SomeException` is an existential
-type over a class with `Typeable` above it, and `Data.Void`.
+type over a class with `Typeable` above it. `Data.Void` is there.
 
 Beside `base`, of the containers package: `Data.Map`, `Data.Set`,
 `Data.IntMap` and `Data.IntSet`, with `Data.Map.Strict` and
@@ -376,8 +376,9 @@ what stands in the way: the extensions its sources use are done, Generic among
 them. What does is what it is built from. Its lexer is made by Alex. It
 depends on containers, mtl, text, bytestring, binary, array, directory,
 filepath, unix, prettyprinter and diagnose. Of those the library here now has
-what the compiler uses of containers and mtl, and `Control.Monad.ST`; it has
-no `Data.Text`, `System.Directory` or `System.FilePath`, which are next. bytestring, binary
+what the compiler uses of containers and mtl, `Control.Monad.ST`, and
+`System.FilePath` but for `normalise` and `makeRelative`; it has no
+`Data.Text` or `System.Directory`, which are next. bytestring, binary
 and diagnose are better replaced in the compiler by modules of its own than
 compiled.
 
