@@ -162,6 +162,7 @@ instanceName program inst = "inst#" ++ spelling program (HIR.instanceClass inst)
       HIR.Type.Var _ -> "_"
       HIR.Type.Fun a b -> "(-> " ++ spelt a ++ " " ++ spelt b ++ ")"
       HIR.Type.App f a -> "(" ++ spelt f ++ " " ++ spelt a ++ ")"
+      HIR.Type.Forall _ _ inner -> "(forall " ++ spelt inner ++ ")"
       HIR.Type.Error -> "?"
 
 -- | The dictionary that evidence says to use.
@@ -227,13 +228,23 @@ mkIf c t e = Case c [Alt falseCon [] e, Alt trueCon [] t]
 
 -- Expressions -------------------------------------------------------------
 
+-- | An expression. One given where something is wanted that works at
+-- more than one type, with classes asked of the types, is a function of
+-- the dictionaries: the checker says so of its node.
 dsExpr :: HIR.Expr -> M Core
 dsExpr e = case HIR.exprKind e of
+  -- What is said to have a type takes the dictionaries that says.
+  HIR.Annotated _ _ -> dsExpr' e
+  _ -> dsExpr' e >>= taking (HIR.exprId e)
+
+dsExpr' :: HIR.Expr -> M Core
+dsExpr' e = case HIR.exprKind e of
   HIR.Var x -> name x >>= given (HIR.exprId e) . Var
   -- A newtype's constructor is not there: what it is given is the value.
   HIR.Con c -> do
     erased <- asks ((c `elem`) . HIR.programNewtypes . envProgram)
-    if erased then pure (Lam "$x" (Var "$x")) else Con <$> conInfo c
+    -- One with a context is given the dictionaries first, to keep.
+    if erased then pure (Lam "$x" (Var "$x")) else conInfo c >>= given (HIR.exprId e) . Con
   HIR.Prim p -> pure (Prim p)
   -- A number is made of an integer by its type's way of making one, if
   -- it needs making.
@@ -262,7 +273,9 @@ dsExpr e = case HIR.exprKind e of
     nil <- Con <$> wired "[]"
     cons <- Con <$> wired ":"
     pure (foldr (App . App cons . Lit . toInteger . ord) nil s)
-  HIR.App f a -> App <$> dsExpr f <*> dsExpr a
+  -- What a function gives may be for all types, with classes asked of
+  -- them, and is then given the dictionaries where it is used.
+  HIR.App f a -> (App <$> dsExpr f <*> dsExpr a) >>= given (HIR.exprId e)
   HIR.Lam ps body -> do
     patterns <- mapM dsPat ps
     dsClauses (length ps) [(patterns, const (dsExpr body))]
@@ -553,12 +566,15 @@ dsPat p = case Pat.patKind p of
   Pat.Con c ps -> do
     con <- conInfo c
     erased <- asks ((c `elem`) . HIR.programNewtypes . envProgram)
-    unless (length ps == conArity con) $
-      err (Pat.patId p) ("constructor " ++ conName con ++ " should have " ++ show (conArity con) ++ " arguments, but has been given " ++ show (length ps))
+    -- The dictionaries a constructor with a context keeps come first,
+    -- and are what its context gives where it is matched.
+    kept <- asks ((`parametersOf` Pat.patId p) . envChecked)
+    unless (length kept + length ps == conArity con) $
+      err (Pat.patId p) ("constructor " ++ conName con ++ " should have " ++ show (conArity con - length kept) ++ " arguments, but has been given " ++ show (length ps))
     -- A newtype's constructor is not there: what is matched is the value.
     case ps of
       [q] | erased -> dsPat q
-      _ -> Built (conName con) <$> mapM dsPat ps
+      _ -> Built (conName con) . (map (Variable . parameter) kept ++) <$> mapM dsPat ps
   Pat.As x q -> Named <$> name x <*> dsPat q
   Pat.Lazy q -> Lazily <$> dsPat q
   Pat.Bang q -> Forced <$> dsPat q

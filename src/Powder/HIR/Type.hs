@@ -21,5 +21,9 @@ data Form
     Con NameId
   | App Type Type
   | Fun Type Type
+  | -- | A type for all types its variables could be, that are instances
+    -- of the classes asked of them: each a class and the types it is
+    -- asked of.
+    Forall [NameId] [(NameId, [Type])] Type
   | -- | Where the source was wrong.
     Error

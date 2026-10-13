@@ -151,6 +151,13 @@ data Env s = Env
     -- | Where names being inferred are used, which is where they will
     -- need what their groups turn out to take.
     refUses :: STRef s [(NameId, NodeId)],
+    -- | What the patterns just checked give to what is matched under
+    -- them: the contexts of the constructors in them that have one. It
+    -- is taken where the names they bind come into scope.
+    refMatched :: STRef s [Given s],
+    -- | The constructors that have type variables of their own, or a
+    -- context: those, by 'NameId'.
+    envExistentials :: IntMap.IntMap ([NameId], [Constraint]),
     -- | The numbers.
     refLiterals :: STRef s [NodeId]
   }
@@ -177,9 +184,10 @@ typecheckAfter theirs general program = runST $ do
   evidence <- newSTRef IntMap.empty
   parameters <- newSTRef IntMap.empty
   uses <- newSTRef []
+  matched <- newSTRef []
   literals <- newSTRef []
   let instances = IntMap.fromListWith (flip (++)) [(nameKey (instanceClass i), [i]) | i <- programInstances program]
-  runReaderT run (Env program IntMap.empty [] Nothing [] IntSet.empty instances general moduleOf reach next types schemes problems wanted evidence parameters uses literals)
+  runReaderT run (Env program IntMap.empty [] Nothing [] IntSet.empty instances general moduleOf reach next types schemes problems wanted evidence parameters uses matched existentials literals)
   foundTypes <- readSTRef types >>= traverse Unify.zonk
   foundSchemes <- readSTRef schemes >>= traverse zonkPoly
   foundEvidence <- readSTRef evidence >>= traverse (mapM zonkEvidence)
@@ -193,6 +201,7 @@ typecheckAfter theirs general program = runST $ do
   numbers <- filter plain <$> readSTRef literals
   pure (Checked foundTypes foundSchemes (foldr (IntMap.delete . nodeKey) foundEvidence numbers) foundParameters, reverse found)
   where
+    existentials = IntMap.fromList [(nameKey c, extra) | d <- programDataTypes program, (c, extra) <- dataExistentials d]
     moduleOf n = n >>= origin program >>= \o -> lookup (originFile o) (programModules program)
     imports = Map.fromList (programImports program)
     -- Everything a module's imports lead to.
@@ -245,6 +254,7 @@ typecheckAfter theirs general program = runST $ do
       Types.Fun a b -> Fun <$> thawed a <*> thawed b
       Types.Rigid v -> pure (Rigid v)
       Types.Meta _ -> unknown
+      Types.Quantified vs context t -> Quantified vs <$> mapM (\(Types.Pred c ts) -> (,) c <$> mapM thawed ts) context <*> thawed t
 
 -- | Whether a class has an instance at a type constructor: one whose
 -- one type is that constructor, applied to whatever.
@@ -319,13 +329,32 @@ listOf element = (`App` element) <$> builtin builtinList
 schemeOfName :: NameId -> Tc s (Poly s)
 schemeOfName x = asks (IntMap.lookup (nameKey x) . envSchemes) >>= maybe (Poly [] [] <$> unknown) pure
 
--- | Bring names into scope with types that are not generalised.
+-- | Bring names into scope with types that are not generalised: those
+-- patterns bind. With them comes what the patterns' constructors give,
+-- and what is wanted while they are in scope is seen to before they go
+-- out of it, since nothing outside knows what they gave.
 withMonos :: [(NameId, Type s)] -> Tc s a -> Tc s a
-withMonos binds = local $ \env ->
-  env
-    { envSchemes = IntMap.union (IntMap.fromList [(nameKey x, Poly [] [] t) | (x, t) <- binds]) (envSchemes env),
-      envMonos = map snd binds ++ envMonos env
-    }
+withMonos binds inner = do
+  ref <- asks refMatched
+  given' <- lift (readSTRef ref <* writeSTRef ref [])
+  -- One whose type is for all types its variables could be is used at
+  -- any of them, as something declared with that type would be.
+  schemes <- forM binds $ \(x, t) ->
+    lift (Unify.shallow t) >>= \case
+      Quantified vs context body -> pure (nameKey x, Poly vs [Pred c ts | (c, ts) <- context] body)
+      _ -> pure (nameKey x, Poly [] [] t)
+  let scoped = local $ \env ->
+        env
+          { envSchemes = IntMap.union (IntMap.fromList schemes) (envSchemes env),
+            envMonos = map snd binds ++ envMonos env,
+            envGivens = given' ++ envGivens env
+          }
+  if null given'
+    then scoped inner
+    else scoped $ do
+      (result, wanted) <- capture inner
+      solve wanted >>= defer
+      pure result
 
 withSchemes :: [(NameId, Poly s)] -> Tc s a -> Tc s a
 withSchemes binds = local (\env -> env {envSchemes = IntMap.union (IntMap.fromList [(nameKey x, p) | (x, p) <- binds]) (envSchemes env)})
@@ -705,6 +734,11 @@ fromSyntaxIn = go
       (Syntax.Var a, arguments) -> foldl App (IntMap.findWithDefault (Rigid a) (nameKey a) scope) <$> mapM (go scope) arguments
       (Syntax.Fun a b, []) -> Fun <$> go scope a <*> go scope b
       (Syntax.Fun _ _, _) -> complain "a function type cannot be applied to a type" >> unknown
+      -- Its own variables stand for themselves in it.
+      (Syntax.Forall vs context inner, []) -> do
+        let within' = foldr (IntMap.delete . nameKey) scope vs
+        Quantified vs <$> mapM (\(c, ts) -> (,) c <$> mapM (go within') ts) context <*> go within' inner
+      (Syntax.Forall {}, _) -> complain "a type for all types cannot be applied to a type" >> unknown
       (Syntax.App _ _, _) -> unknown
       (Syntax.Error, _) -> unknown
 
@@ -721,9 +755,11 @@ constructed c arguments = case arguments of
 
 -- | The types of a data type's constructors: from its fields to itself.
 constructorSchemes :: DataType -> Tc s [(Int, Poly s)]
-constructorSchemes (DataType t parameters constructors) = forM constructors $ \(c, fields) -> do
+constructorSchemes (DataType t parameters constructors existentials) = forM constructors $ \(c, fields) -> do
   fields' <- mapM fromSyntax fields
-  pure (nameKey c, Poly parameters [] (foldr Fun (foldl App (Con t) (map Rigid parameters)) fields'))
+  let (own, asked) = fromMaybe ([], []) (lookup c existentials)
+  context <- forM asked (\(Constraint k us) -> Pred k <$> mapM fromSyntax us)
+  pure (nameKey c, Poly (parameters ++ own) context (foldr Fun (foldl App (Con t) (map Rigid parameters)) fields'))
 
 -- | The type a name was declared to have, if it was. A method's is for
 -- the instances of its class.
@@ -945,6 +981,10 @@ binding b = at (bindingId b) $ case bindingKind b of
     record (bindingId b) t
     rhs r t
     binds <- pattern' p t
+    -- What a pattern that is bound matches has no place to give what a
+    -- constructor's context would.
+    asks refMatched >>= \ref -> lift (readSTRef ref <* writeSTRef ref []) >>= \given' ->
+      unless (null given') (complain "a constructor with a context cannot be matched in a pattern that is bound: match it in a case")
     -- The names are in scope already, with the types they are to have.
     forM_ binds $ \(x, found) -> do
       Poly _ _ wanted <- schemeOfName x
@@ -1010,7 +1050,21 @@ pattern' p t = at (Pat.patId p) $ do
     Pat.Wild -> pure []
     Pat.Lit l -> [] <$ (literal True l >>= unify t)
     Pat.Con c ps -> do
-      constructor <- schemeOfName c >>= instantiate
+      existential <- asks (IntMap.lookup (nameKey c) . envExistentials)
+      constructor <- case existential of
+        Nothing -> schemeOfName c >>= instantiate
+        -- A constructor with type variables of its own, or a context:
+        -- matched, its own variables are types nothing is known of but
+        -- what its context says, which what is matched gives.
+        Just (own, _) -> do
+          Poly vs context whole <- schemeOfName c
+          scope <- IntMap.fromList <$> forM vs (\v -> (,) (nameKey v) <$> if v `elem` own then Rigid . NameId <$> freshKey else unknown)
+          context' <- forM context (\(Pred k as) -> Pred k <$> lift (mapM (Unify.substitute scope) as))
+          ds <- forM context' (const freshKey)
+          recordParameters (Pat.patId p) ds
+          given' <- givens context' ds
+          note refMatched (given' ++)
+          lift (Unify.substitute scope whole)
       let (fields, result) = arrows constructor
       unify t result
       when (length fields /= length ps) $
@@ -1080,7 +1134,11 @@ infer e = at (exprId e) $ do
     HIR.App f a -> do
       (argument, result) <- infer f >>= unifyFun
       check a argument
-      pure result
+      -- What it gives may be for all types its variables could be: a
+      -- field of that kind, taken out. It is used at one of them.
+      lift (Unify.shallow result) >>= \case
+        Quantified vs context body -> instantiate (Poly vs [Pred c ts | (c, ts) <- context] body)
+        _ -> pure result
     HIR.Lam ps body -> do
       arguments <- mapM (const unknown) ps
       binds <- concat <$> zipWithM pattern' ps arguments
@@ -1141,7 +1199,24 @@ appliedTo inner x types = at (exprId inner) $ do
 -- else is asked for its type, which is then made the same as the one
 -- expected.
 check :: Expr -> Type s -> Tc s ()
-check e expected = at (exprId e) $ case exprKind e of
+check e expected =
+  lift (Unify.shallow expected) >>= \case
+    -- Against a type for all types its variables could be, it is checked
+    -- with those standing for themselves, and what is asked of them
+    -- given: it is a function of the dictionaries for that.
+    Quantified _ context body -> at (exprId e) $ do
+      let asked = [Pred c ts | (c, ts) <- context]
+      ds <- forM asked (const freshKey)
+      recordParameters (exprId e) ds
+      given' <- givens asked ds
+      local (\env -> env {envGivens = given' ++ envGivens env}) $ do
+        ((), wanted) <- capture (check e body)
+        solve wanted >>= defer
+    _ -> checkAgainst e expected
+
+-- | Check an expression against a type that is not for all types.
+checkAgainst :: Expr -> Type s -> Tc s ()
+checkAgainst e expected = at (exprId e) $ case exprKind e of
   HIR.Lam ps body -> do
     record (exprId e) expected
     let go [] result = check body result

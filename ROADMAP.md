@@ -50,7 +50,7 @@ CUSKs, DeepSubsumption. MonoLocalBinds and PolyKinds change what some Haskell
 | M3 | Deriving | done |
 | M4 | Explicit quantification at rank 1 | done |
 | M5 | The class system | done |
-| M6 | Higher ranks and existentials | not started |
+| M6 | Higher ranks and existentials | done |
 | M7 | GADTs, type families and what needs an implication solver | not started |
 | M8 | Kinds | not started |
 
@@ -194,8 +194,23 @@ What these do not yet do:
 - INCOHERENT is not read.
 - A newtype's instance of a class of several types is not derived.
 
-**M6, higher ranks and existentials.** RankNTypes, ExistentialQuantification;
-QuantifiedConstraints perhaps.
+**M6, higher ranks and existentials.**
+
+- [x] ExistentialQuantification
+- [x] RankNTypes
+
+What these do not yet do:
+
+- A type variable a constructor has of its own is not checked to stay
+  where it is matched: a program that lets one out is not refused, and is
+  wrong.
+- A constructor with a context, or type variables of its own, does not have
+  its fields named, has no instances derived for it, and is not matched in a
+  pattern that is bound.
+- A type for all types is in an argument's place, a field's, or a newtype's:
+  not after an arrow, and not what a type variable is. Two are the same only
+  if they were written once.
+- QuantifiedConstraints is not done.
 
 **M7, what needs an implication solver.** GADTs, type equality, TypeFamilies,
 DeriveGeneric, Coercible and RoleAnnotations, DerivingVia. An OutsideIn solver:

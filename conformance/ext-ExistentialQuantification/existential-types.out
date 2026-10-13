@@ -1,0 +1,11 @@
+[1,"two",Just True,['c']]
+numbers: 1="a";2="b";3="c";
+letters: 'a'=False;'z'=True;
+[3.0,6.0,7.0]
+["Circle 1.0","Rect 2.0 3.0","plain"]
+([1,2,3,4,5],[2,4,6])
+(6,2)
+(Just 1,Just 'e',Nothing)
+()
+2.5
+["'x'","Left 1"]
