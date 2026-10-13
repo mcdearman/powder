@@ -58,6 +58,7 @@ library
     Powder.Types
     Powder.Unify
     Powder.Sequent
+    Powder.Simplify
     Powder.Sequent.FromCore
     Powder.SKI.Comb
     Powder.SKI.Compile

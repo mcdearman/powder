@@ -378,9 +378,12 @@ the machine ten seconds; that was not the depth, which costs nothing, but that
 every step of such a recursion is slow, about a microsecond and a half and
 some twenty thousand of the processor's instructions. The example is a hundred
 thousand deep now, so that the machine for AxCut can run it with the others.
-What makes a step slow is the next thing to look at for speed. It has not been
-measured further than that; arithmetic on `Int` by way of a dictionary, and
-thunks made where a value is wanted at once, are where to look first.
+Part of what made a step slow is gone: a whole program is now made smaller
+before it is compiled, by seeing which dictionary a method is applied to and
+writing out the small functions that `Int`'s arithmetic was made of, and the
+million-deep recursion is four times as fast for it. What is left to look at
+is thunks made where a value is wanted at once, for which the compiler would
+have to know what is strict.
 
 ## The tools
 
