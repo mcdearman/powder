@@ -377,8 +377,11 @@ them. What does is what it is built from. Its lexer is made by Alex. It
 depends on containers, mtl, text, bytestring, binary, array, directory,
 filepath, unix, prettyprinter and diagnose. Of those the library here now has
 what the compiler uses of containers and mtl, `Control.Monad.ST`, and
-`System.FilePath` but for `normalise` and `makeRelative`; it has no
-`Data.Text` or `System.Directory`, which are next. bytestring, binary
+`System.FilePath` but for `normalise` and `makeRelative`, and `Data.Text`
+with `Data.Text.IO`. Text here is a list of characters under a type of its
+own: a program written for the text package means the same, and takes the
+time a list does. There is no `System.Directory`, which is next, and wants
+the machines to know of directories. bytestring, binary
 and diagnose are better replaced in the compiler by modules of its own than
 compiled.
 
@@ -391,9 +394,9 @@ compiled.
 | A collector for cycles, beside the reference counts | done |
 | The machine two to three times faster | done |
 | A register machine with its own stack of frames, not the native one | done |
-| Stack segments that can be detached, for effects and continuations | not started |
-| A tracing collector, as an option | not started |
-| Compiling to native code, ahead of time or as the program runs | not started |
+| Stack segments that can be detached, for effects and continuations | waiting |
+| A tracing collector, as an option | waiting |
+| Compiling to native code, ahead of time or as the program runs | waiting |
 
 **The register machine** is the machine. It passes the compiler's suite and
 the build tool's. `examples/deep.hs` was a recursion a million deep, and took
