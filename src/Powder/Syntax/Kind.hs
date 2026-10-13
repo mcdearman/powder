@@ -181,6 +181,8 @@ data SyntaxKind
     TyKinded
   | -- | Types with operators between them: @a :+: b@.
     TyInfix
+  | -- | @'[a, b]@: a list of types, as a type.
+    TyPromotedList
   | -- | A kind, as its tokens.
     KindSig
   | -- | @(a :: kind)@, where a type variable is named.

@@ -1241,6 +1241,14 @@ type' t = within t $ case t of
       Just n -> mkType (Type.Var n)
       Nothing -> complain ("type variable not in scope: " ++ x) >> mkType Type.Error
   SType.Con c -> typeConstructor c
+  -- A list of types, as a type: the list's constructors, as types.
+  SType.PromotedList elements -> do
+    promoted <- enabled DataKinds
+    unless promoted (complain "a list of types is a type only if DataKinds is on")
+    nil <- asks (Map.lookup "[]" . envConstructors) >>= maybe (mkType Type.Error) (mkType . Type.Con)
+    cons <- asks (Map.lookup ":" . envConstructors)
+    resolved <- mapM type' elements
+    foldM (\rest element -> maybe (mkType Type.Error) (mkType . Type.Con) cons >>= (`applyType` [element, rest])) nil (reverse resolved)
   -- The arrow written before its two types is the arrow between them.
   SType.App (SType.Con "->") [a, b] -> (Type.Fun <$> type' a <*> type' b) >>= mkType
   SType.App f arguments -> do
@@ -1272,7 +1280,8 @@ type' t = within t $ case t of
   -- A type said to have a kind is the type, and the kind is checked.
   SType.Kinded inner k -> do
     inner' <- type' inner
-    inner' <$ modify (\st -> st {kindedTypes = (inner', kindSyntax k) : kindedTypes st})
+    said <- kindSyntax k
+    inner' <$ modify (\st -> st {kindedTypes = (inner', said) : kindedTypes st})
   -- Types with operators between them group as the operators' fixities
   -- say, each operator a type's name applied to the two.
   SType.Operators operands operators -> do
@@ -1303,10 +1312,20 @@ type' t = within t $ case t of
   where
     mkType form = (`Type.Type` form) <$> node
     applyType = foldM (\f a -> mkType (Type.App f a))
-    typeConstructor c =
-      asks (Map.lookup c . envTypes) >>= \case
-        Just n -> mkType (Type.Con n)
-        Nothing -> missing "unknown type " c >> mkType Type.Error
+    -- With DataKinds a constructor is a type too: where a tick says so,
+    -- or where no type goes by the name.
+    typeConstructor c = do
+      promoted <- enabled DataKinds
+      let (ticked, plain) = case c of
+            '\'' : rest -> (True, rest)
+            _ -> (False, c)
+      ofType <- asks (Map.lookup plain . envTypes)
+      ofConstructor <- asks (Map.lookup plain . envConstructors)
+      case (ofType, ofConstructor) of
+        (Just n, _) | not ticked -> mkType (Type.Con n)
+        (_, Just k) | promoted -> mkType (Type.Con k)
+        (Just n, _) -> mkType (Type.Con n)
+        _ -> missing "unknown type " c >> mkType Type.Error
 
 -- | The type variables a type mentions, as they are spelled, in order.
 typeVariables :: SType.Type -> [Name]
@@ -1323,6 +1342,7 @@ typeVariables = \case
   SType.Wild -> []
   SType.Kinded inner _ -> typeVariables inner
   SType.Operators operands _ -> concatMap typeVariables operands
+  SType.PromotedList elements -> concatMap typeVariables elements
 
 -- | Note the types a scope's signatures declare, for the names that scope
 -- defines, which are in scope. A signature quantifies over the variables
@@ -1398,12 +1418,25 @@ signatureFull given whole = do
 
 -- | Note the kind something is said to have.
 sayKind :: Syntax.Kind -> NameId -> M ()
-sayKind k n = modify (\st -> st {kindsSaid = IntMap.insert (nameKey n) (kindSyntax k) (kindsSaid st)})
+sayKind k n = kindSyntax k >>= \said -> modify (\st -> st {kindsSaid = IntMap.insert (nameKey n) said (kindsSaid st)})
 
-kindSyntax :: Syntax.Kind -> KindSyntax
+-- | A kind as it is written, with the data type it names found.
+kindSyntax :: Syntax.Kind -> M KindSyntax
 kindSyntax = \case
-  Syntax.Star -> KindStar
-  Syntax.Arrow a r -> KindArrow (kindSyntax a) (kindSyntax r)
+  Syntax.Star -> pure KindStar
+  Syntax.Arrow a r -> KindArrow <$> kindSyntax a <*> kindSyntax r
+  Syntax.ListOf k -> KindList <$> kindSyntax k
+  Syntax.Variable v -> do
+    poly <- enabled PolyKinds
+    unless poly (complain ("a kind has a variable in it, " ++ v ++ ", only if PolyKinds is on"))
+    pure (KindVariable v)
+  -- A data type is a kind, of the types its constructors are.
+  Syntax.Named c -> do
+    promoted <- enabled DataKinds
+    unless promoted (complain ("a data type, " ++ c ++ ", is a kind only if DataKinds is on"))
+    asks (Map.lookup c . envTypes) >>= \case
+      Just t -> pure (KindNamed t)
+      Nothing -> KindStar <$ complain ("unknown kind " ++ c)
 
 -- | The fixity of an operator that is a type's name: what was declared
 -- for the type, or for the constructor of the same name, since one

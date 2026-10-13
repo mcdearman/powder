@@ -115,8 +115,10 @@ data Family = Family
     familyEquations :: [([NameId], [Type], Type)]
   }
 
--- | A kind as a program writes it.
-data KindSyntax = KindStar | KindArrow KindSyntax KindSyntax
+-- | A kind as a program writes it: the kind of types, a function between
+-- kinds, a data type whose constructors are the types of it, a variable,
+-- which stands for any kind, or a list of types of a kind.
+data KindSyntax = KindStar | KindArrow KindSyntax KindSyntax | KindNamed NameId | KindVariable String | KindList KindSyntax
 
 -- | How many identities a package may make: each package's are in a run
 -- of this many, so that packages compiled apart do not make the same ones.

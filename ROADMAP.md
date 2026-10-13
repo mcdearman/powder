@@ -52,7 +52,7 @@ CUSKs, DeepSubsumption. MonoLocalBinds and PolyKinds change what some Haskell
 | M5 | The class system | done |
 | M6 | Higher ranks and existentials | done |
 | M7 | GADTs, type families and what needs an implication solver | in progress |
-| M8 | Kinds | not started |
+| M8 | Kinds | in progress |
 
 **M0, plumbing.** Done. LANGUAGE pragmas are read, an edition names a set of
 extensions, and a package's `Powder.toml` sets both for all its modules. Asking
@@ -263,8 +263,36 @@ What these do not yet do:
   declares them, and not in another compiled apart.
 - Equations given apart are not checked against each other.
 
-**M8, kinds.** PolyKinds, DataKinds, type-level literals, Typeable and
-DeriveDataTypeable. This replaces `src/Powder/Kinds.hs`.
+**M8, kinds.**
+
+- [x] DataKinds: a data type as a kind, its constructors as types, and
+      lists of types
+- [x] PolyKinds, where a kind is written with a variable in it
+- [ ] Type-level literals, with `GHC.TypeLits`
+- [ ] Typeable, with `Data.Typeable`, and DeriveDataTypeable
+
+`src/Powder/Kinds.hs` was to be replaced. It was added to: a kind may now be
+a data type applied to kinds, and a kind written with a variable in it is
+read anew, as kinds not yet known, at each use of what was said to have it.
+
+What these do not yet do:
+
+- A kind is general only where it is written with a variable. Nothing
+  generalises the kind that is found for a declaration: `data Proxy a =
+  Proxy` without the `(a :: k)` has a parameter that is a type, and not one
+  of any kind, as GHC would have it with PolyKinds on.
+- A kind variable is a kind not yet known each time it is read, so nothing
+  holds two written `k`s in one declaration to be the same kind at a use.
+  A program GHC would refuse for that is accepted.
+- The body of a declaration whose parameter is of a general kind is not
+  checked against that kind.
+- There is no `forall k.` in a kind or a type, no kind applied by name
+  other than a list's, and a type synonym, a class or a function from types
+  is not a kind or a type by promotion: only a data type and its
+  constructors are.
+- A tuple of types, `'(a, b)`, is not a type.
+- A kind said of a type or of a parameter is known in the package that
+  says it, and not in another compiled apart.
 
 ### On the side
 

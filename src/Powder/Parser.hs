@@ -910,8 +910,10 @@ kind = do
       star <- (&&) <$> at VarSym <*> atText "*"
       case () of
         _
-          | star || k `elem` [ConId, QConId, RightArrow] -> advance >> go
+          -- A kind may be a data type's name, a variable, or a list's.
+          | star || k `elem` [ConId, QConId, RightArrow, VarId] -> advance >> go
           | k == LParen -> advance >> go >> expect_ RParen >> go
+          | k == LBracket -> advance >> go >> expect_ RBracket >> go
           | otherwise -> pure ()
 
 -- | Do something for as long as a test holds. The test may consume.
@@ -1133,7 +1135,14 @@ atype' = do
           | kinded -> advance >> kind >> expect_ RParen >> close m TyKinded
           | otherwise -> expect_ RParen >> close m TyParen
     LBracket : RBracket : _ -> advance >> advance >> close m TyCon
-    LBracket : _ -> advance >> type_ >> expect_ RBracket >> close m TyList
+    LBracket : _ -> do
+      -- With a tick before it, a list of types, which is a type.
+      promoted <- atText "'["
+      advance
+      type_
+      if promoted
+        then whileM (eat Comma) type_ >> expect_ RBracket >> close m TyPromotedList
+        else expect_ RBracket >> close m TyList
     _ -> problem "expected a type" >> close m ErrorNode
 
 -- Expressions -----------------------------------------------------------------
