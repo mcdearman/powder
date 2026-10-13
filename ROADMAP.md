@@ -394,9 +394,9 @@ compiled.
 | A collector for cycles, beside the reference counts | done |
 | The machine two to three times faster | done |
 | A register machine with its own stack of frames, not the native one | done |
-| Stack segments that can be detached, for effects and continuations | not started |
-| A tracing collector, as an option | not started |
-| Compiling to native code, ahead of time or as the program runs | not started |
+| Stack segments that can be detached, for effects and continuations | waiting |
+| A tracing collector, as an option | waiting |
+| Compiling to native code, ahead of time or as the program runs | waiting |
 
 **The register machine** is the machine. It passes the compiler's suite and
 the build tool's. `examples/deep.hs` was a recursion a million deep, and took
