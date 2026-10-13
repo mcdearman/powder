@@ -755,9 +755,12 @@ and a dictionary taken apart. A method applied to a dictionary that is
 written out is now the definition it would have found, a coercion applied
 to something is the thing, another name for something is that thing, and
 a small function that binds nothing is written out where it is called, if
-that does nothing twice. `count n = 1 + count (n - 1)` a million deep
-went from 1.4 seconds to 0.35 on the machine, and a sum over a list a
-million long from 2.1 to 0.9. It is done to every program, for all three
+that does nothing twice. An instance that needs others, which made its
+dictionary again each time it was asked for, is made once for the
+dictionaries it is given. `count n = 1 + count (n - 1)` a million deep
+went from 1.4 seconds to 0.35 on the machine, a sum over a list a
+million long from 2.1 to 0.9, and two lists of three hundred thousand
+compared from 0.68 to 0.53. It is done to every program, for all three
 ways of running one. What is left is mostly thunks made where a value is
 wanted at once, which nothing yet looks for.
 

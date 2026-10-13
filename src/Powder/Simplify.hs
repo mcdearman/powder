@@ -10,6 +10,11 @@
 -- * A dictionary written out at the top has each of its fields made a
 --   definition of its own, and a method applied to such a dictionary is
 --   that definition.
+-- * An instance that needs others is a function of their dictionaries,
+--   and makes its dictionary again each time it is asked for: at every
+--   element of a list being compared, say. Where it is applied to
+--   dictionaries that are known, it is made once for those, as a
+--   definition of its own that is a dictionary written out.
 -- * A coercion applied to something is the thing.
 -- * A definition that is only another name for something is that thing,
 --   at the top of a program and inside a definition.
@@ -23,7 +28,7 @@
 module Powder.Simplify (simplify, shaken) where
 
 import Data.Bifunctor (second)
-import Data.List (elemIndex, isPrefixOf, nub)
+import Data.List (elemIndex, intercalate, isPrefixOf, nub)
 import qualified Data.Map.Strict as Map
 import Powder.Core
 
@@ -72,9 +77,42 @@ spineOf = go []
 
 -- | Every definition, with what the others are seen to be put to use.
 again :: [(Name, Core)] -> [(Name, Core)]
-again defs = map (second go) defs
+again defs = map (second go) defs ++ concatMap apart [(x, go e) | (x, e) <- Map.toList made]
   where
     env = Map.fromList defs
+    -- An instance that needs others: a function of their dictionaries.
+    needing = Map.mapMaybeWithKey (\x e -> case parameters e of (ps@(_ : _), body) | instance' x -> Just (ps, body); _ -> Nothing) env
+    instance' = ("inst#" `isPrefixOf`)
+    -- Such a one applied to dictionaries that are known: which, to
+    -- which, and what the result is applied to besides.
+    site e = case spineOf e of
+      (Var f, arguments)
+        | Just (ps, _) <- Map.lookup f needing,
+          length arguments >= length ps,
+          Just given <- mapM known (take (length ps) arguments) ->
+            Just (f, given, drop (length ps) arguments)
+      _ -> Nothing
+    known = \case
+      Var g | instance' g, Map.member g env -> Just g
+      _ -> Nothing
+    special f given = f ++ "<" ++ intercalate "," given ++ ">"
+    -- Each made once for the dictionaries it is given somewhere.
+    made =
+      Map.fromList
+        [ (special f given, foldr (\(p, g) -> renamed p (Var g)) body (zip ps given))
+          | (_, e) <- defs,
+            (f, given) <- sites e,
+            Map.notMember (special f given) env,
+            Just (ps, body) <- [Map.lookup f needing]
+        ]
+    sites e =
+      [(f, given) | Just (f, given, _) <- [site e]] ++ case e of
+        App f a -> sites f ++ sites a
+        Lam _ body -> sites body
+        Let (NonRec _ bound) body -> sites bound ++ sites body
+        Let (Rec bs) body -> concatMap (sites . snd) bs ++ sites body
+        Case scrutinee alts -> sites scrutinee ++ concat [sites body | Alt _ _ body <- alts]
+        _ -> []
     -- A function that gives one field of a constructor: which, of which.
     selectors = Map.mapMaybe selector env
     selector = \case
@@ -110,11 +148,21 @@ again defs = map (second go) defs
         bound' | atomic bound', not (rebound bound' body) -> go (renamed x bound' body)
         bound' -> Let (NonRec x bound') (go body)
       Let (Rec bs) body -> Let (Rec (map (second go) bs)) (go body)
-      Case scrutinee alts -> Case (go scrutinee) [Alt c xs (go body) | Alt c xs body <- alts]
+      -- A dictionary that is written out, taken apart: its fields.
+      Case scrutinee alts -> case (go scrutinee, alts) of
+        (Var d, [Alt c xs body])
+          | Just (c', fields) <- Map.lookup d dictionaries,
+            c' == conName c,
+            length xs == length fields ->
+              go (foldr (uncurry renamed) body (zip xs fields))
+        (scrutinee', _) -> Case scrutinee' [Alt c xs (go body) | Alt c xs body <- alts]
       _ -> e
 
     reduce e = case e of
       App (Prim Coerce) a -> a
+      -- Once it has been made for them: what is seen to be such a one
+      -- only now is made the next time round.
+      _ | Just (f, given, rest) <- site e, Map.member (special f given) env || Map.member (special f given) made -> foldl App (Var (special f given)) rest
       App (Var s) (Var d)
         | Just (c, i) <- Map.lookup s selectors,
           Just (c', fields) <- Map.lookup d dictionaries,
