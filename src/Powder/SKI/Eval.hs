@@ -193,6 +193,9 @@ whnf m root = do
         NDbl _
           | null stk -> pure r
           | otherwise -> failure "type error: a floating-point number was applied to an argument"
+        NBytes _
+          | null stk -> pure r
+          | otherwise -> failure "type error: bytes were applied to an argument"
         NComb c -> comb c r stk
         NPrim p -> prim p r stk
         -- A C function is called when all its arguments are there, each

@@ -82,10 +82,12 @@ type over a class with `Typeable` above it. `Data.Void` is there.
 
 Beside `base`, of the containers package: `Data.Map`, `Data.Set`,
 `Data.IntMap` and `Data.IntSet`, with `Data.Map.Strict` and
-`Data.IntMap.Strict`. They are trees balanced by their sizes, as that
-package's are, and are checked against it. A map is lazy in its values under
-either name, and a map or a set of `Int` is the map or the set at that type,
-not a type of its own.
+`Data.IntMap.Strict`, each made as that package makes it and checked
+against it. A map and a set are trees balanced by their sizes. A map and a
+set of `Int` are trees that branch on the bits of their keys, a set's leaves
+sixty-four elements as the bits of one word, and two of them are put together
+by going down both at once. A map is lazy in its values under either name:
+the strict modules are the lazy ones.
 
 And of transformers and mtl: `Control.Monad.Trans.State`, `Reader`, `Writer`,
 `Except` and `Maybe`, with `Control.Monad.Trans.Class` and
@@ -378,9 +380,13 @@ depends on containers, mtl, text, bytestring, binary, array, directory,
 filepath, unix, prettyprinter and diagnose. Of those the library here now has
 what the compiler uses of containers and mtl, `Control.Monad.ST`, and
 `System.FilePath` but for `normalise` and `makeRelative`, and `Data.Text`
-with `Data.Text.IO`. Text here is a list of characters under a type of its
-own: a program written for the text package means the same, and takes the
-time a list does. There is no `System.Directory`, which is next, and wants
+with `Data.Text.IO`. Text is as the text package has it: the bytes of its
+characters in UTF-8 side by side, and a text a run of them, so that a part of
+a text is no copy and two are compared a run of bytes at a time. What goes
+through a text a character at a time (`map`, `filter`, `reverse` and their
+kind) does so by way of a list, where the package fuses a stream, and one
+text is looked for in another a byte at a time, where the package has a
+faster search. There is no `System.Directory`, which is next, and wants
 the machines to know of directories. bytestring, binary
 and diagnose are better replaced in the compiler by modules of its own than
 compiled.
