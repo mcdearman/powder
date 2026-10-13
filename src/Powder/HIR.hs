@@ -16,6 +16,7 @@ module Powder.HIR
   ( module Powder.HIR.Id,
     Program (..),
     KindSyntax (..),
+    Role (..),
     Family (..),
     chunk,
     mine,
@@ -102,8 +103,20 @@ data Program = Program
     -- | The types said to have a kind, where they are written.
     programKinded :: [(Type, KindSyntax)],
     -- | The functions from types to a type, by 'NameId'.
-    programFamilies :: Table Family
+    programFamilies :: Table Family,
+    -- | What types' parameters were said to be to them, by 'NameId'.
+    programRoles :: Table [Role]
   }
+
+-- | What a type's parameter is to the type, which says when the type at
+-- one type may be taken as the type at another. A parameter the type's
+-- values have nothing of may be anything. One they have values of may be
+-- any type kept as it is. One that decides what the type is, by a
+-- function from types or by a constructor that makes its type at types
+-- of its own choosing, must be the same type. In that order, each asking
+-- more than the one before.
+data Role = Phantom | Representational | Nominal
+  deriving (Eq, Ord)
 
 -- | A function from types to a type: how many types it takes, whether
 -- its equations are all given where it is declared, and the equations in

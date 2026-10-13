@@ -1,0 +1,8 @@
+Pair 1 "a"
+Node Leaf 2 (Node Leaf 3 Leaf)
+Tagged 4
+Labelled 'x'
+Sorted [Age 5]
+Both 6 7
+([Age 8,Age 9],Just [10])
+(Just 11,[Just 12],13)

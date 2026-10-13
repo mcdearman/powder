@@ -367,7 +367,8 @@ compiled as if it did not. Implemented so far, all of them in
 | `ExistentialQuantification` | `data Showable = forall a. Show a => MkShowable a`: a constructor with type variables of its own, and a context, whose dictionaries what it makes carries |
 | `RankNTypes` | `f :: (forall a. a -> a) -> (Int, Bool)`: an argument, or a field, that works at every type |
 | `GADTs` | `data Expr a where IntE :: Int -> Expr Int`: a constructor makes its type at types of its own choosing, and matching it says what they are. With `a ~ b` in a context, for two types that are the same |
-| `RoleAnnotations`, `MonoLocalBinds` | Read, and say nothing here |
+| `RoleAnnotations` | `type role Sorted nominal`: what a type's parameter is to it, which says when `coerce` may take the type at one type as the type at another. Found from the type's fields where it is not said |
+| `MonoLocalBinds` | Read, and says nothing here |
 | `DerivingVia` | `deriving (Semigroup, Monoid) via (Sum Int)`: an instance that is another type's, the two being kept the same way. `Data.Coerce` has `coerce` for taking one such type's values as the other's |
 
 Implemented and in no edition, since each changes what a program already
