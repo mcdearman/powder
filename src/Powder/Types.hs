@@ -28,11 +28,18 @@ data Type
     Rigid NameId
   | -- | A type not yet known, to be found by unification.
     Meta Int
+  | -- | A type for all types its variables could be that are instances of
+    -- what its context asks: the type of something that is given a
+    -- function to use at more than one type.
+    Quantified [NameId] [Pred] Type
   deriving (Eq, Show)
 
 -- | A class asked of types: one for each variable the class has.
 data Pred = Pred NameId [Type]
   deriving (Eq, Show)
+
+inPred :: Pred -> [Type]
+inPred (Pred _ ts) = ts
 
 -- | A type for all types its variables could be that are instances of
 -- what its context asks.
@@ -62,6 +69,7 @@ metas = nub . go
       Meta m -> [m]
       App f a -> go f ++ go a
       Fun a b -> go a ++ go b
+      Quantified _ context t -> concatMap go (concatMap inPred context) ++ go t
       Con _ -> []
       Rigid _ -> []
 
@@ -73,6 +81,7 @@ rigids = nub . go
       Rigid a -> [a]
       App f a -> go f ++ go a
       Fun a b -> go a ++ go b
+      Quantified vs context t -> filter (`notElem` vs) (concatMap go (concatMap inPred context) ++ go t)
       Con _ -> []
       Meta _ -> []
 
@@ -84,6 +93,9 @@ substitute s = go
       Rigid a -> IntMap.findWithDefault (Rigid a) (nameKey a) s
       App f a -> App (go f) (go a)
       Fun a b -> Fun (go a) (go b)
+      Quantified vs context t ->
+        let inner = substitute (foldr (IntMap.delete . nameKey) s vs)
+         in Quantified vs [Pred c (map inner ts) | Pred c ts <- context] (inner t)
       t -> t
 
 -- | A type as it would be written. A type variable with no name of its
@@ -125,6 +137,13 @@ render program generated = go
       (Con c, [element]) | c == builtinList builtins -> "[" ++ go 0 element ++ "]"
       (Con c, arguments@(_ : _ : _)) | isTuple (name c) && length (name c) - 1 == length arguments -> "(" ++ intercalate ", " (map (go 0) arguments) ++ ")"
       (Fun a b, []) -> parens (p > 0) (go 1 a ++ " -> " ++ go 0 b)
+      (Quantified vs context body, []) ->
+        let asked = [unwords (name c : map (go 2) ts) | Pred c ts <- context]
+            constraints = case asked of
+              [] -> ""
+              [one] -> one ++ " => "
+              several -> "(" ++ intercalate ", " several ++ ") => "
+         in parens (p > 0) ("forall " ++ unwords (map (atom . Rigid) vs) ++ ". " ++ constraints ++ go 0 body)
       (hd, []) -> atom hd
       (hd, arguments) -> parens (p > 1) (unwords (go 2 hd : map (go 2) arguments))
 

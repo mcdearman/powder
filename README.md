@@ -360,6 +360,8 @@ compiled as if it did not. Implemented so far, all of them in
 | `FlexibleInstances`, `TypeSynonymInstances` | `instance C [Char]`, `instance C (Maybe Int)`, `instance C String`: an instance at any type. Where two fit, `{-# OVERLAPPING #-}`, `{-# OVERLAPPABLE #-}` and `{-# OVERLAPS #-}` say the more particular is taken |
 | `FlexibleContexts` | `Show [a] => ...`: a class asked of any type |
 | `ConstraintKinds` | `type Stringy a = (Show a, Read a)`: a name for constraints |
+| `ExistentialQuantification` | `data Showable = forall a. Show a => MkShowable a`: a constructor with type variables of its own, and a context, whose dictionaries what it makes carries |
+| `RankNTypes` | `f :: (forall a. a -> a) -> (Int, Bool)`: an argument, or a field, that works at every type |
 
 Implemented and in no edition, since each changes what a program already
 means:

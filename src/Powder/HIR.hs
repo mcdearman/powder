@@ -173,7 +173,10 @@ data Signature = Signature
 data DataType = DataType
   { dataName :: NameId,
     dataParameters :: [NameId],
-    dataConstructors :: [(NameId, [Type])]
+    dataConstructors :: [(NameId, [Type])],
+    -- | For a constructor that has type variables of its own, or a
+    -- context: those, which what it makes carries the dictionaries for.
+    dataExistentials :: [(NameId, ([NameId], [Constraint]))]
   }
 
 data Synonym = Synonym {synonymParameters :: [NameId], synonymType :: Type}

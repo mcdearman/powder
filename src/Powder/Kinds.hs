@@ -99,6 +99,7 @@ mentioned t = case typeForm t of
   Type.App f a -> mentioned f ++ mentioned a
   Type.Fun a b -> mentioned a ++ mentioned b
   Type.Var _ -> []
+  Type.Forall _ context inner -> concat [c : concatMap mentioned ts | (c, ts) <- context] ++ mentioned inner
   Type.Error -> []
 
 -- | The signatures expressions are said to have, anywhere in a binding.
@@ -226,6 +227,9 @@ infer t = case typeForm t of
           has <- lift (render other)
           complainAt (typeId f) ("this type has kind " ++ has ++ ", so it cannot be applied to a type")
     pure result
+  -- Its variables are of whatever kinds it uses them at, and it is a
+  -- type.
+  Type.Forall _ context inner -> Star <$ (mapM_ (\(c, ts) -> constraint (Constraint c ts)) context >> check inner Star)
   Type.Error -> unknown
 
 -- | Check a type against the kind it must have.
@@ -254,6 +258,7 @@ declaration = \case
     parameters <- mapM kindOf (dataParameters d)
     kindOf (dataName d) >>= \k -> void (lift (unify k (foldr Arrow Star parameters)))
     forM_ (dataConstructors d) (mapM_ (`check` Star) . snd)
+    forM_ (dataExistentials d) (mapM_ constraint . snd . snd)
   -- A synonym takes its parameters to whatever it stands for.
   OfSynonym n s -> do
     parameters <- mapM kindOf (synonymParameters s)

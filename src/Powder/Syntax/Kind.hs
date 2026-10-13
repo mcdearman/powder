@@ -107,8 +107,11 @@ data SyntaxKind
   | -- | The type a constructor makes, where the constructor is given by
     -- its type: what comes last in @C :: a -> T a@.
     GadtResult
-  | -- | A context before a constructor's type, which says nothing.
+  | -- | A context before a constructor: what is asked of its types where
+    -- it is applied, and known of them where it is matched.
     ConContext
+  | -- | @forall a b.@ before a constructor: type variables of its own.
+    ConForall
   | -- | @..@ among the fields of a record: all the fields not named.
     FieldWild
   | -- | Fields of a record constructor that share a type: @a, b :: T@.

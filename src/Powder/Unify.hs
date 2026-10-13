@@ -26,7 +26,7 @@ module Powder.Unify
   )
 where
 
-import Control.Monad (when)
+import Control.Monad (when, zipWithM)
 import Control.Monad.ST
 import qualified Data.IntMap.Strict as IntMap
 import Data.List (nub)
@@ -50,6 +50,10 @@ data Type s
     Rigid NameId
   | -- | An unknown.
     Meta (Var s)
+  | -- | A type for all types its variables could be that are instances
+    -- of what is asked of them: each a class and the types it is asked
+    -- of.
+    Quantified [NameId] [(NameId, [Type s])] (Type s)
 
 -- | An unknown: a node of the forest.
 data Var s = Var {key :: Int, node :: STRef s (Node s)}
@@ -128,6 +132,13 @@ unify a b = do
     (Rigid x, Rigid y) -> pure (x == y)
     (App f x, App g y) -> (&&) <$> unify f g <*> unify x y
     (Fun x r, Fun y s) -> (&&) <$> unify x y <*> unify r s
+    -- Two such are the same if they are of the same variables: which
+    -- they are where one was written once and met twice.
+    (Quantified vs context t, Quantified ws context' u)
+      | vs == ws && map fst context == map fst context' ->
+          do
+            asked <- zipWithM unify (concatMap snd context) (concatMap snd context')
+            (and asked &&) <$> unify t u
     (App f x, Fun y s) -> (&&) <$> unify f (App (Con arrow) y) <*> unify x s
     (Fun y s, App f x) -> (&&) <$> unify (App (Con arrow) y) f <*> unify s x
     _ -> pure False
@@ -161,6 +172,7 @@ occurs v t =
     Meta w -> pure (v == w)
     App f x -> (||) <$> occurs v f <*> occurs v x
     Fun x r -> (||) <$> occurs v x <*> occurs v r
+    Quantified _ context u -> or <$> mapM (occurs v) (u : concatMap snd context)
     Con _ -> pure False
     Rigid _ -> pure False
 
@@ -174,6 +186,7 @@ zonk t =
     Rigid a -> pure (Types.Rigid a)
     App f x -> Types.App <$> zonk f <*> zonk x
     Fun x r -> Types.Fun <$> zonk x <*> zonk r
+    Quantified vs context u -> Types.Quantified vs <$> mapM (\(c, ts) -> Types.Pred c <$> mapM zonk ts) context <*> zonk u
 
 -- | The unknowns still in a type, as their roots, in order, each once.
 unsolved :: Type s -> ST s [Var s]
@@ -184,6 +197,7 @@ unsolved t = nub <$> go t
         Meta v -> pure [v]
         App f x -> (++) <$> go f <*> go x
         Fun x r -> (++) <$> go x <*> go r
+        Quantified _ context v -> concat <$> mapM go (v : concatMap snd context)
         Con _ -> pure []
         Rigid _ -> pure []
 
@@ -194,6 +208,7 @@ rigids t =
     Rigid a -> pure [a]
     App f x -> (++) <$> rigids f <*> rigids x
     Fun x r -> (++) <$> rigids x <*> rigids r
+    Quantified vs context u -> concatMap (filter (`notElem` vs)) <$> mapM rigids (u : concatMap snd context)
     Con _ -> pure []
     Meta _ -> pure []
 
@@ -204,4 +219,8 @@ substitute s t =
     Rigid a -> pure (IntMap.findWithDefault (Rigid a) (nameKey a) s)
     App f x -> App <$> substitute s f <*> substitute s x
     Fun x r -> Fun <$> substitute s x <*> substitute s r
+    -- Its own variables are not the ones types are being put in for.
+    Quantified vs context u -> do
+      let inner = foldr (IntMap.delete . nameKey) s vs
+      Quantified vs <$> mapM (\(c, ts) -> (,) c <$> mapM (substitute inner) ts) context <*> substitute inner u
     other -> pure other

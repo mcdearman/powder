@@ -690,6 +690,23 @@ dataDecl = do
   where
     conDecl = do
       c <- open
+      -- With ExistentialQuantification a constructor may have type
+      -- variables of its own, named after the word forall, and a context.
+      existential <- on ExistentialQuantification
+      named <- (&&) <$> at VarId <*> atText "forall"
+      when (existential && named) $ do
+        f <- open
+        advance
+        binders
+        dot <- (&&) <$> at VarSym <*> atText "."
+        if dot then advance else problem "expected a . after the variables of a forall"
+        close_ f ConForall
+      before <- ahead 0
+      when (existential && stoppedAt (scan [DoubleArrow, Bar, KwDeriving] before) == DoubleArrow) $ do
+        x <- open
+        btype
+        expect_ DoubleArrow
+        close_ x ConContext
       kinds <- ahead 0
       let strictly p = (atStrict >>= (`when` advance)) >> p
       if stoppedAt (scan [Bar, KwDeriving, ConSym, Backquote] kinds) `elem` [ConSym, Backquote]
@@ -745,7 +762,10 @@ dataDecl = do
       whileM (eat Comma) fieldName
       expect_ DoubleColon
       atStrict >>= (`when` advance)
-      type_
+      -- With RankNTypes a field may be for all types its variables
+      -- could be.
+      ranked <- (&&) <$> on RankNTypes <*> ((&&) <$> at VarId <*> atText "forall")
+      if ranked then qualifiedType else type_
       close_ f FieldDecl
     -- The Report lets the mark stand apart from its type.
     -- With StrictData a field may be marked the other way, as lazy.
@@ -933,7 +953,7 @@ qualifiedType :: P ()
 qualifiedType = do
   -- With ExplicitForAll its variables may be named first, after the word
   -- forall, which is a name like any other everywhere else.
-  explicit <- (&&) <$> on ExplicitForAll <*> ((&&) <$> at VarId <*> atText "forall")
+  explicit <- (&&) <$> ((||) <$> on ExplicitForAll <*> on RankNTypes) <*> ((&&) <$> at VarId <*> atText "forall")
   if not explicit
     then contextual
     else do
@@ -1030,7 +1050,10 @@ atype' = do
     LParen : op : RParen : _ | op `elem` [ConSym, QConSym, VarSym] -> advance >> advance >> advance >> close m TyCon
     LParen : _ -> do
       advance
-      type_
+      -- With RankNTypes a type in parentheses may be for all types its
+      -- variables could be: a forall, and perhaps a context.
+      ranked <- (&&) <$> on RankNTypes <*> ((&&) <$> at VarId <*> atText "forall")
+      if ranked then qualifiedType else type_
       tuple <- at Comma
       kinded <- (&&) <$> on KindSignatures <*> at DoubleColon
       case () of

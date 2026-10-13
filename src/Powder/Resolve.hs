@@ -906,7 +906,8 @@ constructingWith with k = do
 -- | How many fields a constructor has.
 arityOf :: NameId -> M Int
 arityOf c = gets $ \st -> case IntMap.lookup (nameKey c) (names st) of
-  Just (NameInfo _ (Constructor info _) _) -> conArity info
+  -- Not counting the dictionaries one with a context keeps.
+  Just (NameInfo _ (Constructor info _) _) -> conArity info - sum [length context | d <- dataTypes st, (c', (_, context)) <- dataExistentials d, c' == c]
   _ -> 0
 
 -- | Where in a constructor each of some fields is, each with what is
@@ -957,13 +958,13 @@ wiredIn = do
   modify (\st -> st {names = IntMap.insert (-1) arrow (names st)})
   argument <- newName "a" TypeVariable
   result <- newName "b" TypeVariable
-  addDataType (DataType (NameId (-1)) [argument, result] [])
+  addDataType (DataType (NameId (-1)) [argument, result] [] [])
   double <- newName "Double" TypeConstructor
   float <- newName "Float" TypeConstructor
   char <- newName "Char" TypeConstructor
   io <- newName "IO" TypeConstructor
   a <- newName "a" TypeVariable
-  mapM_ (\(t, ps) -> addDataType (DataType t ps [])) [(integer, []), (int, []), (double, []), (float, []), (char, []), (io, [a])]
+  mapM_ (\(t, ps) -> addDataType (DataType t ps [] [])) [(integer, []), (int, []), (double, []), (float, []), (char, []), (io, [a])]
   (bool, boolCs) <- dataType "Bool" [] [("False", []), ("True", [])]
   (unit, unitCs) <- dataType "()" [] [("()", [])]
   -- The list's constructors mention the list type itself.
@@ -1001,19 +1002,22 @@ dataType t parameters cs = do
 constructorsOf :: NameId -> [NameId] -> [(Name, [Type.Type])] -> M [(Name, NameId)]
 constructorsOf t parameters cs = do
   ids <- mapM (const (NameId <$> fresh)) cs
-  zip (map fst cs) ids <$ constructorsAs ids t parameters cs
+  zip (map fst cs) ids <$ constructorsAs ids t parameters cs []
 
 -- | Say what the constructors of a type are, under names they have been
 -- given already. In what is compiled a constructor goes by its name, with
 -- its module's before it unless that is the root.
-constructorsAs :: [NameId] -> NameId -> [NameId] -> [(Name, [Type.Type])] -> M ()
-constructorsAs ids t parameters cs = do
+constructorsAs :: [NameId] -> NameId -> [NameId] -> [(Name, [Type.Type])] -> [(NameId, ([NameId], [Constraint]))] -> M ()
+constructorsAs ids t parameters cs existentials = do
   home <- asks envModule
   plainly <- asks ((|| null home) . (== home) . envRoot)
   forM_ (zip3 [0 ..] cs ids) $ \(tag, (c, fields), NameId n) -> do
     let spelling = if plainly then c else home ++ "." ++ c
-    modify (\st -> st {names = IntMap.insert n (NameInfo c (Constructor (ConInfo spelling tag (length fields) (length cs)) ids) home) (names st)})
-  addDataType (DataType t parameters (zip ids (map snd cs)))
+        -- One with a context keeps a dictionary for each part of it,
+        -- before its fields.
+        kept = maybe 0 (length . snd) (lookup (NameId n) existentials)
+    modify (\st -> st {names = IntMap.insert n (NameInfo c (Constructor (ConInfo spelling tag (kept + length fields) (length cs)) ids) home) (names st)})
+  addDataType (DataType t parameters (zip ids (map snd cs)) existentials)
 
 -- | The type variables in scope in the type of a constructor that is
 -- given by its type: the ones its result applies the type to, each
@@ -1043,13 +1047,29 @@ typeDecl :: Map.Map Name (NameId, [NameId]) -> Syntax.Decl -> M ()
 typeDecl own d = within d $ case d of
   Decl.Data t parameters cs -> do
     scope <- typeParameters parameters
-    declared <- forM cs $ \c@(Syntax.Constructor name tys) -> within c $ do
+    full <- forM cs $ \c@(Syntax.Constructor name tys) -> within c $ do
       -- A constructor given by its type names the type's parameters as
       -- it likes.
       scope' <- maybe (pure scope) (typedScope t scope) (Syntax.constructorResult c)
-      withTypeVariables scope' ((,) name <$> mapM type' tys)
+      -- With ExistentialQuantification it may have type variables of
+      -- its own: those a forall names, or where it is given by its type
+      -- those its fields have that its result has not; and a context.
+      existential <- enabled ExistentialQuantification
+      let assertions = concatMap assertionsOf (Syntax.constructorContext c)
+          named = Syntax.constructorExistentials c
+          unnamed = if isJust (Syntax.constructorResult c) then nub (concatMap typeVariables (tys ++ assertions)) \\ (map fst scope' ++ named) else []
+      unless (existential || (null named && null unnamed && null assertions)) $
+        complain "a constructor has a context, or type variables of its own, only if ExistentialQuantification is on"
+      unless ((null named && null unnamed && null assertions) || null (Syntax.constructorFields c)) $
+        complain "a constructor with a context, or type variables of its own, does not have its fields named"
+      own' <- forM (nub (named ++ unnamed)) (\x -> (,) x <$> newName x TypeVariable)
+      withTypeVariables (scope' ++ own') $ do
+        fields' <- mapM type' tys
+        context <- if existential then concat <$> mapM constraints assertions else pure []
+        pure ((name, fields'), (map snd own', context))
     let (name, ids) = own Map.! t
-    constructorsAs ids name (map snd scope) declared
+        declared = map fst full
+    constructorsAs ids name (map snd scope) declared [(c, extra) | (c, (_, extra@(vs, context))) <- zip ids full, not (null vs && null context)]
     -- With StrictData a field is strict unless it is marked lazy.
     strictly <- enabled StrictData
     modify (\st -> st {strict = IntMap.union (IntMap.fromList (zip (map nameKey ids) (map (map (fromMaybe strictly) . Syntax.constructorMarks) cs))) (strict st)})
@@ -1135,7 +1155,19 @@ type' t = within t $ case t of
     type' element >>= applyType c . pure
   SType.Paren inner -> type' inner
   SType.Qualified _ inner -> complain "a context can only be at the front of a signature or of the head of a class or an instance" >> type' inner
-  SType.Forall _ inner -> complain "a forall can only be at the front of a signature: a type with one inside it is not supported yet" >> type' inner
+  -- With RankNTypes a type inside another may be for all types its
+  -- variables could be, which are its own; with perhaps a context.
+  SType.Forall vs whole -> do
+    ranked <- enabled RankNTypes
+    unless ranked (complain "a forall is inside a type, and not at the front of a signature, only if RankNTypes is on")
+    own <- forM (nub vs) (\x -> (,) x <$> newName x TypeVariable)
+    let (assertions, inner) = case whole of
+          SType.Qualified context body -> (assertionsOf context, body)
+          _ -> ([], whole)
+    local (\env -> env {envTypeVariables = Map.union (Map.fromList own) (envTypeVariables env)}) $ do
+      context <- concat <$> mapM constraints assertions
+      body <- type' inner
+      mkType (Type.Forall (map snd own) [(c, ts) | Constraint c ts <- context] body)
   -- A type said to have a kind is the type, and the kind is checked.
   SType.Kinded inner k -> do
     inner' <- type' inner
@@ -1186,7 +1218,7 @@ typeVariables = \case
   SType.List element -> typeVariables element
   SType.Paren inner -> typeVariables inner
   SType.Qualified context inner -> typeVariables context ++ typeVariables inner
-  SType.Forall _ inner -> typeVariables inner
+  SType.Forall vs inner -> filter (`notElem` vs) (typeVariables inner)
   SType.Wild -> []
   SType.Kinded inner _ -> typeVariables inner
   SType.Operators operands _ -> concatMap typeVariables operands
@@ -1431,6 +1463,7 @@ addInstance inst = do
       Type.Con c -> "#" ++ show (nameKey c)
       Type.App f a -> "(" ++ form numbered f ++ " " ++ form numbered a ++ ")"
       Type.Fun a b -> "(" ++ form numbered a ++ " -> " ++ form numbered b ++ ")"
+      Type.Forall _ _ inner -> "(forall " ++ form numbered inner ++ ")"
       Type.Error -> "!"
 
 -- | What an instance declaration says. The classes are all known.
@@ -1820,6 +1853,9 @@ substituted a by ty = case Type.typeForm ty of
       by' = by
   Type.App f x -> (Type.App <$> substituted a by f <*> substituted a by x) >>= fresh'
   Type.Fun x y -> (Type.Fun <$> substituted a by x <*> substituted a by y) >>= fresh'
+  Type.Forall vs context inner
+    | a `elem` vs -> fresh' (Type.Forall vs context inner)
+    | otherwise -> (Type.Forall vs <$> mapM (\(c, ts) -> (,) c <$> mapM (substituted a by) ts) context <*> substituted a by inner) >>= fresh'
   form -> fresh' form
   where
     fresh' form = (`Type.Type` form) <$> node

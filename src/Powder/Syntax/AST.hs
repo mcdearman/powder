@@ -31,6 +31,8 @@ module Powder.Syntax.AST
     constructorInfix,
     constructorMarks,
     constructorResult,
+    constructorExistentials,
+    constructorContext,
     Rhs (Rhs),
     Type,
     Expr,
@@ -104,8 +106,19 @@ constructorMarks (syntax -> r) = case fieldDecls r of
       | Red.kind c == K.Bang || (Red.kind c == K.VarSym && Red.text c == Text.pack "!") = go (Just True) cs
       | Red.kind c == K.Tilde = go (Just False) cs
       | Red.isToken c = go mark cs
-      | Red.kind c `elem` [K.Operator, K.GadtResult, K.ConContext] = go Nothing cs
+      | Red.kind c `elem` [K.Operator, K.GadtResult, K.ConContext, K.ConForall] = go Nothing cs
       | otherwise = mark : go Nothing cs
+
+-- | The type variables a constructor has of its own, named after a
+-- forall.
+constructorExistentials :: Constructor -> [Name]
+constructorExistentials (syntax -> r) =
+  concat [drop 1 (concat [if Red.kind c == K.VarId then [Text.unpack (Red.text c)] else [nameOf c | Red.kind c == K.KindedBinder] | c <- Red.children f]) | f <- Red.nodes r, Red.kind f == K.ConForall]
+
+-- | The context before a constructor, if it has one: a type that is a
+-- class applied to types, or several in parentheses.
+constructorContext :: Constructor -> [Type]
+constructorContext (syntax -> r) = [t | x <- Red.nodes r, Red.kind x == K.ConContext, t <- children x]
 
 -- | The type a constructor makes, if the constructor was given by its
 -- type.
