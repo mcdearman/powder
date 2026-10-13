@@ -127,6 +127,13 @@ data SyntaxKind
     KindSigDecl
   | -- | @type role T nominal representational@
     RoleDecl
+  | -- | @type family F a@, with perhaps a kind and perhaps equations
+    -- after a where; or in a class, @type F a@.
+    TypeFamilyDecl
+  | -- | @type instance F Int = Bool@; or in an instance, @type F Int = Bool@.
+    TypeInstanceDecl
+  | -- | One equation of a type family that has them all: @F Int = Bool@.
+    TypeEquation
   | -- | A class: its head, a type, and the declarations in its @where@.
     ClassDecl
   | InstanceDecl

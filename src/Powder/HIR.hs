@@ -16,6 +16,7 @@ module Powder.HIR
   ( module Powder.HIR.Id,
     Program (..),
     KindSyntax (..),
+    Family (..),
     chunk,
     mine,
     NameInfo (..),
@@ -99,7 +100,19 @@ data Program = Program
     -- | The kinds type variables and types were said to have, by 'NameId'.
     programKinds :: Table KindSyntax,
     -- | The types said to have a kind, where they are written.
-    programKinded :: [(Type, KindSyntax)]
+    programKinded :: [(Type, KindSyntax)],
+    -- | The functions from types to a type, by 'NameId'.
+    programFamilies :: Table Family
+  }
+
+-- | A function from types to a type: how many types it takes, whether
+-- its equations are all given where it is declared, and the equations in
+-- order, each its own type variables, what the function is applied to,
+-- and what that is.
+data Family = Family
+  { familyArity :: Int,
+    familyClosed :: Bool,
+    familyEquations :: [([NameId], [Type], Type)]
   }
 
 -- | A kind as a program writes it.
