@@ -8,6 +8,7 @@ import qualified EntrySpec
 import qualified ExamplesSpec
 import qualified HazySpec
 import qualified ResolveSpec
+import qualified SimplifySpec
 import qualified SyntaxSpec
 import Test.Hspec
 import qualified TypecheckSpec
@@ -19,6 +20,7 @@ main = hspec $ do
   describe "name resolution" ResolveSpec.spec
   describe "types" TypecheckSpec.spec
   describe "diagnostics" DiagnosticsSpec.spec
+  describe "making a program smaller" SimplifySpec.spec
   describe "the examples" ExamplesSpec.spec
   describe "the machine's memory" CollectorSpec.spec
   describe "Haskell 2010 conformance" ConformanceSpec.spec

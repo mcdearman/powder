@@ -122,6 +122,7 @@ test-suite spec
     Harness
     HazySpec
     ResolveSpec
+    SimplifySpec
     SyntaxSpec
     TypecheckSpec
   ghc-options:    -threaded -rtsopts "-with-rtsopts=-N4"
