@@ -23,6 +23,7 @@ module Powder.HIR
     Origin (..),
     Signature (..),
     Constraint (..),
+    Overlap (..),
     Class (..),
     Instance (..),
     DataType (..),
@@ -116,34 +117,48 @@ mine program k = floor' < 0 || (k >= floor' && k < floor' + chunk)
   where
     floor' = programFloor program
 
--- | A class asked of a type: one part of a context.
-data Constraint = Constraint {constraintClass :: NameId, constraintType :: Type}
+-- | A class asked of types, as many as the class has variables: one part
+-- of a context.
+data Constraint = Constraint {constraintClass :: NameId, constraintTypes :: [Type]}
 
 -- | A class. A method is a name like any other, with a signature that
--- quantifies over the class's variable first and has no mention of the
+-- quantifies over the class's variables first and has no mention of the
 -- class in its context: that it is a method says so.
 data Class = Class
   { className :: NameId,
-    classVariable :: NameId,
-    -- | The classes every instance must also be an instance of.
-    classSupers :: [NameId],
+    classVariables :: [NameId],
+    -- | What every instance must also be an instance of: constraints on
+    -- the class's variables.
+    classSupers :: [Constraint],
+    -- | The functional dependencies: for each, the places of the
+    -- variables that say what those at other places are, and those
+    -- places.
+    classDependencies :: [([Int], [Int])],
     classMethods :: [NameId],
     -- | The definitions a method has where an instance gives none: each
     -- the 'Function' of a method.
     classDefaults :: [Binding]
   }
 
--- | An instance of a class, at a type constructor applied to variables.
+-- | An instance of a class, at types over the instance's variables: one
+-- for each variable of the class.
 data Instance = Instance
   { instanceId :: NodeId,
     instanceClass :: NameId,
-    instanceType :: NameId,
+    instanceHead :: [Type],
     instanceVariables :: [NameId],
     -- | What it needs of its variables.
     instanceContext :: [Constraint],
     -- | Each the 'Function' of a method of the class.
-    instanceMethods :: [Binding]
+    instanceMethods :: [Binding],
+    instanceOverlap :: Overlap
   }
+
+-- | What an instance says of others that fit the same types: nothing; that
+-- a more particular one may be taken in its place; that it may be taken
+-- in place of a more general one; or both.
+data Overlap = Exactly | Overlappable | Overlapping | Overlaps
+  deriving (Eq)
 
 -- | A declared type. Its type variables are its own: every signature
 -- quantifies over the variables it mentions.

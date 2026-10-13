@@ -47,6 +47,7 @@ import Powder.HIR
     Builtins (..),
     Class (..),
     Constraint (..),
+    Overlap (..),
     DataType (..),
     Instance (..),
     NameId (..),
@@ -107,14 +108,31 @@ instance Semigroup Interface where
 instance Monoid Interface where
   mempty = Interface mempty IntMap.empty IntMap.empty IntMap.empty IntMap.empty [] [] [] [] [] [] IntMap.empty
 
--- | A class without its code: its name, variable, superclasses and
--- methods, and which methods have a definition by default.
-data ClassShape = ClassShape NameId NameId [NameId] [NameId] [NameId]
+-- | A class without its code: its name, variables, superclasses,
+-- dependencies and methods, and which methods have a definition by
+-- default.
+data ClassShape = ClassShape NameId [NameId] [Constraint] [([Int], [Int])] [NameId] [NameId]
   deriving (Generic, Binary)
 
 -- | An instance without its code.
-data InstanceShape = InstanceShape NodeId NameId NameId [NameId] [Constraint]
+data InstanceShape = InstanceShape NodeId NameId [HIR.Type.Type] [NameId] [Constraint] Int
   deriving (Generic, Binary)
+
+-- | What an instance says of others that fit the same types, as a number
+-- to keep.
+overlapCode :: Overlap -> Int
+overlapCode = \case
+  Exactly -> 0
+  Overlappable -> 1
+  Overlapping -> 2
+  Overlaps -> 3
+
+overlapOf :: Int -> Overlap
+overlapOf = \case
+  1 -> Overlappable
+  2 -> Overlapping
+  3 -> Overlaps
+  _ -> Exactly
 
 -- | Compile a package. It is given its slot, the interfaces of the
 -- packages whose modules it may import, the interfaces of the rest of
@@ -144,8 +162,8 @@ compile slot seen unseen units = do
           seedSignatures = ifaceSignatures below,
           seedSynonyms = ifaceSynonyms below,
           seedDataTypes = ifaceDataTypes below,
-          seedClasses = IntMap.fromList [(nameKey c, Class c v supers methods [Binding (NodeId (-1)) (Function m []) | m <- defaulted]) | ClassShape c v supers methods defaulted <- ifaceClasses below],
-          seedInstances = [Instance n c t vs context [] | InstanceShape n c t vs context <- ifaceInstances below],
+          seedClasses = IntMap.fromList [(nameKey c, Class c vs supers dependencies methods [Binding (NodeId (-1)) (Function m []) | m <- defaulted]) | ClassShape c vs supers dependencies methods defaulted <- ifaceClasses below],
+          seedInstances = [Instance n c ts vs context [] (overlapOf overlap) | InstanceShape n c ts vs context overlap <- ifaceInstances below],
           seedNewtypes = ifaceNewtypes below,
           seedModules = ifaceModules below,
           seedImports = ifaceImports below
@@ -170,10 +188,10 @@ compile slot seen unseen units = do
           ifaceSynonyms = mineOf (HIR.programSynonyms hir),
           ifaceDataTypes = [d | d <- HIR.programDataTypes hir, own (nameKey (dataName d))],
           ifaceClasses =
-            [ ClassShape (className c) (classVariable c) (classSupers c) (classMethods c) [m | Binding _ (Function m _) <- classDefaults c]
+            [ ClassShape (className c) (classVariables c) (classSupers c) (classDependencies c) (classMethods c) [m | Binding _ (Function m _) <- classDefaults c]
               | c <- IntMap.elems (mineOf (HIR.programClasses hir))
             ],
-          ifaceInstances = [InstanceShape (instanceId i) (instanceClass i) (instanceType i) (instanceVariables i) (instanceContext i) | i <- instances],
+          ifaceInstances = [InstanceShape (instanceId i) (instanceClass i) (instanceHead i) (instanceVariables i) (instanceContext i) (overlapCode (instanceOverlap i)) | i <- instances],
           ifaceNewtypes = [c | c <- HIR.programNewtypes hir, own (nameKey c)],
           ifaceModules = [(file, m) | (file, m) <- HIR.programModules hir, m `Set.member` modules],
           ifaceImports = [(m, is) | (m, is) <- HIR.programImports hir, m `Set.member` modules],
