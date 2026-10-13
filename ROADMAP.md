@@ -87,6 +87,16 @@ package's are, and are checked against it. A map is lazy in its values under
 either name, and a map or a set of `Int` is the map or the set at that type,
 not a type of its own.
 
+And of transformers and mtl: `Control.Monad.Trans.State`, `Reader`, `Writer`,
+`Except` and `Maybe`, with `Control.Monad.Trans.Class` and
+`Control.Monad.IO.Class`; over them `Control.Monad.State`, `Reader`, `Writer`
+and `Except`, whose classes say by a functional dependency what a monad
+keeps, reads, adds to or stops with, whatever it is made over; and
+`Control.Monad.ST` with `Data.STRef`, where `runST` takes a computation that
+is for every run. Checked against GHC's own. The strict modules are the lazy
+ones under another name, there is no `Control.Monad.RWS`, `Cont` or `Accum`,
+and a function is not an instance of `MonadReader`.
+
 **M2, extensions that are only syntax.**
 
 - [x] LambdaCase
@@ -365,10 +375,9 @@ Powder cannot build itself yet. The language it is written in is no longer
 what stands in the way: the extensions its sources use are done, Generic among
 them. What does is what it is built from. Its lexer is made by Alex. It
 depends on containers, mtl, text, bytestring, binary, array, directory,
-filepath, unix, prettyprinter and diagnose, and the library here has none of
-`Control.Monad.State` and `Control.Monad.Reader`, `Control.Monad.ST` and
-`Data.STRef`, or `Data.Text`. Maps and sets are written; the monads are next,
-which functional dependencies and the classes of M5 now allow. bytestring, binary
+filepath, unix, prettyprinter and diagnose. Of those the library here now has
+what the compiler uses of containers and mtl, and `Control.Monad.ST`; it has
+no `Data.Text`, `System.Directory` or `System.FilePath`, which are next. bytestring, binary
 and diagnose are better replaced in the compiler by modules of its own than
 compiled.
 
