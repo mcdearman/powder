@@ -1,0 +1,3 @@
+total :: [Int] -> Int
+count :: Int -> Int
+main :: IO ()

@@ -1,16 +1,24 @@
 //! The machine that runs Powder's bytecode.
 //!
-//! The bytecode is AxCut written down (see `src/Powder/Bytecode.hs` in the
-//! compiler, which is the description of the format). There is one
-//! environment, a row of values, and every instruction works on the end
-//! of it: nothing names where a value is but the instruction that makes
-//! the row again.
+//! The bytecode is AxCut compiled for registers (see
+//! `src/Powder/Bytecode.hs` in the compiler, which is the description of
+//! the format). A value is in a register, and an instruction takes what it
+//! uses out of its registers: in AxCut a value is used once, and what is
+//! used twice was copied first by an instruction for that.
+//!
+//! Nothing is called and returned from. A method is gone to with its
+//! arguments in the first registers, and what a computation comes back to
+//! is a consumer, which is a frame on a stack the machine keeps for
+//! itself, in chunks, and grows as it needs. So how deep a program goes is
+//! not bounded by the stack the machine itself runs on, which never grows:
+//! the loop that runs instructions calls nothing that calls it back, and
+//! letting go of a long list is a loop too.
 //!
 //! Memory is counted, not traced. A value that is shared holds a count of
-//! who holds it, and the environment is linear: an instruction uses up
-//! what it takes, so the only places a count goes up or a value is let go
-//! are the instruction that makes the row again and the ones that copy
-//! out of an object that is still shared. Values that refer to each other
+//! who holds it, and an instruction uses up what it takes, so the only
+//! places a count goes up or a value is let go are the instructions that
+//! copy and drop and the ones that copy out of an object that is still
+//! shared. Values that refer to each other
 //! in a circle, which counts alone would never free, are found and freed
 //! by the collector in `gc.rs`, between instructions.
 
@@ -46,6 +54,9 @@ enum Value {
     Tag(u32),
     Data(Gc<Data>),
     Object(Gc<RefCell<Cell>>),
+    /// A consumer: a frame on the stack of them, by its chunk and its
+    /// place there. It is used once, and is not counted.
+    Frame(u32, u32),
 }
 
 /// The values a constructed value or an object holds. Most hold few, and
@@ -63,9 +74,6 @@ enum Cell {
     Delayed { captured: Held, block: usize },
     Working,
     Done(Value),
-    /// The consumer a thunk's body is given: it keeps the value in the
-    /// thunk and passes it on to the consumer of the force.
-    Update { thunk: Gc<RefCell<Cell>>, consumer: Value },
 }
 
 impl Value {
@@ -90,10 +98,6 @@ impl gc::Trace for RefCell<Cell> {
         match &*self.borrow() {
             Cell::Made { captured, .. } | Cell::Delayed { captured, .. } => captured.iter().for_each(|held| held.edge(visit)),
             Cell::Done(value) => value.edge(visit),
-            Cell::Update { thunk, consumer } => {
-                visit(thunk.edge());
-                consumer.edge(visit);
-            }
             Cell::Working => {}
         }
     }
@@ -141,6 +145,9 @@ fn prim_named(name: &str) -> Result<Prim, String> {
     })
 }
 
+/// A register: where a value is.
+type Reg = u16;
+
 struct Made {
     thunk: bool,
     method: u8,
@@ -148,32 +155,48 @@ struct Made {
     block: usize,
 }
 
+/// One of some objects made together: its register, what it is, the
+/// registers it captures, and then which of the objects.
+type Mutual = (Reg, Made, Box<[Reg]>, Box<[usize]>);
+
+/// An instruction. Each takes what it uses out of its registers: a value
+/// is used once, and what is used twice was copied first.
 enum Instruction {
-    /// The row made again: each value of the new one, with the place in the
-    /// old of the value it is, and whether that is the last the old value
-    /// is wanted for, so that it can be moved and not copied.
-    Substitute(Vec<(usize, bool)>),
-    Let { tag: u32, arity: usize },
-    Switch(Vec<(usize, usize)>),
-    New { made: Made, captured: usize },
-    Invoke(u8),
-    Force,
-    Lit(Value),
-    Global(usize),
-    Prim(Prim, usize),
-    Foreign { symbol: String, shape: String, result: char },
-    /// For each object: what it is, how many values it takes off the
-    /// environment, and which of the objects it captures after those.
-    Rec(Vec<(Made, usize, Vec<usize>)>),
+    /// Move a value to another register.
+    Shift { to: Reg, from: Reg },
+    Copy { to: Reg, from: Reg },
+    Drop(Reg),
+    Let { to: Reg, tag: u32, fields: Box<[Reg]> },
+    /// Take a constructed value apart: for each constructor of its type,
+    /// where its fields go and where to go on.
+    Switch { on: Reg, clauses: Box<[(Box<[Reg]>, usize)]> },
+    New { to: Reg, made: Made, captured: Box<[Reg]> },
+    /// Make a consumer, on the stack of frames.
+    Frame { to: Reg, block: usize, captured: Box<[Reg]> },
+    /// Call a method of the object in the register after the arguments,
+    /// which are in the first registers.
+    Invoke { method: u8, arguments: usize },
+    Force { value: Reg, consumer: Reg },
+    Lit { to: Reg, value: Value },
+    Global { to: Reg, index: usize },
+    Prim { to: Reg, prim: Prim, arguments: Box<[Reg]> },
+    Foreign { to: Reg, symbol: String, shape: String, result: char, arguments: Box<[Reg]> },
+    /// Objects that may capture each other: for each, its register, what
+    /// it is, the registers it captures, and then which of the objects.
+    Rec(Box<[Mutual]>),
     Halt,
 }
 
 struct Image {
-    blocks: Vec<Vec<Instruction>>,
+    /// Every block's instructions, one block after another. Where to go
+    /// is a place in this.
+    code: Vec<Instruction>,
+    /// How many registers the program uses.
+    registers: usize,
     definitions: Vec<usize>,
     entry: usize,
-    /// The block that answers a call from C, which starts with the action
-    /// that answers it in the environment.
+    /// Where a call from C is answered, which starts with the action that
+    /// answers it in the first register.
     callback: usize,
     /// What C may call: its name, the letters of its arguments and of its
     /// result, and the definition that is the action answering it.
@@ -214,8 +237,16 @@ impl Reader<'_> {
         }
         Ok(if n & 1 == 1 { -(((n + 1) >> 1) as i64) } else { (n >> 1) as i64 })
     }
-    fn made(&mut self) -> Result<(bool, u8), String> {
-        Ok((self.byte()? == 1, self.byte()?))
+    fn register(&mut self) -> Result<Reg, String> {
+        Reg::try_from(self.number()?).map_err(|_| "the image names a register past the last there can be".to_string())
+    }
+    fn registers(&mut self) -> Result<Box<[Reg]>, String> {
+        (0..self.number()?).map(|_| self.register()).collect()
+    }
+    /// What an object is: its kind, its method, how many parameters that
+    /// has, and its block.
+    fn made(&mut self) -> Result<Made, String> {
+        Ok(Made { thunk: self.byte()? == 1, method: self.byte()?, parameters: self.number()?, block: self.number()? })
     }
 }
 
@@ -226,8 +257,8 @@ fn load(bytes: &[u8]) -> Result<Image, String> {
     }
     r.at = 4;
     let version = r.number()?;
-    if version != 2 {
-        return Err(format!("the image is of version {version}, and this machine runs version 2"));
+    if version != 3 {
+        return Err(format!("the image is of version {version}, and this machine runs version 3"));
     }
     let mut strings = Vec::new();
     for _ in 0..r.number()? {
@@ -237,63 +268,167 @@ fn load(bytes: &[u8]) -> Result<Image, String> {
         r.at += n;
     }
     let string = |i: usize| strings.get(i).cloned().ok_or_else(|| "the image names a string it has not got".to_string());
+    let registers = r.number()?;
     let mut blocks = Vec::new();
     for _ in 0..r.number()? {
         let mut block = Vec::new();
         for _ in 0..r.number()? {
             block.push(match r.byte()? {
-                0 => {
-                    let n = r.number()?;
-                    let sources = (0..n).map(|_| r.number()).collect::<Result<Vec<usize>, _>>()?;
-                    Instruction::Substitute(sources.iter().enumerate().map(|(j, &i)| (i, !sources[j + 1..].contains(&i))).collect())
+                0 => Instruction::Shift { to: r.register()?, from: r.register()? },
+                1 => Instruction::Copy { to: r.register()?, from: r.register()? },
+                2 => Instruction::Drop(r.register()?),
+                3 => Instruction::Let { to: r.register()?, tag: r.number()? as u32, fields: r.registers()? },
+                4 => {
+                    let on = r.register()?;
+                    let clauses = (0..r.number()?).map(|_| Ok((r.registers()?, r.number()?))).collect::<Result<_, String>>()?;
+                    Instruction::Switch { on, clauses }
                 }
-                1 => Instruction::Let { tag: r.number()? as u32, arity: r.number()? },
-                2 => {
-                    let n = r.number()?;
-                    Instruction::Switch((0..n).map(|_| Ok((r.number()?, r.number()?))).collect::<Result<_, String>>()?)
+                5 => Instruction::New { to: r.register()?, made: r.made()?, captured: r.registers()? },
+                6 => {
+                    let (to, made) = (r.register()?, r.made()?);
+                    Instruction::Frame { to, block: made.block, captured: r.registers()? }
                 }
-                3 => {
-                    let (thunk, method) = r.made()?;
-                    let captured = r.number()?;
-                    Instruction::New { made: Made { thunk, method, parameters: r.number()?, block: r.number()? }, captured }
-                }
-                4 => Instruction::Invoke(r.byte()?),
-                5 => Instruction::Force,
-                6 => Instruction::Lit(Value::Int(r.signed()?)),
-                7 => {
+                7 => Instruction::Invoke { method: r.byte()?, arguments: r.number()? },
+                8 => Instruction::Force { value: r.register()?, consumer: r.register()? },
+                9 => Instruction::Lit { to: r.register()?, value: Value::Int(r.signed()?) },
+                10 => {
+                    let to = r.register()?;
                     let text = string(r.number()?)?;
-                    Instruction::Lit(integer(text.parse::<BigInt>().map_err(|_| "a number in the image is not one")?))
+                    Instruction::Lit { to, value: integer(text.parse::<BigInt>().map_err(|_| "a number in the image is not one")?) }
                 }
-                8 => Instruction::Global(r.number()?),
-                9 => Instruction::Prim(prim_named(&string(r.number()?)?)?, r.number()?),
-                10 => Instruction::Foreign { symbol: string(r.number()?)?, shape: string(r.number()?)?, result: r.byte()? as char },
-                11 => {
-                    let n = r.number()?;
-                    let mut objects = Vec::new();
-                    for _ in 0..n {
-                        let (thunk, method) = r.made()?;
-                        let mine = r.number()?;
-                        let others = r.number()?;
-                        let theirs = (0..others).map(|_| r.number()).collect::<Result<Vec<_>, _>>()?;
-                        objects.push((Made { thunk, method, parameters: r.number()?, block: r.number()? }, mine, theirs));
-                    }
+                11 => Instruction::Global { to: r.register()?, index: r.number()? },
+                12 => Instruction::Prim { to: r.register()?, prim: prim_named(&string(r.number()?)?)?, arguments: r.registers()? },
+                13 => Instruction::Foreign { to: r.register()?, symbol: string(r.number()?)?, shape: string(r.number()?)?, result: r.byte()? as char, arguments: r.registers()? },
+                14 => {
+                    let objects = (0..r.number()?)
+                        .map(|_| Ok((r.register()?, r.made()?, r.registers()?, (0..r.number()?).map(|_| r.number()).collect::<Result<_, _>>()?)))
+                        .collect::<Result<_, String>>()?;
                     Instruction::Rec(objects)
                 }
-                12 => Instruction::Halt,
-                other => return Err(format!("the image has an instruction this machine does not know: {other}")),
+                15 => Instruction::Halt,
+                other => return Err(format!("the image has an instruction this machine has not got: {other}")),
             });
         }
         blocks.push(block);
     }
+    // The blocks are put one after another, and a block is from then on
+    // where it starts.
+    let mut starts = Vec::with_capacity(blocks.len());
+    let mut at = 0;
+    for block in &blocks {
+        starts.push(at);
+        at += block.len();
+    }
+    let place = |block: usize| starts.get(block).copied().ok_or_else(|| "the image names a block it has not got".to_string());
+    let mut code = Vec::with_capacity(at);
+    for mut instruction in blocks.into_iter().flatten() {
+        match &mut instruction {
+            Instruction::Switch { clauses, .. } => {
+                for clause in clauses.iter_mut() {
+                    clause.1 = place(clause.1)?;
+                }
+            }
+            Instruction::New { made, .. } => made.block = place(made.block)?,
+            Instruction::Frame { block, .. } => *block = place(*block)?,
+            Instruction::Rec(objects) => {
+                for object in objects.iter_mut() {
+                    object.1.block = place(object.1.block)?;
+                }
+            }
+            _ => {}
+        }
+        code.push(instruction);
+    }
     let n = r.number()?;
-    let definitions = (0..n).map(|_| r.number()).collect::<Result<_, _>>()?;
-    let entry = r.number()?;
-    let callback = r.number()?;
+    let definitions = (0..n).map(|_| r.number().and_then(place)).collect::<Result<_, _>>()?;
+    let entry = place(r.number()?)?;
+    let callback = place(r.number()?)?;
     let mut exports = Vec::new();
     for _ in 0..r.number()? {
         exports.push((string(r.number()?)?, string(r.number()?)?, r.byte()? as char, r.number()?));
     }
-    Ok(Image { blocks, definitions, entry, callback, exports })
+    Ok(Image { code, registers, definitions, entry, callback, exports })
+}
+
+// The stack of frames ----------------------------------------------------------
+
+/// The consumers that are waiting: what a computation will be given to
+/// when it is done. A consumer is made before what it waits for is begun
+/// and is called once, by which time every consumer made after it has
+/// been called or will never be, so they are a stack.
+///
+/// The stack is not the machine's own. It is in chunks, each a run of
+/// values, and grows by another chunk when one is full; a frame is in one
+/// chunk, a word saying where its code is and how much it holds, and then
+/// what it holds. Calling a frame takes what it holds back out and lets
+/// go of the frame and of every frame above it.
+struct Frames {
+    chunks: Vec<Vec<Value>>,
+    /// The chunk the top of the stack is in.
+    current: usize,
+}
+
+/// How many values a chunk has room for, unless one frame needs more.
+const CHUNK: usize = 8192;
+
+/// What a frame that keeps a thunk's value says in place of its code.
+const UPDATE: i64 = -1;
+
+impl Frames {
+    fn new() -> Self {
+        Frames { chunks: vec![Vec::with_capacity(CHUNK)], current: 0 }
+    }
+
+    /// Push a frame, and give the value that is the way to it.
+    fn push(&mut self, header: i64, held: impl ExactSizeIterator<Item = Value>) -> Value {
+        let size = 1 + held.len();
+        if self.chunks[self.current].len() + size > self.chunks[self.current].capacity() {
+            // The next chunk, which may be one that was let go of before.
+            if !self.chunks[self.current].is_empty() {
+                self.current += 1;
+            }
+            if self.current == self.chunks.len() {
+                self.chunks.push(Vec::with_capacity(size.max(CHUNK)));
+            } else if self.chunks[self.current].capacity() < size {
+                self.chunks[self.current] = Vec::with_capacity(size);
+            }
+        }
+        let chunk = &mut self.chunks[self.current];
+        let at = chunk.len();
+        chunk.push(Value::Int(header));
+        chunk.extend(held);
+        Value::Frame(self.current as u32, at as u32)
+    }
+
+    /// Call a frame: let go of every frame above it, take what it holds
+    /// out into some registers, and let go of it. Gives what it said of
+    /// its code.
+    fn pop(&mut self, chunk: u32, at: u32, into: &mut [Value]) -> Result<i64, String> {
+        let gone = || "the image is malformed: a consumer was called that is not there".to_string();
+        let (chunk, at) = (chunk as usize, at as usize);
+        if chunk > self.current {
+            return Err(gone());
+        }
+        while self.current > chunk {
+            self.chunks[self.current].clear();
+            self.current -= 1;
+        }
+        let frames = &mut self.chunks[chunk];
+        let Some(Value::Int(header)) = frames.get(at) else { return Err(gone()) };
+        let header = *header;
+        // A frame that keeps a thunk's value holds two things; any other
+        // says how many beside where its code is.
+        let held = if header == UPDATE { 2 } else { (header & 0xFFFF) as usize };
+        if at + 1 + held > frames.len() || held > into.len() {
+            return Err(gone());
+        }
+        frames.truncate(at + 1 + held);
+        for (to, from) in into.iter_mut().zip(frames.drain(at + 1..)) {
+            *to = from;
+        }
+        frames.truncate(at);
+        Ok(if header == UPDATE { UPDATE } else { header >> 16 })
+    }
 }
 
 // Numbers --------------------------------------------------------------------
@@ -486,10 +621,11 @@ struct Machine {
     name: String,
     // The actions that answer calls from C, by number; and the calls being
     // answered, the innermost last: each its arguments, and its result.
-    // A buffer for the row being made by a substitute.
-    spare: Vec<Value>,
     answers: Vec<Value>,
-    frames: Vec<(Vec<foreign::Number>, foreign::Number)>,
+    calls: Vec<(Vec<foreign::Number>, foreign::Number)>,
+    // The registers, and the stack of consumers.
+    regs: Vec<Value>,
+    stack: Frames,
     // How many possible roots of circles there are to be before they are
     // next looked at.
     due: usize,
@@ -806,26 +942,26 @@ impl Machine {
             }
             (CallbackInt, [i]) => {
                 let i = small(i)? as usize;
-                match self.frames.last().and_then(|(taken, _)| taken.get(i)) {
+                match self.calls.last().and_then(|(taken, _)| taken.get(i)) {
                     Some(foreign::Number::Long(n)) => Value::Int(*n),
                     _ => return Err("there is no such integer argument of a call from C".into()),
                 }
             }
             (CallbackDouble, [i]) => {
                 let i = small(i)? as usize;
-                match self.frames.last().and_then(|(taken, _)| taken.get(i)) {
+                match self.calls.last().and_then(|(taken, _)| taken.get(i)) {
                     Some(foreign::Number::Double(x)) => Value::Double(*x),
                     _ => return Err("there is no such double argument of a call from C".into()),
                 }
             }
             (CallbackReturnInt, [value]) => {
                 let value = foreign::Number::Long(small(value)?);
-                self.frames.last_mut().ok_or("there is no call from C to answer")?.1 = value;
+                self.calls.last_mut().ok_or("there is no call from C to answer")?.1 = value;
                 UNIT
             }
             (CallbackReturnDouble, [value]) => {
                 let value = foreign::Number::Double(double(value)?);
-                self.frames.last_mut().ok_or("there is no call from C to answer")?.1 = value;
+                self.calls.last_mut().ok_or("there is no call from C to answer")?.1 = value;
                 UNIT
             }
             (ErrnoGet, []) => Value::Int(foreign::errno() as i64),
@@ -863,22 +999,91 @@ impl Machine {
 
     /// Answer a call from C: run the action of a number, which takes the
     /// call's arguments and gives its result by the primitives for that.
+    /// It runs in registers of its own, above what is on the stack of
+    /// frames: the call it is answering is in the middle of an
+    /// instruction, whose registers are still wanted.
     fn answer(&mut self, which: usize, taken: Vec<foreign::Number>) -> foreign::Number {
         let Some(action) = self.answers.get(which).cloned() else { return foreign::Number::Long(0) };
-        self.frames.push((taken, foreign::Number::Long(0)));
-        let block = self.image.callback;
-        if let Err(message) = self.run(block, vec![action]) {
+        self.calls.push((taken, foreign::Number::Long(0)));
+        let mut fresh = vec![Value::Tag(0); self.regs.len()];
+        fresh[0] = action;
+        let kept = std::mem::replace(&mut self.regs, fresh);
+        let start = self.image.callback;
+        if let Err(message) = self.run(start) {
             eprintln!("runtime error: {message}");
             self.finish(1)
         }
-        self.frames.pop().map_or(foreign::Number::Long(0), |(_, gave)| gave)
+        self.regs = kept;
+        self.calls.pop().map_or(foreign::Number::Long(0), |(_, gave)| gave)
     }
 
-    /// Run from a block, with an environment, until it halts.
-    fn run(&mut self, start: usize, mut env: Vec<Value>) -> Result<(), String> {
+    /// What is in a register, taken out of it.
+    #[inline(always)]
+    fn take(&mut self, r: Reg) -> Value {
+        std::mem::replace(&mut self.regs[r as usize], Value::Tag(0))
+    }
+
+    /// Call a method of something, with its arguments in the first
+    /// registers: what it captured goes into the registers after them, and
+    /// where its code is is given. A thunk's value coming back to the
+    /// frame that keeps it is kept, and passed on to the consumer of the
+    /// force.
+    fn call(&mut self, mut target: Value, method: u8, arguments: usize) -> Result<usize, String> {
         let malformed = |what: &str| format!("the image is malformed: {what}");
-        let mut block = start;
-        let mut at = 0;
+        loop {
+            match target {
+                Value::Frame(chunk, at) => {
+                    if method != RET || arguments != 1 {
+                        return Err(malformed("a consumer called as what it is not"));
+                    }
+                    let header = self.stack.pop(chunk, at, &mut self.regs[1..])?;
+                    if header != UPDATE {
+                        return Ok(header as usize);
+                    }
+                    // What the frame held is in the two registers after the
+                    // value: the thunk, and who wanted it.
+                    let (thunk, consumer) = (self.take(1), self.take(2));
+                    let Value::Object(thunk) = thunk else { return Err(malformed("a value kept in what is not a thunk")) };
+                    *thunk.borrow_mut() = Cell::Done(self.regs[0].clone());
+                    target = consumer;
+                }
+                Value::Object(mut cell) => {
+                    // What nothing else refers to is used up by the call:
+                    // what it holds is moved out, not copied.
+                    return if let Some(only) = cell.get_mut() {
+                        match only.get_mut() {
+                            Cell::Made { captured, method: has, parameters, block } if *has == method && *parameters == arguments => {
+                                for (to, from) in self.regs[arguments..].iter_mut().zip(captured.drain(..)) {
+                                    *to = from;
+                                }
+                                Ok(*block)
+                            }
+                            _ => Err(malformed("a call of what is not an object with that method")),
+                        }
+                    } else {
+                        match &*cell.borrow() {
+                            Cell::Made { captured, method: has, parameters, block } if *has == method && *parameters == arguments => {
+                                for (to, from) in self.regs[arguments..].iter_mut().zip(captured.iter()) {
+                                    *to = from.clone();
+                                }
+                                Ok(*block)
+                            }
+                            _ => Err(malformed("a call of what is not an object with that method")),
+                        }
+                    };
+                }
+                _ => return Err(malformed("a call of what is not an object")),
+            }
+        }
+    }
+
+    /// Run from a place in the code, with what it starts with in the
+    /// first registers, until it halts. Nothing here calls itself: what a
+    /// computation comes back to is a frame on the stack of them, which is
+    /// the machine's to grow, and not this function's own stack.
+    fn run(&mut self, start: usize) -> Result<(), String> {
+        let malformed = |what: &str| format!("the image is malformed: {what}");
+        let mut pc = start;
         let mut since = 0u32;
         loop {
             // Between instructions nothing is half made, so here is where
@@ -897,88 +1102,95 @@ impl Machine {
             }
             // The image is not changed while it runs, so an instruction can
             // be looked at while the rest of the machine is changed.
-            let instruction: *const Instruction = &self.image.blocks[block][at];
-            at += 1;
+            let instruction: *const Instruction = &self.image.code[pc];
+            pc += 1;
             // SAFETY: `self.image` outlives the loop and nothing writes to it.
             match unsafe { &*instruction } {
                 Instruction::Halt => return Ok(()),
-                Instruction::Substitute(sources) => {
-                    // The new row is made in a buffer kept for it, and the
-                    // old row becomes the buffer: nothing is allocated.
-                    let mut next = std::mem::take(&mut self.spare);
-                    for &(i, last) in sources {
-                        let Some(old) = env.get_mut(i) else { return Err(malformed("a substitute of a value that is not there")) };
-                        next.push(if last { std::mem::replace(old, Value::Tag(0)) } else { old.clone() });
-                    }
-                    std::mem::swap(&mut env, &mut next);
-                    next.clear();
-                    self.spare = next;
+                Instruction::Shift { to, from } => {
+                    let value = self.take(*from);
+                    self.regs[*to as usize] = value;
                 }
-                Instruction::Let { tag, arity } => {
-                    let made = if *arity == 0 {
+                Instruction::Copy { to, from } => {
+                    let value = self.regs[*from as usize].clone();
+                    self.regs[*to as usize] = value;
+                }
+                Instruction::Drop(r) => self.regs[*r as usize] = Value::Tag(0),
+                Instruction::Let { to, tag, fields } => {
+                    let made = if fields.is_empty() {
                         Value::Tag(*tag)
                     } else {
-                        let from = env.len() - arity;
-                        Value::Data(Gc::new(Data { tag: *tag, fields: env.drain(from..).collect() }))
+                        let held: Held = fields.iter().map(|&r| self.take(r)).collect();
+                        Value::Data(Gc::new(Data { tag: *tag, fields: held }))
                     };
-                    env.push(made);
+                    self.regs[*to as usize] = made;
                 }
-                Instruction::Switch(clauses) => {
-                    let (tag, fields) = match env.pop() {
-                        Some(Value::Tag(tag)) => (tag, Held::new()),
+                Instruction::Switch { on, clauses } => {
+                    let (tag, mut fields) = match self.take(*on) {
+                        Value::Tag(tag) => (tag, Held::new()),
                         // If nothing else holds it, its fields are moved out.
-                        Some(Value::Data(mut data)) => match data.get_mut() {
+                        Value::Data(mut data) => match data.get_mut() {
                             Some(mine) => (mine.tag, std::mem::take(&mut mine.fields)),
                             None => (data.tag, data.fields.clone()),
                         },
                         _ => return Err(malformed("a switch on what is not a constructed value")),
                     };
-                    let &(count, target) = clauses.get(tag as usize).ok_or_else(|| malformed("a switch has no clause for a constructor"))?;
-                    if count != fields.len() {
+                    let (places, target) = clauses.get(tag as usize).ok_or_else(|| malformed("a switch has no clause for a constructor"))?;
+                    if places.len() != fields.len() {
                         return Err(malformed("a clause names the wrong number of fields"));
                     }
-                    env.extend(fields);
-                    block = target;
-                    at = 0;
+                    for (&to, field) in places.iter().zip(fields.drain(..)) {
+                        self.regs[to as usize] = field;
+                    }
+                    pc = *target;
                 }
-                Instruction::New { made, captured } => {
-                    let from = env.len() - captured;
-                    let held: Held = env.drain(from..).collect();
-                    env.push(Value::Object(Gc::new(RefCell::new(Self::object(made, held)))));
+                Instruction::New { to, made, captured } => {
+                    let held: Held = captured.iter().map(|&r| self.take(r)).collect();
+                    self.regs[*to as usize] = Value::Object(Gc::new(RefCell::new(Self::object(made, held))));
+                }
+                Instruction::Frame { to, block, captured } => {
+                    if captured.len() > 0xFFFF {
+                        return Err(malformed("a consumer holds more than there is room to say"));
+                    }
+                    let regs = &mut self.regs;
+                    let held = captured.iter().map(|&r| std::mem::replace(&mut regs[r as usize], Value::Tag(0)));
+                    let frame = self.stack.push(((*block as i64) << 16) | captured.len() as i64, held);
+                    self.regs[*to as usize] = frame;
                 }
                 Instruction::Rec(objects) => {
                     let cells: Vec<_> = objects.iter().map(|_| Gc::new(RefCell::new(Cell::Working))).collect();
-                    let total: usize = objects.iter().map(|(_, mine, _)| mine).sum();
-                    let mut values = env.split_off(env.len() - total).into_iter();
-                    for ((made, mine, theirs), cell) in objects.iter().zip(&cells) {
-                        let mut held: Held = values.by_ref().take(*mine).collect();
+                    for ((_, made, own, theirs), cell) in objects.iter().zip(&cells) {
+                        let mut held: Held = own.iter().map(|&r| self.take(r)).collect();
                         held.extend(theirs.iter().map(|&i| Value::Object(cells[i].clone())));
                         *cell.borrow_mut() = Self::object(made, held);
                     }
-                    env.extend(cells.into_iter().map(Value::Object));
+                    for ((to, ..), cell) in objects.iter().zip(cells) {
+                        self.regs[*to as usize] = Value::Object(cell);
+                    }
                 }
-                Instruction::Lit(v) => env.push(v.clone()),
-                Instruction::Global(i) => env.push(Value::Object(self.globals[*i].clone())),
-                Instruction::Prim(p, n) => {
-                    let from = env.len() - n;
-                    let result = self.primitive(*p, &env[from..])?;
-                    env.truncate(from);
-                    env.push(result);
+                Instruction::Lit { to, value } => self.regs[*to as usize] = value.clone(),
+                Instruction::Global { to, index } => self.regs[*to as usize] = Value::Object(self.globals[*index].clone()),
+                Instruction::Prim { to, prim, arguments } => {
+                    let given: Held = arguments.iter().map(|&r| self.take(r)).collect();
+                    let result = self.primitive(*prim, &given)?;
+                    self.regs[*to as usize] = result;
                 }
                 // A C function made of an action of the program's.
-                Instruction::Foreign { symbol, shape, result } if symbol == "wrapper" => {
-                    let action = env.pop().ok_or_else(|| malformed("a C function made of nothing"))?;
+                Instruction::Foreign { to, symbol, shape, result, arguments } if symbol == "wrapper" => {
+                    let action = arguments.first().map(|&r| self.take(r)).ok_or_else(|| malformed("a C function made of nothing"))?;
                     self.answers.push(action);
-                    env.push(Value::Int(foreign::closure(shape, *result, self.answers.len() - 1)?));
+                    self.regs[*to as usize] = Value::Int(foreign::closure(shape, *result, self.answers.len() - 1)?);
                 }
-                Instruction::Foreign { symbol, shape, result } => {
-                    let arguments = env.split_off(env.len() - shape.len());
+                Instruction::Foreign { to, symbol, shape, result, arguments } => {
                     let given = shape
                         .chars()
-                        .zip(&arguments)
-                        .map(|(kind, v)| if kind == 'D' || kind == 'F' { double(v).map(foreign::Number::Double) } else { small(v).map(foreign::Number::Long) })
+                        .zip(arguments.iter())
+                        .map(|(kind, &r)| {
+                            let v = self.take(r);
+                            if kind == 'D' || kind == 'F' { double(&v).map(foreign::Number::Double) } else { small(&v).map(foreign::Number::Long) }
+                        })
                         .collect::<Result<Vec<_>, _>>()?;
-                    env.push(match (result, foreign::call(symbol, shape, *result, &given)?) {
+                    let gave = match (result, foreign::call(symbol, shape, *result, &given)?) {
                         ('V', _) => UNIT,
                         (_, foreign::Number::Double(x)) => Value::Double(x),
                         (kind, foreign::Number::Long(n)) => Value::Int(match kind {
@@ -990,126 +1202,49 @@ impl Machine {
                             'C' => n as u8 as i64,
                             _ => n,
                         }),
-                    });
-                }
-                Instruction::Force | Instruction::Invoke(_) => {
-                    // What is called, how, and with what.
-                    let (mut target, mut method, mut arguments) = match unsafe { &*instruction } {
-                        Instruction::Force => {
-                            let (Some(x), Some(k), true) = (env.pop(), env.pop(), env.is_empty()) else {
-                                return Err(malformed("a force with more in the environment than a value and its consumer"));
-                            };
-                            match self.force(x, k)? {
-                                Entered::Body(update, captured, to) => {
-                                    env.push(update);
-                                    env.extend(captured);
-                                    block = to;
-                                    at = 0;
-                                    continue;
-                                }
-                                Entered::Call(k, v) => {
-                                    env.push(v);
-                                    (k, RET, std::mem::take(&mut env))
-                                }
-                            }
-                        }
-                        Instruction::Invoke(m) => {
-                            let object = env.pop().ok_or_else(|| malformed("an invoke with nothing in the environment"))?;
-                            (object, *m, std::mem::take(&mut env))
-                        }
-                        _ => unreachable!(),
                     };
-                    // A thunk's value coming back is kept and passed on,
-                    // which may be to another thunk's consumer.
-                    loop {
-                        let Value::Object(cell) = &mut target else {
-                            return Err(malformed("a call of what is not an object"));
+                    self.regs[*to as usize] = gave;
+                }
+                Instruction::Invoke { method, arguments } => {
+                    let target = self.take(*arguments as Reg);
+                    pc = self.call(target, *method, *arguments)?;
+                }
+                // Work a value out if it is a thunk not yet worked out, which
+                // is to run its body with a frame that will keep the value;
+                // otherwise give it to the consumer.
+                Instruction::Force { value, consumer } => {
+                    let (mut x, k) = (self.take(*value), self.take(*consumer));
+                    pc = loop {
+                        let Value::Object(cell) = &x else {
+                            self.regs[0] = x;
+                            break self.call(k, RET, 1)?;
                         };
-                        // What nothing else refers to is used up by the
-                        // call: what it holds is moved out, not copied.
-                        let next = if let Some(only) = cell.get_mut() {
-                            match only.get_mut() {
-                                Cell::Made { captured, method: has, parameters, block: to } => {
-                                    if *has != method || *parameters != arguments.len() {
-                                        return Err(malformed("an object was called by a method it has not got"));
-                                    }
-                                    arguments.extend(captured.drain(..));
-                                    block = *to;
-                                    at = 0;
-                                    None
+                        let state = std::mem::replace(&mut *cell.borrow_mut(), Cell::Working);
+                        match state {
+                            Cell::Delayed { captured, block } => {
+                                let update = self.stack.push(UPDATE, [x, k].into_iter());
+                                self.regs[0] = update;
+                                for (to, from) in self.regs[1..].iter_mut().zip(captured) {
+                                    *to = from;
                                 }
-                                Cell::Update { thunk, consumer } if method == RET && arguments.len() == 1 => {
-                                    *thunk.borrow_mut() = Cell::Done(arguments[0].clone());
-                                    Some(std::mem::replace(consumer, Value::Tag(0)))
-                                }
-                                _ => return Err(malformed("a call of what is not an object with that method")),
+                                break block;
                             }
-                        } else {
-                            match &*cell.borrow() {
-                                Cell::Made { captured, method: has, parameters, block: to } => {
-                                    if *has != method || *parameters != arguments.len() {
-                                        return Err(malformed("an object was called by a method it has not got"));
-                                    }
-                                    arguments.extend(captured.iter().cloned());
-                                    block = *to;
-                                    at = 0;
-                                    None
-                                }
-                                Cell::Update { thunk, consumer } if method == RET && arguments.len() == 1 => {
-                                    *thunk.borrow_mut() = Cell::Done(arguments[0].clone());
-                                    Some(consumer.clone())
-                                }
-                                _ => return Err(malformed("a call of what is not an object with that method")),
+                            Cell::Done(v) => {
+                                *cell.borrow_mut() = Cell::Done(v.clone());
+                                x = v;
                             }
-                        };
-                        match next {
-                            None => break,
-                            Some(consumer) => {
-                                target = consumer;
-                                method = RET;
+                            Cell::Working => return Err("a value depends on itself".into()),
+                            other => {
+                                *cell.borrow_mut() = other;
+                                self.regs[0] = x;
+                                break self.call(k, RET, 1)?;
                             }
                         }
-                    }
-                    // The row's old buffer is kept for the next row made.
-                    env = arguments;
+                    };
                 }
             }
         }
     }
-
-    /// Work a value out if it is a thunk not yet worked out, which is to
-    /// run its body; otherwise say what its consumer is to be given.
-    fn force(&mut self, mut x: Value, k: Value) -> Result<Entered, String> {
-        loop {
-            let Value::Object(cell) = &x else {
-                return Ok(Entered::Call(k, x));
-            };
-            let state = std::mem::replace(&mut *cell.borrow_mut(), Cell::Working);
-            match state {
-                Cell::Delayed { captured, block } => {
-                    let update = Value::Object(Gc::new(RefCell::new(Cell::Update { thunk: cell.clone(), consumer: k })));
-                    return Ok(Entered::Body(update, captured, block));
-                }
-                Cell::Done(v) => {
-                    *cell.borrow_mut() = Cell::Done(v.clone());
-                    x = v;
-                }
-                Cell::Working => return Err("a value depends on itself".into()),
-                other => {
-                    *cell.borrow_mut() = other;
-                    return Ok(Entered::Call(k, x));
-                }
-            }
-        }
-    }
-}
-
-enum Entered {
-    /// A thunk's body: the consumer it is given, what it captured, and
-    /// its block.
-    Body(Value, Held, usize),
-    /// A consumer, and the value it is to be given.
-    Call(Value, Value),
 }
 
 /// The machine, for calls from C: they come from inside a call the machine
@@ -1134,50 +1269,49 @@ fn main() {
         std::process::exit(2);
     });
     let rest: Vec<String> = arguments.collect();
-    // Letting go of a long list goes as deep as the list is long, so the
-    // machine is given room for that until it frees memory by a loop.
-    let machine = std::thread::Builder::new().stack_size(1 << 30).spawn(move || {
-        let image = load(&bytes).unwrap_or_else(|e| {
-            eprintln!("powder-vm: {path}: {e}");
-            std::process::exit(2);
-        });
-        let globals = image.definitions.iter().map(|&block| Gc::new(RefCell::new(Cell::Delayed { captured: Held::new(), block }))).collect();
-        let mut machine = Machine {
-            image,
-            globals,
-            out: BufWriter::new(std::io::stdout()),
-            input: BufReader::new(std::io::stdin()),
-            path: String::new(),
-            files: HashMap::new(),
-            opened: 0,
-            cells: Vec::new(),
-            environment: std::env::vars_os().map(|(name, value)| format!("{}={}", name.to_string_lossy(), value.to_string_lossy())).collect(),
-            arguments: rest,
-            name: path,
-            spare: Vec::new(),
-            answers: Vec::new(),
-            frames: Vec::new(),
-            // POWDER_GC=off leaves circles be, which is for measuring
-            // what looking for them costs.
-            due: if std::env::var_os("POWDER_GC").is_some_and(|v| v == "off") { usize::MAX } else { FIRST_COLLECTION },
-        };
-        // SAFETY: the machine is in one place for as long as the thread
-        // runs, and C calls back only from inside a call the machine made.
-        unsafe { MACHINE = &mut machine };
-        foreign::answer_with(answer);
-        let outcome = foreign::load_libraries().and_then(|()| machine.export()).and_then(|()| {
-            let entry = machine.image.entry;
-            machine.run(entry, Vec::new())
-        });
-        let _ = machine.out.flush();
-        match outcome {
-            Ok(()) => machine.finish(0),
-            Err(message) => {
-                eprintln!("runtime error: {message}");
-                // Nothing is let go of on the way out: the system takes it all back.
-                machine.finish(1)
-            }
-        }
+    let image = load(&bytes).unwrap_or_else(|e| {
+        eprintln!("powder-vm: {path}: {e}");
+        std::process::exit(2);
     });
-    let _ = machine.expect("the machine could not be started").join();
+    let globals = image.definitions.iter().map(|&block| Gc::new(RefCell::new(Cell::Delayed { captured: Held::new(), block }))).collect();
+    // Room for what a call brings with it, past the registers the program
+    // names: what a frame held, with the value it is given.
+    let registers = vec![Value::Tag(0); image.registers + 4];
+    let mut machine = Machine {
+        image,
+        globals,
+        out: BufWriter::new(std::io::stdout()),
+        input: BufReader::new(std::io::stdin()),
+        path: String::new(),
+        files: HashMap::new(),
+        opened: 0,
+        cells: Vec::new(),
+        environment: std::env::vars_os().map(|(name, value)| format!("{}={}", name.to_string_lossy(), value.to_string_lossy())).collect(),
+        arguments: rest,
+        name: path,
+        answers: Vec::new(),
+        calls: Vec::new(),
+        regs: registers,
+        stack: Frames::new(),
+        // POWDER_GC=off leaves circles be, which is for measuring what
+        // looking for them costs.
+        due: if std::env::var_os("POWDER_GC").is_some_and(|v| v == "off") { usize::MAX } else { FIRST_COLLECTION },
+    };
+    // SAFETY: the machine is in one place for as long as it runs, and C
+    // calls back only from inside a call the machine made.
+    unsafe { MACHINE = &mut machine };
+    foreign::answer_with(answer);
+    let outcome = foreign::load_libraries().and_then(|()| machine.export()).and_then(|()| {
+        let entry = machine.image.entry;
+        machine.run(entry)
+    });
+    let _ = machine.out.flush();
+    match outcome {
+        Ok(()) => machine.finish(0),
+        Err(message) => {
+            eprintln!("runtime error: {message}");
+            // Nothing is let go of on the way out: the system takes it all back.
+            machine.finish(1)
+        }
+    }
 }

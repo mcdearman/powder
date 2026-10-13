@@ -84,6 +84,10 @@ thread_local! {
     /// While garbage is freed, letting go of a reference changes no count:
     /// the counts were settled by the collection.
     static SWEEPING: Cell<bool> = const { Cell::new(false) };
+    /// Whether a value is being let go of, and the values let go of
+    /// meanwhile, which wait their turn.
+    static RELEASING: Cell<bool> = const { Cell::new(false) };
+    static WAITING: RefCell<Vec<NonNull<Header>>> = const { RefCell::new(Vec::new()) };
     static STATS: Cell<Stats> = const { Cell::new(Stats { made: 0, freed_by_count: 0, freed_in_circles: 0, collections: 0 }) };
 }
 
@@ -198,18 +202,32 @@ unsafe fn free_of<T>(at: NonNull<Header>) {
 
 /// Let go of what a value holds, and free it unless it is among the roots,
 /// where it is freed when the roots are next looked at.
+///
+/// What it holds may be let go of in turn, as deep as a list is long.
+/// That is not done by this calling itself: a value let go of while
+/// another is being let go of waits in a list, and they are taken from
+/// the list one at a time.
 unsafe fn release(at: NonNull<Header>) {
-    // SAFETY: the caller's.
-    unsafe {
-        let header = at.as_ref();
-        header.color.set(Color::Black);
-        header.dead.set(true);
-        (header.how.drop)(at);
-        note(|stats| stats.freed_by_count += 1);
-        if !header.buffered.get() {
-            (header.how.free)(at);
-        }
+    if RELEASING.with(|releasing| releasing.replace(true)) {
+        WAITING.with(|waiting| waiting.borrow_mut().push(at));
+        return;
     }
+    let mut next = Some(at);
+    while let Some(at) = next {
+        // SAFETY: the caller's: nothing refers to it any more.
+        unsafe {
+            let header = at.as_ref();
+            header.color.set(Color::Black);
+            header.dead.set(true);
+            (header.how.drop)(at);
+            note(|stats| stats.freed_by_count += 1);
+            if !header.buffered.get() {
+                (header.how.free)(at);
+            }
+        }
+        next = WAITING.with(|waiting| waiting.borrow_mut().pop());
+    }
+    RELEASING.with(|releasing| releasing.set(false));
 }
 
 fn children(at: NonNull<Header>, mut visit: impl FnMut(NonNull<Header>)) {
