@@ -39,6 +39,7 @@ data Extension
   = BangPatterns
   | BinaryLiterals
   | BlockArguments
+  | CPP
   | ConstrainedClassMethods
   | ConstraintKinds
   | DataKinds
@@ -143,6 +144,7 @@ implemented =
         BangPatterns,
         BinaryLiterals,
         BlockArguments,
+        CPP,
         ConstrainedClassMethods,
         ConstraintKinds,
         DataKinds,

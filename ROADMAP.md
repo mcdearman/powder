@@ -336,7 +336,11 @@ What these do not yet do:
 
 - The rest of PatternSynonyms: those with fields, and those bundled with a
   type.
-- CPP, before any package from elsewhere is compiled.
+- CPP is done, as far as conditions and names that stand for text: no
+  `#include`, no `#` or `##` in what a name stands for, and nothing is
+  defined from outside, by a flag or by a manifest. `__GLASGOW_HASKELL__`
+  is not defined, and of the packages only `base` is one whose version
+  can be asked about.
 - Not planned: Template Haskell (and so DeriveLift), LinearTypes, Arrows,
   ImplicitParams (HasCallStack is to be a constraint that is always solved),
   and MagicHash in earnest.
