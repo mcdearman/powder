@@ -146,6 +146,7 @@ implemented =
         ConstrainedClassMethods,
         ConstraintKinds,
         DataKinds,
+        DefaultSignatures,
         DeriveAnyClass,
         DeriveDataTypeable,
         DeriveFoldable,
