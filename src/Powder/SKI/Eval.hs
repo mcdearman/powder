@@ -284,7 +284,16 @@ whnf m root = do
       IntLt -> comparison (<)
       IntLe -> comparison (<=)
       Seq | (_, a) : (n, b) : s <- stk -> whnf m a >> redirect n b s
-      PerformIO | (n, a) : s <- stk -> runIO m a >>= \x -> redirect n x s
+      -- What the action raises is raised again by the value, if it is
+      -- wanted again, as by a thunk whose working out it went past.
+      PerformIO | (n, a) : s <- stk -> do
+        x <-
+          runIO m a `catch` \r@(Raised uncaught raised) -> do
+            again <- newIORef (NPrim Raise) >>= \p -> newIORef (NApp p uncaught) >>= \pu -> pure (NApp pu raised)
+            writeIORef n again
+            throwIO r
+        redirect n x s
+      Raise | (_, uncaught) : (_, x) : _ <- stk -> throwIO (Raised uncaught x)
       MatchFail -> failure "pattern match failure"
       CharToInt | (n, a) : s <- stk -> redirect n a s
       IntToChar | (n, a) : s <- stk -> redirect n a s

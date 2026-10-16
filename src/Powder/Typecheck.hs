@@ -1228,6 +1228,9 @@ primitive p = do
     BytesRead -> arithmetic
     BytesLength -> Fun integer integer
     BytesCompare -> Fun integer (Fun integer (Fun integer (Fun integer (Fun integer integer))))
+    Raise -> Fun (App io b) (Fun a c)
+    HandlerPush -> Fun a unit
+    HandlerPop -> unit
     FloatShowAt -> Fun double (Fun integer integer)
     CharCategory -> Fun integer integer
     CharUpper -> Fun integer integer

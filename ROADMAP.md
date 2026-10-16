@@ -76,9 +76,15 @@ what GHC's Prelude has in the rest.
 
 Since, with the milestones that made them possible: `Data.Kind`,
 `Data.Coerce`, `Data.Proxy`, `Data.Typeable`, `Data.Type.Equality`,
-`GHC.TypeLits` and `GHC.Generics`. Still to write, and nothing stands in
-their way now: `Control.Exception`, whose `SomeException` is an existential
-type over a class with `Typeable` above it. `Data.Void` is there.
+`GHC.TypeLits` and `GHC.Generics`; `Data.Void`; and `Control.Exception`,
+whose `SomeException` is an existential type over a class with `Typeable`
+above it. An exception raised while a value is worked out goes to the
+innermost catch that is running, `error` among them, and each thunk it
+leaves unfinished raises it again when it is next forced, as in GHC. There
+is one thread and nothing interrupts it, so there are no asynchronous
+exceptions and masking does nothing; and a division by nothing, an index out
+of range and a failed match still end the program instead of raising
+`ArithException`, `ArrayException` and `PatternMatchFail`.
 
 Beside `base`, of the containers package: `Data.Map`, `Data.Set`,
 `Data.IntMap` and `Data.IntSet`, with `Data.Map.Strict` and
@@ -400,9 +406,25 @@ compiled.
 | A collector for cycles, beside the reference counts | done |
 | The machine two to three times faster | done |
 | A register machine with its own stack of frames, not the native one | done |
+| Exceptions through what is being worked out, thunks repaired | done |
+| Representations in the IRs: `Int` and `Double` as machine words | not started |
+| A high-level bytecode like Glade's, with explicit thunks | not started |
+| Glade's collector, copied, in place of the reference counts | not started |
 | Stack segments that can be detached, for effects and continuations | waiting |
-| A tracing collector, as an option | waiting |
 | Compiling to native code, ahead of time or as the program runs | waiting |
+
+**Where the machine is going**, as decided on 2026-10-16. Powder keeps a
+register machine of its own and its pipeline, Core to the upper sequent IR
+(the role Meadow's Cut has) to AxCut to bytecode. Underneath, it becomes like
+Glade, Meadow's machine: a high-level bytecode of fixed eight-byte
+instructions over 256 registers, with a constant pool, instructions typed by
+what they work on, compare-and-branch in one, join points, and thunks as
+instructions of their own; values as untagged words; and in place of counting
+references, Glade's collector, copied from Glade, where it has been tuned: a
+nursery and an Immix old generation marked concurrently, with the stack of
+frames as roots. The order: exceptions (done), then representations, then the
+encoding, then the collector, each with every example and the conformance
+suite passing on all three machines.
 
 **The register machine** is the machine. It passes the compiler's suite and
 the build tool's. `examples/deep.hs` was a recursion a million deep, and took

@@ -1,0 +1,6 @@
+"divided by 0"
+"4"
+"outside the catch: too late"
+(1,1,1)
+["use","release"]
+caught: user error (from IO)

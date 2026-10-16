@@ -1,0 +1,14 @@
+"3"
+"caught: deep"
+"outside: later"
+"outer got 7"
+pure throw 8
+caught head
+io: io one
+(True,"io two")
+(1,1,1)
+other
+["acquire","use 3","release","body","finally","raising","finally again","handled x"]
+(90,Left "pick me")
+("Oops 3","shown",Just 4,Nothing)
+2
