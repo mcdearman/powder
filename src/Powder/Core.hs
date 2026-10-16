@@ -179,6 +179,17 @@ data Prim
     BytesRead
   | BytesLength
   | BytesCompare
+  | -- | Raise something from anywhere, not only from an action: what to
+    -- do if nothing catches it, and what is raised. It goes to the
+    -- innermost catch that is running, past whatever is being worked out
+    -- in between; each thunk it leaves unfinished raises it again when it
+    -- is next forced.
+    Raise
+  | -- | For the lowering only, never in a program: a catch that starts
+    -- running makes its handler the innermost, and one that is done lets
+    -- go of it.
+    HandlerPush
+  | HandlerPop
   deriving (Eq, Ord, Show, Enum, Bounded)
 
 primName :: Prim -> Name

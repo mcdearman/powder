@@ -269,7 +269,8 @@ against the package itself: of containers, `Data.Map`, `Data.Set`,
 `Data.IntMap` and `Data.IntSet`; of transformers and mtl,
 `Control.Monad.State`, `Reader`, `Writer` and `Except` and the monads
 under them; `Control.Monad.ST` and `Data.STRef`; `System.FilePath`; and
-`Data.Text`. They are made as the packages make them: a map of `Int`
+`Data.Text`; and `Control.Exception`, whose exceptions go through
+values being worked out as GHC's do. They are made as the packages make them: a map of `Int`
 branches on the bits of its keys, and a text is the bytes of its
 characters in UTF-8, side by side. The machines have primitives for bits
 and for bytes that these stand on.

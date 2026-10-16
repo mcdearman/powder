@@ -1,0 +1,4 @@
+tries :: IORef Int
+fragile :: Int
+safeDiv :: Int -> Int -> Int
+main :: IO ()

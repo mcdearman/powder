@@ -76,6 +76,9 @@ enum Cell {
     Delayed { captured: Held, block: usize },
     Working,
     Done(Value),
+    /// A thunk whose working out something raised went past: forced, it
+    /// raises that again.
+    Raises(Value),
 }
 
 impl Value {
@@ -99,13 +102,15 @@ impl gc::Trace for RefCell<Cell> {
     fn trace(&self, visit: &mut dyn FnMut(gc::Edge)) {
         match &*self.borrow() {
             Cell::Made { captured, .. } | Cell::Delayed { captured, .. } => captured.iter().for_each(|held| held.edge(visit)),
-            Cell::Done(value) => value.edge(visit),
+            Cell::Done(value) | Cell::Raises(value) => value.edge(visit),
             Cell::Working => {}
         }
     }
 }
 
 const RET: u8 = 0;
+/// The method of a function: an argument and the consumer of the result.
+const AP: u8 = 1;
 
 // The image ------------------------------------------------------------------
 
@@ -119,7 +124,7 @@ enum Prim {
     PeekInt, PeekDouble, PokeInt, PokeDouble, ErrnoGet, ErrnoSet, CallbackInt, CallbackDouble, CallbackReturnInt,
     CallbackReturnDouble,
     IntAnd, IntOr, IntXor, IntShiftL, IntShiftR, BitsCount, BitsLowest, BitsHighest,
-    BytesNew, BytesWrite, BytesCopy, BytesRead, BytesLength, BytesCompare,
+    BytesNew, BytesWrite, BytesCopy, BytesRead, BytesLength, BytesCompare, Raise, HandlerPush, HandlerPop,
 }
 
 fn prim_named(name: &str) -> Result<Prim, String> {
@@ -149,7 +154,8 @@ fn prim_named(name: &str) -> Result<Prim, String> {
         "primIntShiftR" => IntShiftR, "primBitsCount" => BitsCount, "primBitsLowest" => BitsLowest,
         "primBitsHighest" => BitsHighest, "primBytesNew" => BytesNew, "primBytesWrite" => BytesWrite,
         "primBytesCopy" => BytesCopy, "primBytesRead" => BytesRead, "primBytesLength" => BytesLength,
-        "primBytesCompare" => BytesCompare,
+        "primBytesCompare" => BytesCompare, "primRaise" => Raise, "primHandlerPush" => HandlerPush,
+        "primHandlerPop" => HandlerPop,
         other => return Err(format!("the image uses a primitive this machine has not got: {other}")),
     })
 }
@@ -663,6 +669,11 @@ struct Machine {
     // The registers, and the stack of consumers.
     regs: Vec<Value>,
     stack: Frames,
+    // The catches that are running, the innermost last: each its handler,
+    // and how many thunks were being worked out when it began. And those
+    // thunks, the one begun last last.
+    handlers: Vec<(Value, usize)>,
+    forcing: Vec<Gc<RefCell<Cell>>>,
     // How many possible roots of circles there are to be before they are
     // next looked at.
     due: usize,
@@ -1110,6 +1121,19 @@ impl Machine {
         std::mem::replace(&mut self.regs[r as usize], Value::Tag(0))
     }
 
+    /// Give what is raised to the innermost catch that is running, and say
+    /// where to go on. The thunks begun since it began are not finished,
+    /// and will not be: each raises the same when it is next forced.
+    fn raise(&mut self, raised: Value) -> Result<usize, String> {
+        let (handler, height) = self.handlers.pop().ok_or("something was raised with no catch running, not even the outermost")?;
+        for thunk in self.forcing.drain(height..) {
+            *thunk.borrow_mut() = Cell::Raises(raised.clone());
+        }
+        self.regs[0] = raised;
+        self.regs[1] = UNIT;
+        self.call(handler, AP, 2)
+    }
+
     /// Call a method of something, with its arguments in the first
     /// registers: what it captured goes into the registers after them, and
     /// where its code is is given. A thunk's value coming back to the
@@ -1132,6 +1156,7 @@ impl Machine {
                     let (thunk, consumer) = (self.take(1), self.take(2));
                     let Value::Object(thunk) = thunk else { return Err(malformed("a value kept in what is not a thunk")) };
                     *thunk.borrow_mut() = Cell::Done(self.regs[0].clone());
+                    self.forcing.pop();
                     target = consumer;
                 }
                 Value::Object(mut cell) => {
@@ -1257,6 +1282,20 @@ impl Machine {
                 }
                 Instruction::Lit { to, value } => self.regs[*to as usize] = value.clone(),
                 Instruction::Global { to, index } => self.regs[*to as usize] = Value::Object(self.globals[*index].clone()),
+                Instruction::Prim { to, prim: Prim::Raise, arguments } => {
+                    let raised = arguments.first().map(|&r| self.take(r)).ok_or_else(|| malformed("a raise of nothing"))?;
+                    let _ = to;
+                    pc = self.raise(raised)?;
+                }
+                Instruction::Prim { to, prim: Prim::HandlerPush, arguments } => {
+                    let handler = arguments.first().map(|&r| self.take(r)).ok_or_else(|| malformed("a catch with no handler"))?;
+                    self.handlers.push((handler, self.forcing.len()));
+                    self.regs[*to as usize] = UNIT;
+                }
+                Instruction::Prim { to, prim: Prim::HandlerPop, .. } => {
+                    self.handlers.pop();
+                    self.regs[*to as usize] = UNIT;
+                }
                 Instruction::Prim { to, prim, arguments } => {
                     let given: Held = arguments.iter().map(|&r| self.take(r)).collect();
                     let result = self.primitive(*prim, &given)?;
@@ -1309,6 +1348,7 @@ impl Machine {
                         let state = std::mem::replace(&mut *cell.borrow_mut(), Cell::Working);
                         match state {
                             Cell::Delayed { captured, block } => {
+                                self.forcing.push(cell.clone());
                                 let update = self.stack.push(UPDATE, [x, k].into_iter());
                                 self.regs[0] = update;
                                 for (to, from) in self.regs[1..].iter_mut().zip(captured) {
@@ -1321,6 +1361,10 @@ impl Machine {
                                 x = v;
                             }
                             Cell::Working => return Err("a value depends on itself".into()),
+                            Cell::Raises(raised) => {
+                                *cell.borrow_mut() = Cell::Raises(raised.clone());
+                                break self.raise(raised)?;
+                            }
                             other => {
                                 *cell.borrow_mut() = other;
                                 self.regs[0] = x;
@@ -1380,6 +1424,8 @@ fn main() {
         calls: Vec::new(),
         regs: registers,
         stack: Frames::new(),
+        handlers: Vec::new(),
+        forcing: Vec::new(),
         // POWDER_GC=off leaves circles be, which is for measuring what
         // looking for them costs.
         due: if std::env::var_os("POWDER_GC").is_some_and(|v| v == "off") { usize::MAX } else { FIRST_COLLECTION },

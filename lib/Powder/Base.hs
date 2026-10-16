@@ -1,4 +1,4 @@
-{-# LANGUAGE MultiParamTypeClasses, FunctionalDependencies, FlexibleInstances, TypeOperators, KindSignatures, DataKinds, PolyKinds, GADTs #-}
+{-# LANGUAGE MultiParamTypeClasses, FunctionalDependencies, FlexibleInstances, TypeOperators, KindSignatures, DataKinds, PolyKinds, GADTs, ExistentialQuantification #-}
 -- Everything the prelude and the libraries beside it are made of, written
 -- in the language the compilers accept. The modules a program imports
 -- are selections from this one: Prelude, Data.List, Data.Char and the
@@ -1010,8 +1010,71 @@ until p f x = if p x then x else until p f (f x)
 asTypeOf :: a -> a -> a
 asTypeOf = const
 
+-- What is raised: anything that is an exception, which says what type it
+-- is so that a catch can take only those of one type.
+data SomeException = forall e. Exception e => SomeException e
+
+class (Typeable e, Show e) => Exception e where
+  toException :: e -> SomeException
+  toException = SomeException
+  fromException :: SomeException -> Maybe e
+  fromException (SomeException e) = cast e
+  displayException :: e -> String
+  displayException = show
+
+instance Show SomeException where
+  showsPrec d (SomeException e) = showsPrec d e
+
+instance Exception SomeException where
+  toException e = e
+  fromException e = Just e
+  displayException (SomeException e) = displayException e
+
+-- What error raises.
+data ErrorCall = ErrorCall String
+
+instance Eq ErrorCall where
+  ErrorCall a == ErrorCall b = a == b
+
+instance Ord ErrorCall where
+  compare (ErrorCall a) (ErrorCall b) = compare a b
+
+instance Show ErrorCall where
+  showsPrec _ (ErrorCall msg) = showString msg
+
+instance Exception ErrorCall
+
+-- What to do if nothing catches an exception: say what it was, and end
+-- the program.
+uncaught :: SomeException -> IO a
+uncaught e = mapM_ (primPutChar 2) (said ++ "\n") >> leave 1
+  where
+    said = case fromException e of
+      Just (ErrorCall msg) -> "error: " ++ msg
+      Nothing -> displayException e
+
+-- Raise an exception from anywhere: what is working it out, and what
+-- asked for that, are left, to the innermost catch that is running.
+throw :: Exception e => e -> a
+throw e = let raised = toException e in primRaise (uncaught raised) raised
+
+-- Raise one as an action does: when the action runs.
+throwIO :: Exception e => e -> IO a
+throwIO e = let raised = toException e in primThrow (uncaught raised) raised
+
+-- Run an action, and if it raises an exception of the type the handler
+-- takes, or something it works out raises one, run the handler instead.
+-- Any other goes on to the next catch out.
+catch :: Exception e => IO a -> (e -> IO a) -> IO a
+catch action handler = primCatch action (\raised -> case fromException raised of
+  Just e -> handler e
+  Nothing -> primThrow (uncaught raised) raised)
+
 error :: String -> a
-error msg = primPerformIO (mapM_ (primPutChar 2) ("error: " ++ msg ++ "\n") >> leave 1)
+error msg = throw (ErrorCall msg)
+
+errorWithoutStackTrace :: String -> a
+errorWithoutStackTrace = error
 
 undefined :: a
 undefined = error "undefined"
@@ -1947,12 +2010,14 @@ instance Show IOError where
 userError :: String -> IOError
 userError s = IOError UserError "" s Nothing Nothing
 
+instance Exception IOError
+
 -- One that nothing catches ends the program, saying what it was.
 ioError :: IOError -> IO a
-ioError e = primThrow (mapM_ (primPutChar 2) (show e ++ "\n") >> leave 1) e
+ioError = throwIO
 
 catchIOError :: IO a -> (IOError -> IO a) -> IO a
-catchIOError = primCatch
+catchIOError = catch
 
 -- Handles -------------------------------------------------------------------
 

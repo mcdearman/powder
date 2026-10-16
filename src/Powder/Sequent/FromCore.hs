@@ -45,9 +45,9 @@ fromCore root (Core.Program _ defs exports) = evalState (runReaderT build Map.em
       v <- fresh "v"
       r' <- fresh "r"
       e <- fresh "e"
-      let finish = MuTilde r Halt
-          uncaught = Case [Alt raised [u, v] (Cut (Var u) (Force (Run (MuTilde r' Halt) (MuTilde e Halt))))]
-      pure (a, Cut (Var a) (Force (Run finish uncaught)))
+      let uncaught = Case [Alt raised [u, v] (Cut (Var u) (Force (Run (MuTilde r' Halt) (MuTilde e Halt))))]
+      finish <- finished r
+      (,) a <$> outermost uncaught (Cut (Var a) . Force . Run finish)
     -- Run the action; what it raises and nothing catches says what to do.
     entry = do
       r <- fresh "r"
@@ -55,9 +55,24 @@ fromCore root (Core.Program _ defs exports) = evalState (runReaderT build Map.em
       v <- fresh "v"
       r' <- fresh "r"
       e <- fresh "e"
-      let finish = MuTilde r Halt
-          uncaught = Case [Alt raised [u, v] (Cut (Var u) (Force (Run (MuTilde r' Halt) (MuTilde e Halt))))]
-      pure (Cut (Global root) (Force (Run finish uncaught)))
+      let uncaught = Case [Alt raised [u, v] (Cut (Var u) (Force (Run (MuTilde r' Halt) (MuTilde e Halt))))]
+      finish <- finished r
+      outermost uncaught (Cut (Global root) . Force . Run finish)
+    -- Done: the outermost handler is let go of.
+    finished r = do
+      done <- fresh "u"
+      pure (MuTilde r (Prim HandlerPop [] (MuTilde done Halt)))
+    -- What is raised and caught by nothing else, from an action or from
+    -- what is being worked out, goes to the one consumer that says what
+    -- to do with it: as the outermost handler, and as the action's own.
+    outermost uncaught running = do
+      h <- fresh "handler"
+      e <- fresh "e"
+      e' <- fresh "e"
+      ignored <- fresh "k"
+      done <- fresh "u"
+      let catching = Fun e ignored (Cut (Var e) uncaught)
+      pure (Cut catching (MuTilde h (Prim HandlerPush [Var h] (MuTilde done (running (MuTilde e' (Cut (Var e') uncaught)))))))
 
 fresh :: String -> M Name
 fresh hint = state (\n -> (hint ++ "%" ++ show n, n + 1))
@@ -192,7 +207,8 @@ arity = \case
   p | p `elem` [IntAnd, IntOr, IntXor, IntShiftL, IntShiftR, BytesRead] -> 2
   PokeDouble -> 3
   ErrnoGet -> 0
-  p | p `elem` [Seq, Bind, PutChar, Throw, Catch, ArgChar, FileTruncate, EnvChar, CellWrite, PeekInt, PeekDouble, DoubleShowAt, FloatShowAt, DoubleFun, DoubleEncode, DoubleFromRatio] -> 2
+  HandlerPop -> 0
+  p | p `elem` [Seq, Bind, PutChar, Throw, Catch, Raise, ArgChar, FileTruncate, EnvChar, CellWrite, PeekInt, PeekDouble, DoubleShowAt, FloatShowAt, DoubleFun, DoubleEncode, DoubleFromRatio] -> 2
   p | p `elem` [IntAdd, IntSub, IntMul, IntQuot, IntRem, IntEq, IntLt, IntLe] -> 2
   p | p `elem` [DoubleAdd, DoubleSub, DoubleMul, DoubleDiv, DoublePow, DoubleAtan2, DoubleEq, DoubleLt, DoubleLe] -> 2
   _ -> 1
@@ -215,13 +231,28 @@ action p = case p of
   Throw -> Just $ \arguments -> act $ \_ err -> case arguments of
     [uncaught, x] -> (\u v -> Cut (Con raised [u, v]) (Covar err)) <$> value uncaught <*> value x
     _ -> wrong
-  -- Run the first with the second as what catches.
+  -- Run the first with the second as what catches: what the action
+  -- raises, and what is raised while it runs by what it works out. The
+  -- handler is the innermost while the action runs, and let go of when it
+  -- is done, either way.
   Catch -> Just $ \arguments -> act $ \ok err -> case arguments of
     [m, handler] -> do
       u <- fresh "u"
       x <- fresh "x"
+      h <- fresh "handler"
+      e <- fresh "e"
+      e' <- fresh "e"
+      r <- fresh "r"
+      ignored <- fresh "k"
+      pushed <- fresh "u"
+      popped <- fresh "u"
+      popped' <- fresh "u"
       handle <- local (Map.insert x x) (evaluate (Core.App handler (Core.Var x)) (Run (Covar ok) (Covar err)))
-      evaluate m (Run (Covar ok) (Case [Alt raised [u, x] handle]))
+      let catching = Fun e ignored (Cut (Var e) (Case [Alt raised [u, x] handle]))
+          done = MuTilde r (Prim HandlerPop [] (MuTilde popped (Cut (Var r) (Covar ok))))
+          raisedBy = MuTilde e' (Prim HandlerPop [] (MuTilde popped' (Cut (Var h) (Ap (Var e') (Covar ok)))))
+      body <- evaluate m (Run done raisedBy)
+      pure (Cut catching (MuTilde h (Prim HandlerPush [Var h] (MuTilde pushed body))))
     _ -> wrong
   _ | p `elem` effects -> Just $ \arguments -> act $ \ok _ -> strictly arguments (\vs -> pure (Prim p vs (Covar ok)))
   _ -> Nothing
@@ -245,13 +276,17 @@ primitive p arguments k = case (p, arguments) of
     x <- fresh "v"
     evaluate a . MuTilde x =<< evaluate b k
   -- Run an action for its result, which is then worked out. What it
-  -- raises is not caught: it ends the program.
+  -- raises goes on to whatever catch is running, as anything raised
+  -- while a value is worked out does.
   (PerformIO, [m]) -> do
     x <- fresh "x"
-    u <- fresh "u"
-    v <- fresh "v"
-    r <- fresh "r"
     e <- fresh "e"
-    let uncaught = Case [Alt raised [u, v] (Cut (Var u) (Force (Run (MuTilde r Halt) (MuTilde e Halt))))]
-    evaluate m (Run (MuTilde x (Cut (Var x) (Force k))) uncaught)
+    evaluate m (Run (MuTilde x (Cut (Var x) (Force k))) (MuTilde e (Prim Raise [Var e] k)))
+  -- Raise, from wherever this is: neither what to do if nothing catches
+  -- it nor what is raised is worked out.
+  (Raise, [uncaught, x]) -> do
+    u <- value uncaught
+    v <- value x
+    r <- fresh "r"
+    pure (Cut (Con raised [u, v]) (MuTilde r (Prim Raise [Var r] k)))
   _ -> strictly arguments (\vs -> pure (Prim p vs k))

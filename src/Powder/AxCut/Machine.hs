@@ -46,6 +46,9 @@ data Cell
   = -- | What was captured, and the method.
     Made [(Name, Value)] Method
   | Delayed [(Name, Value)] Method
+  | -- | A thunk whose working out something raised went past: forced, it
+    -- raises that again.
+    Raises Value
   | -- | Being worked out: to need it now is to need it for itself.
     Working
   | Done Value
@@ -65,7 +68,13 @@ data Machine = Machine
     frames :: IORef [([Either Int64 Double], IORef (Either Int64 Double))],
     -- | How a call from C is answered: with the action that answers it
     -- under a name, a statement that runs it.
-    callback :: (Name, Statement)
+    callback :: (Name, Statement),
+    -- | The catches that are running, the innermost first: each its
+    -- handler, and how many thunks were being worked out when it began.
+    handlers :: IORef [(Value, Int)],
+    -- | The thunks being worked out, the one begun last first, and how
+    -- many.
+    forcing :: IORef ([IORef Cell], Int)
   }
 
 failure :: String -> IO a
@@ -81,7 +90,7 @@ run :: Hooks -> Program -> IO Int
 run h (Program defs entry answered exports) = do
   Foreign.loadLibraries >>= mapM_ failure . take 1
   made <- forM defs (\(x, k, s) -> (,) x <$> newIORef (Delayed [] (Method Forced [k] s)))
-  m <- Machine h (Map.fromList made) <$> newFiles <*> newIORef Map.empty <*> newIORef Nothing <*> newIORef 0 <*> newIORef [] <*> pure answered
+  m <- Machine h (Map.fromList made) <$> newFiles <*> newIORef Map.empty <*> newIORef Nothing <*> newIORef 0 <*> newIORef [] <*> pure answered <*> newIORef [] <*> newIORef ([], 0)
   -- What C may call is made C's before anything runs.
   forM_ exports $ \(Export name shape result action) -> do
     answer <- maybe (broken ("no definition of " ++ action)) (pure . VObject) (Map.lookup action (globals m))
@@ -139,8 +148,18 @@ execute m env statement = do
       Nothing -> failure ("no definition of " ++ g)
     Prim v p n s -> do
       (arguments, rest) <- takeLast n env
-      result <- primitive m p arguments
-      execute m (push rest [(v, result)]) s
+      case (p, arguments) of
+        (Raise, [r]) -> raise m r
+        (HandlerPush, [h]) -> do
+          (_, height) <- readIORef (forcing m)
+          modifyIORef' (handlers m) ((h, height) :)
+          execute m (push rest [(v, VData 0 [])]) s
+        (HandlerPop, []) -> do
+          modifyIORef' (handlers m) (drop 1)
+          execute m (push rest [(v, VData 0 [])]) s
+        _ -> do
+          result <- primitive m p arguments
+          execute m (push rest [(v, result)]) s
     -- A C function made of an action of the program's.
     Foreign v "wrapper" shape result s -> do
       (arguments, rest) <- takeLast 1 env
@@ -181,13 +200,30 @@ execute m env statement = do
       writeIORef ref (if kind == Thunk then Delayed held method else Made held method)
       pure rest
 
+-- | Give what is raised to the innermost catch that is running. The
+-- thunks begun since it began are not finished, and will not be: each
+-- raises the same when it is next forced.
+raise :: Machine -> Value -> IO ()
+raise m r =
+  readIORef (handlers m) >>= \case
+    (h, height) : outer -> do
+      writeIORef (handlers m) outer
+      (begun, n) <- readIORef (forcing m)
+      let (abandoned, kept) = splitAt (n - height) begun
+      forM_ abandoned (`writeIORef` Raises r)
+      writeIORef (forcing m) (kept, height)
+      invoke m Ap h [r, VData 0 []]
+    [] -> broken "something was raised with no catch running, not even the outermost"
+
 -- | Work a value out if it is a thunk, and give what it is to a consumer.
 force :: Machine -> Value -> Value -> IO ()
 force m x k = case x of
   VObject ref ->
     readIORef ref >>= \case
+      Raises r -> raise m r
       Delayed captured (Method _ parameters body) -> do
         writeIORef ref Working
+        modifyIORef' (forcing m) (\(begun, n) -> (ref : begun, n + 1))
         update <- VObject <$> newIORef (Update ref k)
         enter m parameters [update] captured body
       Done v -> force m v k
@@ -206,6 +242,7 @@ invoke m method object arguments = case object of
       -- A thunk's value has come: keep it, and pass it on.
       Update thunk k | method == Ret, [v] <- arguments -> do
         writeIORef thunk (Done v)
+        modifyIORef' (forcing m) (\(begun, n) -> (drop 1 begun, n - 1))
         invoke m Ret k [v]
       -- A function, an action or a consumer may itself be not yet worked
       -- out only by a fault here: those are always forced first.
