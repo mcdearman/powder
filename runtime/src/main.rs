@@ -163,6 +163,9 @@ fn prim_named(name: &str) -> Result<Prim, String> {
 /// A register: where a value is.
 type Reg = u16;
 
+/// What an object is, apart from what it holds: whether it is a thunk,
+/// its method, how many parameters that has, and where its code is.
+#[derive(Clone, Copy)]
 struct Made {
     thunk: bool,
     method: u8,
@@ -170,42 +173,61 @@ struct Made {
     block: usize,
 }
 
-/// One of some objects made together: its register, what it is, the
-/// registers it captures, and then which of the objects.
-type Mutual = (Reg, Made, Box<[Reg]>, Box<[usize]>);
-
-/// An instruction. Each takes what it uses out of its registers: a value
-/// is used once, and what is used twice was copied first.
-enum Instruction {
-    /// Move a value to another register.
-    Shift { to: Reg, from: Reg },
-    Copy { to: Reg, from: Reg },
-    Drop(Reg),
-    Let { to: Reg, tag: u32, fields: Box<[Reg]> },
-    /// Take a constructed value apart: for each constructor of its type,
-    /// where its fields go and where to go on.
-    Switch { on: Reg, clauses: Box<[(Box<[Reg]>, usize)]> },
-    New { to: Reg, made: Made, captured: Box<[Reg]> },
-    /// Make a consumer, on the stack of frames.
-    Frame { to: Reg, block: usize, captured: Box<[Reg]> },
-    /// Call a method of the object in the register after the arguments,
-    /// which are in the first registers.
-    Invoke { method: u8, arguments: usize },
-    Force { value: Reg, consumer: Reg },
-    Lit { to: Reg, value: Value },
-    Global { to: Reg, index: usize },
-    Prim { to: Reg, prim: Prim, arguments: Box<[Reg]> },
-    Foreign { to: Reg, symbol: String, shape: String, result: char, arguments: Box<[Reg]> },
-    /// Objects that may capture each other: for each, its register, what
-    /// it is, the registers it captures, and then which of the objects.
-    Rec(Box<[Mutual]>),
-    Halt,
+/// An instruction, as the image has it: what it is, three registers, and
+/// a number. See `Powder.Bytecode`, which is the only description of them.
+#[derive(Clone, Copy)]
+struct Instr {
+    op: u8,
+    a: u8,
+    b: u8,
+    c: u8,
+    imm: u32,
 }
 
+mod op {
+    pub const HALT: u8 = 0;
+    pub const MOVE: u8 = 1;
+    pub const COPY: u8 = 2;
+    pub const DROP: u8 = 3;
+    pub const DATA: u8 = 4;
+    pub const SWITCH: u8 = 5;
+    pub const CLOSURE: u8 = 6;
+    pub const THUNK: u8 = 7;
+    pub const FRAME: u8 = 8;
+    pub const INVOKE: u8 = 9;
+    pub const FORCE: u8 = 10;
+    pub const INT: u8 = 11;
+    pub const CONST: u8 = 12;
+    pub const GLOBAL: u8 = 13;
+    pub const PRIM: u8 = 14;
+    pub const PRIM1: u8 = 15;
+    pub const PRIM2: u8 = 16;
+    pub const FOREIGN: u8 = 17;
+    pub const REC: u8 = 18;
+    pub const LAST: u8 = REC;
+}
+
+/// A clause of a switch: where the list of its fields' registers starts,
+/// how many, and where its code is.
+type Clause = (usize, usize, usize);
+
+/// An object of a recursive group: its register, its shape, where the
+/// list of the registers it holds starts and how many, and which of the
+/// group's objects it holds after those.
+type Mutual = (Reg, usize, usize, usize, Box<[usize]>);
+
 struct Image {
-    /// Every block's instructions, one block after another. Where to go
-    /// is a place in this.
-    code: Vec<Instruction>,
+    code: Vec<Instr>,
+    /// For each instruction that takes several registers, where their list
+    /// starts in `lists`.
+    lists_at: Vec<u32>,
+    lists: Vec<u8>,
+    constants: Vec<Value>,
+    prims: Vec<Prim>,
+    foreigns: Vec<(String, String, char)>,
+    shapes: Vec<Made>,
+    switches: Vec<Box<[Clause]>>,
+    recs: Vec<Box<[Mutual]>>,
     /// How many registers the program uses.
     registers: usize,
     definitions: Vec<usize>,
@@ -216,6 +238,14 @@ struct Image {
     /// What C may call: its name, the letters of its arguments and of its
     /// result, and the definition that is the action answering it.
     exports: Vec<(String, String, char, usize)>,
+}
+
+impl Image {
+    /// The registers an instruction takes several of.
+    fn list(&self, pc: usize, count: u8) -> &[u8] {
+        let start = self.lists_at[pc] as usize;
+        &self.lists[start..start + count as usize]
+    }
 }
 
 struct Reader<'a> {
@@ -229,39 +259,20 @@ impl Reader<'_> {
         self.at += 1;
         Ok(b)
     }
+    fn word(&mut self) -> Result<u32, String> {
+        let bytes = self.bytes.get(self.at..self.at + 4).ok_or("the image ends too soon")?;
+        self.at += 4;
+        Ok(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+    }
     fn number(&mut self) -> Result<usize, String> {
-        let (mut n, mut shift) = (0usize, 0);
-        loop {
-            let b = self.byte()?;
-            n |= ((b & 127) as usize) << shift;
-            if b & 128 == 0 {
-                return Ok(n);
-            }
-            shift += 7;
+        Ok(self.word()? as usize)
+    }
+    fn many<T>(&mut self, mut each: impl FnMut(&mut Self) -> Result<T, String>) -> Result<Vec<T>, String> {
+        let n = self.number()?;
+        if n > self.bytes.len() {
+            return Err("the image says it has more than it can".into());
         }
-    }
-    fn signed(&mut self) -> Result<i64, String> {
-        let (mut n, mut shift) = (0u64, 0);
-        loop {
-            let b = self.byte()?;
-            n |= ((b & 127) as u64) << shift;
-            if b & 128 == 0 {
-                break;
-            }
-            shift += 7;
-        }
-        Ok(if n & 1 == 1 { -(((n + 1) >> 1) as i64) } else { (n >> 1) as i64 })
-    }
-    fn register(&mut self) -> Result<Reg, String> {
-        Reg::try_from(self.number()?).map_err(|_| "the image names a register past the last there can be".to_string())
-    }
-    fn registers(&mut self) -> Result<Box<[Reg]>, String> {
-        (0..self.number()?).map(|_| self.register()).collect()
-    }
-    /// What an object is: its kind, its method, how many parameters that
-    /// has, and its block.
-    fn made(&mut self) -> Result<Made, String> {
-        Ok(Made { thunk: self.byte()? == 1, method: self.byte()?, parameters: self.number()?, block: self.number()? })
+        (0..n).map(|_| each(self)).collect()
     }
 }
 
@@ -272,97 +283,89 @@ fn load(bytes: &[u8]) -> Result<Image, String> {
     }
     r.at = 4;
     let version = r.number()?;
-    if version != 3 {
-        return Err(format!("the image is of version {version}, and this machine runs version 3"));
+    if version != 4 {
+        return Err(format!("the image is of version {version}, and this machine runs version 4"));
     }
-    let mut strings = Vec::new();
-    for _ in 0..r.number()? {
-        let n = r.number()?;
-        let text = bytes.get(r.at..r.at + n).ok_or("the image ends too soon")?;
-        strings.push(String::from_utf8(text.to_vec()).map_err(|_| "a string in the image is not text")?);
-        r.at += n;
-    }
-    let string = |i: usize| strings.get(i).cloned().ok_or_else(|| "the image names a string it has not got".to_string());
     let registers = r.number()?;
-    let mut blocks = Vec::new();
-    for _ in 0..r.number()? {
-        let mut block = Vec::new();
-        for _ in 0..r.number()? {
-            block.push(match r.byte()? {
-                0 => Instruction::Shift { to: r.register()?, from: r.register()? },
-                1 => Instruction::Copy { to: r.register()?, from: r.register()? },
-                2 => Instruction::Drop(r.register()?),
-                3 => Instruction::Let { to: r.register()?, tag: r.number()? as u32, fields: r.registers()? },
-                4 => {
-                    let on = r.register()?;
-                    let clauses = (0..r.number()?).map(|_| Ok((r.registers()?, r.number()?))).collect::<Result<_, String>>()?;
-                    Instruction::Switch { on, clauses }
-                }
-                5 => Instruction::New { to: r.register()?, made: r.made()?, captured: r.registers()? },
-                6 => {
-                    let (to, made) = (r.register()?, r.made()?);
-                    Instruction::Frame { to, block: made.block, captured: r.registers()? }
-                }
-                7 => Instruction::Invoke { method: r.byte()?, arguments: r.number()? },
-                8 => Instruction::Force { value: r.register()?, consumer: r.register()? },
-                9 => Instruction::Lit { to: r.register()?, value: Value::Int(r.signed()?) },
-                10 => {
-                    let to = r.register()?;
-                    let text = string(r.number()?)?;
-                    Instruction::Lit { to, value: integer(text.parse::<BigInt>().map_err(|_| "a number in the image is not one")?) }
-                }
-                11 => Instruction::Global { to: r.register()?, index: r.number()? },
-                12 => Instruction::Prim { to: r.register()?, prim: prim_named(&string(r.number()?)?)?, arguments: r.registers()? },
-                13 => Instruction::Foreign { to: r.register()?, symbol: string(r.number()?)?, shape: string(r.number()?)?, result: r.byte()? as char, arguments: r.registers()? },
-                14 => {
-                    let objects = (0..r.number()?)
-                        .map(|_| Ok((r.register()?, r.made()?, r.registers()?, (0..r.number()?).map(|_| r.number()).collect::<Result<_, _>>()?)))
-                        .collect::<Result<_, String>>()?;
-                    Instruction::Rec(objects)
-                }
-                15 => Instruction::Halt,
-                other => return Err(format!("the image has an instruction this machine has not got: {other}")),
-            });
-        }
-        blocks.push(block);
+    if registers > 256 {
+        return Err("the image uses more registers than there can be".into());
     }
-    // The blocks are put one after another, and a block is from then on
-    // where it starts.
-    let mut starts = Vec::with_capacity(blocks.len());
-    let mut at = 0;
-    for block in &blocks {
-        starts.push(at);
-        at += block.len();
-    }
-    let place = |block: usize| starts.get(block).copied().ok_or_else(|| "the image names a block it has not got".to_string());
-    let mut code = Vec::with_capacity(at);
-    for mut instruction in blocks.into_iter().flatten() {
-        match &mut instruction {
-            Instruction::Switch { clauses, .. } => {
-                for clause in clauses.iter_mut() {
-                    clause.1 = place(clause.1)?;
-                }
-            }
-            Instruction::New { made, .. } => made.block = place(made.block)?,
-            Instruction::Frame { block, .. } => *block = place(*block)?,
-            Instruction::Rec(objects) => {
-                for object in objects.iter_mut() {
-                    object.1.block = place(object.1.block)?;
-                }
-            }
-            _ => {}
-        }
-        code.push(instruction);
-    }
+    let strings = r.many(|r| {
+        let n = r.number()?;
+        let text = r.bytes.get(r.at..r.at + n).ok_or("the image ends too soon")?;
+        r.at += n;
+        String::from_utf8(text.to_vec()).map_err(|_| "a string in the image is not text".to_string())
+    })?;
+    let string = |i: usize| strings.get(i).cloned().ok_or_else(|| "the image names a string it has not got".to_string());
+    let constants = r.many(|r| {
+        let text = string(r.number()?)?;
+        Ok(integer(text.parse::<BigInt>().map_err(|_| "a number in the image is not one")?))
+    })?;
+    let prims = r.many(|r| prim_named(&string(r.number()?)?))?;
+    let foreigns = r.many(|r| Ok((string(r.number()?)?, string(r.number()?)?, char::from_u32(r.word()?).ok_or("a C function's result is not a letter")?)))?;
+    let shapes = r.many(|r| {
+        let (kind, method) = (r.byte()?, r.byte()?);
+        let parameters = u16::from_le_bytes([r.byte()?, r.byte()?]) as usize;
+        Ok(Made { thunk: kind == 1, method, parameters, block: r.number()? })
+    })?;
     let n = r.number()?;
-    let definitions = (0..n).map(|_| r.number().and_then(place)).collect::<Result<_, _>>()?;
-    let entry = place(r.number()?)?;
-    let callback = place(r.number()?)?;
-    let mut exports = Vec::new();
-    for _ in 0..r.number()? {
-        exports.push((string(r.number()?)?, string(r.number()?)?, r.byte()? as char, r.number()?));
+    let lists = bytes.get(r.at..r.at + n).ok_or("the image ends too soon")?.to_vec();
+    r.at += n;
+    let switches = r.many(|r| Ok(r.many(|r| Ok((r.number()?, r.number()?, r.number()?)))?.into_boxed_slice()))?;
+    let recs = r.many(|r| {
+        Ok(r.many(|r| {
+            let to = r.byte()? as Reg;
+            let (shape, start, count) = (r.number()?, r.number()?, r.number()?);
+            Ok((to, shape, start, count, r.many(|r| r.number())?.into_boxed_slice()))
+        })?
+        .into_boxed_slice())
+    })?;
+    let code = r.many(|r| {
+        let (op, a, b, c) = (r.byte()?, r.byte()?, r.byte()?, r.byte()?);
+        if op > op::LAST {
+            return Err(format!("the image has an instruction this machine has not got: {op}"));
+        }
+        Ok(Instr { op, a, b, c, imm: r.word()? })
+    })?;
+    let lists_at = (0..code.len()).map(|_| r.word()).collect::<Result<Vec<_>, _>>()?;
+    let definitions = r.many(|r| {
+        let _name = r.number()?;
+        r.number()
+    })?;
+    let (entry, callback) = (r.number()?, r.number()?);
+    let exports = r.many(|r| Ok((string(r.number()?)?, string(r.number()?)?, char::from_u32(r.word()?).ok_or("a C function's result is not a letter")?, r.number()?)))?;
+    // Everything the code names is there: what is past the end of a table
+    // is found here, and not while the program runs.
+    let places = code.len();
+    let bad = |what: &str| Err(format!("the image is malformed: {what}"));
+    for (pc, i) in code.iter().enumerate() {
+        let start = lists_at[pc] as usize;
+        let lists_ok = match i.op {
+            op::DATA | op::CLOSURE | op::THUNK | op::FRAME | op::PRIM | op::FOREIGN => start + i.c as usize <= lists.len(),
+            _ => true,
+        };
+        let named_ok = match i.op {
+            op::SWITCH => (i.imm as usize) < switches.len(),
+            op::CLOSURE | op::THUNK | op::FRAME => (i.imm as usize) < shapes.len(),
+            op::CONST => (i.imm as usize) < constants.len(),
+            op::GLOBAL => (i.imm as usize) < definitions.len(),
+            op::PRIM | op::PRIM1 | op::PRIM2 => (i.imm as usize) < prims.len(),
+            op::FOREIGN => (i.imm as usize) < foreigns.len(),
+            op::REC => (i.imm as usize) < recs.len(),
+            _ => true,
+        };
+        if !lists_ok || !named_ok {
+            return bad("an instruction names what the image has not got");
+        }
     }
-    Ok(Image { code, registers, definitions, entry, callback, exports })
+    if shapes.iter().any(|s| s.block >= places)
+        || switches.iter().flatten().any(|&(start, count, at)| at >= places || start + count > lists.len())
+        || recs.iter().any(|group| group.iter().any(|(_, shape, start, count, others)| *shape >= shapes.len() || start + count > lists.len() || others.iter().any(|&o| o >= group.len())))
+        || definitions.iter().chain([&entry, &callback]).any(|&at| at >= places)
+    {
+        return bad("a place past the end of the code");
+    }
+    Ok(Image { code, lists_at, lists, constants, prims, foreigns, shapes, switches, recs, registers, definitions, entry, callback, exports })
 }
 
 // The stack of frames ----------------------------------------------------------
@@ -1121,6 +1124,32 @@ impl Machine {
         std::mem::replace(&mut self.regs[r as usize], Value::Tag(0))
     }
 
+    /// Call a C function with the values in some registers, each as the
+    /// kind its shape says.
+    fn foreign_call(&mut self, symbol: &str, shape: &str, result: char, arguments: &[Reg]) -> Result<Value, String> {
+        let given = shape
+            .chars()
+            .zip(arguments.iter())
+            .map(|(kind, &r)| {
+                let v = self.take(r);
+                if kind == 'D' || kind == 'F' { double(&v).map(foreign::Number::Double) } else { small(&v).map(foreign::Number::Long) }
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(match (result, foreign::call(symbol, shape, result, &given)?) {
+            ('V', _) => UNIT,
+            (_, foreign::Number::Double(x)) => Value::Double(x),
+            (kind, foreign::Number::Long(n)) => Value::Int(match kind {
+                'I' => n as i32 as i64,
+                'U' => n as u32 as i64,
+                's' => n as i16 as i64,
+                'S' => n as u16 as i64,
+                'c' => n as i8 as i64,
+                'C' => n as u8 as i64,
+                _ => n,
+            }),
+        })
+    }
+
     /// Give what is raised to the innermost catch that is running, and say
     /// where to go on. The thunks begun since it began are not finished,
     /// and will not be: each raises the same when it is next forced.
@@ -1212,33 +1241,33 @@ impl Machine {
                     self.due = if freed * 8 < looked { self.due.saturating_mul(2).min(1 << 26) } else { (self.due / 2).max(FIRST_COLLECTION) };
                 }
             }
-            // The image is not changed while it runs, so an instruction can
-            // be looked at while the rest of the machine is changed.
-            let instruction: *const Instruction = &self.image.code[pc];
+            let i = self.image.code[pc];
+            let here = pc;
             pc += 1;
-            // SAFETY: `self.image` outlives the loop and nothing writes to it.
-            match unsafe { &*instruction } {
-                Instruction::Halt => return Ok(()),
-                Instruction::Shift { to, from } => {
-                    let value = self.take(*from);
-                    self.regs[*to as usize] = value;
+            let (a, b, c) = (i.a as Reg, i.b as Reg, i.c as Reg);
+            match i.op {
+                op::HALT => return Ok(()),
+                op::MOVE => {
+                    let value = self.take(b);
+                    self.regs[a as usize] = value;
                 }
-                Instruction::Copy { to, from } => {
-                    let value = self.regs[*from as usize].clone();
-                    self.regs[*to as usize] = value;
+                op::COPY => {
+                    let value = self.regs[b as usize].clone();
+                    self.regs[a as usize] = value;
                 }
-                Instruction::Drop(r) => self.regs[*r as usize] = Value::Tag(0),
-                Instruction::Let { to, tag, fields } => {
-                    let made = if fields.is_empty() {
-                        Value::Tag(*tag)
+                op::DROP => self.regs[a as usize] = Value::Tag(0),
+                op::DATA => {
+                    let made = if i.c == 0 {
+                        Value::Tag(i.imm)
                     } else {
-                        let held: Held = fields.iter().map(|&r| self.take(r)).collect();
-                        Value::Data(Gc::new(Data { tag: *tag, fields: held }))
+                        let start = self.image.lists_at[here] as usize;
+                        let held: Held = (start..start + i.c as usize).map(|at| self.take(self.image.lists[at] as Reg)).collect();
+                        Value::Data(Gc::new(Data { tag: i.imm, fields: held }))
                     };
-                    self.regs[*to as usize] = made;
+                    self.regs[a as usize] = made;
                 }
-                Instruction::Switch { on, clauses } => {
-                    let (tag, mut fields) = match self.take(*on) {
+                op::SWITCH => {
+                    let (tag, mut fields) = match self.take(a) {
                         Value::Tag(tag) => (tag, Held::new()),
                         // If nothing else holds it, its fields are moved out.
                         Value::Data(mut data) => match data.get_mut() {
@@ -1247,99 +1276,96 @@ impl Machine {
                         },
                         _ => return Err(malformed("a switch on what is not a constructed value")),
                     };
-                    let (places, target) = clauses.get(tag as usize).ok_or_else(|| malformed("a switch has no clause for a constructor"))?;
-                    if places.len() != fields.len() {
+                    let &(start, count, target) = self.image.switches[i.imm as usize].get(tag as usize).ok_or_else(|| malformed("a switch has no clause for a constructor"))?;
+                    if count != fields.len() {
                         return Err(malformed("a clause names the wrong number of fields"));
                     }
-                    for (&to, field) in places.iter().zip(fields.drain(..)) {
-                        self.regs[to as usize] = field;
+                    for (at, field) in (start..start + count).zip(fields.drain(..)) {
+                        self.regs[self.image.lists[at] as usize] = field;
                     }
-                    pc = *target;
+                    pc = target;
                 }
-                Instruction::New { to, made, captured } => {
-                    let held: Held = captured.iter().map(|&r| self.take(r)).collect();
-                    self.regs[*to as usize] = Value::Object(Gc::new(RefCell::new(Self::object(made, held))));
+                op::CLOSURE | op::THUNK => {
+                    let start = self.image.lists_at[here] as usize;
+                    let held: Held = (start..start + i.c as usize).map(|at| self.take(self.image.lists[at] as Reg)).collect();
+                    let made = self.image.shapes[i.imm as usize];
+                    self.regs[a as usize] = Value::Object(Gc::new(RefCell::new(Self::object(&made, held))));
                 }
-                Instruction::Frame { to, block, captured } => {
-                    if captured.len() > 0xFFFF {
-                        return Err(malformed("a consumer holds more than there is room to say"));
+                op::FRAME => {
+                    let start = self.image.lists_at[here] as usize;
+                    let block = self.image.shapes[i.imm as usize].block;
+                    let (regs, lists) = (&mut self.regs, &self.image.lists);
+                    let held = (start..start + i.c as usize).map(|at| std::mem::replace(&mut regs[lists[at] as usize], Value::Tag(0)));
+                    let frame = self.stack.push(((block as i64) << 16) | i.c as i64, held);
+                    self.regs[a as usize] = frame;
+                }
+                op::REC => {
+                    let group = self.image.recs[i.imm as usize].clone();
+                    let cells: Vec<_> = group.iter().map(|_| Gc::new(RefCell::new(Cell::Working))).collect();
+                    for ((_, shape, start, count, theirs), cell) in group.iter().zip(&cells) {
+                        let mut held: Held = (*start..start + count).map(|at| self.take(self.image.lists[at] as Reg)).collect();
+                        held.extend(theirs.iter().map(|&o| Value::Object(cells[o].clone())));
+                        let made = self.image.shapes[*shape];
+                        *cell.borrow_mut() = Self::object(&made, held);
                     }
-                    let regs = &mut self.regs;
-                    let held = captured.iter().map(|&r| std::mem::replace(&mut regs[r as usize], Value::Tag(0)));
-                    let frame = self.stack.push(((*block as i64) << 16) | captured.len() as i64, held);
-                    self.regs[*to as usize] = frame;
-                }
-                Instruction::Rec(objects) => {
-                    let cells: Vec<_> = objects.iter().map(|_| Gc::new(RefCell::new(Cell::Working))).collect();
-                    for ((_, made, own, theirs), cell) in objects.iter().zip(&cells) {
-                        let mut held: Held = own.iter().map(|&r| self.take(r)).collect();
-                        held.extend(theirs.iter().map(|&i| Value::Object(cells[i].clone())));
-                        *cell.borrow_mut() = Self::object(made, held);
-                    }
-                    for ((to, ..), cell) in objects.iter().zip(cells) {
+                    for ((to, ..), cell) in group.iter().zip(cells) {
                         self.regs[*to as usize] = Value::Object(cell);
                     }
                 }
-                Instruction::Lit { to, value } => self.regs[*to as usize] = value.clone(),
-                Instruction::Global { to, index } => self.regs[*to as usize] = Value::Object(self.globals[*index].clone()),
-                Instruction::Prim { to, prim: Prim::Raise, arguments } => {
-                    let raised = arguments.first().map(|&r| self.take(r)).ok_or_else(|| malformed("a raise of nothing"))?;
-                    let _ = to;
-                    pc = self.raise(raised)?;
-                }
-                Instruction::Prim { to, prim: Prim::HandlerPush, arguments } => {
-                    let handler = arguments.first().map(|&r| self.take(r)).ok_or_else(|| malformed("a catch with no handler"))?;
-                    self.handlers.push((handler, self.forcing.len()));
-                    self.regs[*to as usize] = UNIT;
-                }
-                Instruction::Prim { to, prim: Prim::HandlerPop, .. } => {
-                    self.handlers.pop();
-                    self.regs[*to as usize] = UNIT;
-                }
-                Instruction::Prim { to, prim, arguments } => {
-                    let given: Held = arguments.iter().map(|&r| self.take(r)).collect();
-                    let result = self.primitive(*prim, &given)?;
-                    self.regs[*to as usize] = result;
-                }
-                // A C function made of an action of the program's.
-                Instruction::Foreign { to, symbol, shape, result, arguments } if symbol == "wrapper" => {
-                    let action = arguments.first().map(|&r| self.take(r)).ok_or_else(|| malformed("a C function made of nothing"))?;
-                    self.answers.push(action);
-                    self.regs[*to as usize] = Value::Int(foreign::closure(shape, *result, self.answers.len() - 1)?);
-                }
-                Instruction::Foreign { to, symbol, shape, result, arguments } => {
-                    let given = shape
-                        .chars()
-                        .zip(arguments.iter())
-                        .map(|(kind, &r)| {
-                            let v = self.take(r);
-                            if kind == 'D' || kind == 'F' { double(&v).map(foreign::Number::Double) } else { small(&v).map(foreign::Number::Long) }
-                        })
-                        .collect::<Result<Vec<_>, _>>()?;
-                    let gave = match (result, foreign::call(symbol, shape, *result, &given)?) {
-                        ('V', _) => UNIT,
-                        (_, foreign::Number::Double(x)) => Value::Double(x),
-                        (kind, foreign::Number::Long(n)) => Value::Int(match kind {
-                            'I' => n as i32 as i64,
-                            'U' => n as u32 as i64,
-                            's' => n as i16 as i64,
-                            'S' => n as u16 as i64,
-                            'c' => n as i8 as i64,
-                            'C' => n as u8 as i64,
-                            _ => n,
-                        }),
+                op::INT => self.regs[a as usize] = Value::Int(i.imm as i32 as i64),
+                op::CONST => self.regs[a as usize] = self.image.constants[i.imm as usize].clone(),
+                op::GLOBAL => self.regs[a as usize] = Value::Object(self.globals[i.imm as usize].clone()),
+                op::PRIM | op::PRIM1 | op::PRIM2 => {
+                    let prim = self.image.prims[i.imm as usize];
+                    let given: Held = match i.op {
+                        op::PRIM1 => std::iter::once(self.take(b)).collect(),
+                        op::PRIM2 => [self.take(b), self.take(c)].into_iter().collect(),
+                        _ => {
+                            let start = self.image.lists_at[here] as usize;
+                            (start..start + i.c as usize).map(|at| self.take(self.image.lists[at] as Reg)).collect()
+                        }
                     };
-                    self.regs[*to as usize] = gave;
+                    match prim {
+                        Prim::Raise => {
+                            let raised = given.into_iter().next().ok_or_else(|| malformed("a raise of nothing"))?;
+                            pc = self.raise(raised)?;
+                        }
+                        Prim::HandlerPush => {
+                            let handler = given.into_iter().next().ok_or_else(|| malformed("a catch with no handler"))?;
+                            self.handlers.push((handler, self.forcing.len()));
+                            self.regs[a as usize] = UNIT;
+                        }
+                        Prim::HandlerPop => {
+                            self.handlers.pop();
+                            self.regs[a as usize] = UNIT;
+                        }
+                        _ => {
+                            let result = self.primitive(prim, &given)?;
+                            self.regs[a as usize] = result;
+                        }
+                    }
                 }
-                Instruction::Invoke { method, arguments } => {
-                    let target = self.take(*arguments as Reg);
-                    pc = self.call(target, *method, *arguments)?;
+                op::FOREIGN => {
+                    let (symbol, shape, result) = self.image.foreigns[i.imm as usize].clone();
+                    let arguments: Vec<Reg> = self.image.list(here, i.c).iter().map(|&r| r as Reg).collect();
+                    if symbol == "wrapper" {
+                        // A C function made of an action of the program's.
+                        let action = arguments.first().map(|&r| self.take(r)).ok_or_else(|| malformed("a C function made of nothing"))?;
+                        self.answers.push(action);
+                        self.regs[a as usize] = Value::Int(foreign::closure(&shape, result, self.answers.len() - 1)?);
+                    } else {
+                        self.regs[a as usize] = self.foreign_call(&symbol, &shape, result, &arguments)?;
+                    }
+                }
+                op::INVOKE => {
+                    let target = self.take(c);
+                    pc = self.call(target, i.b, c as usize)?;
                 }
                 // Work a value out if it is a thunk not yet worked out, which
                 // is to run its body with a frame that will keep the value;
                 // otherwise give it to the consumer.
-                Instruction::Force { value, consumer } => {
-                    let (mut x, k) = (self.take(*value), self.take(*consumer));
+                op::FORCE => {
+                    let (mut x, k) = (self.take(a), self.take(b));
                     pc = loop {
                         let Value::Object(cell) = &x else {
                             self.regs[0] = x;
@@ -1373,6 +1399,7 @@ impl Machine {
                         }
                     };
                 }
+                _ => return Err(malformed("an instruction this machine has not got")),
             }
         }
     }

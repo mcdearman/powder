@@ -409,7 +409,7 @@ compiled.
 | Exceptions through what is being worked out, thunks repaired | done |
 | A simplifier that writes out functions, and cases of known constructors | done |
 | Representations in the IRs: `Int` and `Double` as machine words | not started |
-| A high-level bytecode like Glade's, with explicit thunks | not started |
+| A high-level bytecode like Glade's, with explicit thunks | in progress |
 | Glade's collector, copied, in place of the reference counts | not started |
 | Stack segments that can be detached, for effects and continuations | waiting |
 | Compiling to native code, ahead of time or as the program runs | waiting |
@@ -426,6 +426,16 @@ nursery and an Immix old generation marked concurrently, with the stack of
 frames as roots. The order: exceptions (done), then representations, then the
 encoding, then the collector, each with every example and the conformance
 suite passing on all three machines.
+
+The bytecode's encoding is Glade's now: an instruction is eight bytes, an
+opcode, three registers of a byte and a number of 32 bits, and what does not
+fit is in tables beside the code that it names by number. Thunks have an
+instruction of their own, and a primitive of one or two values has its own
+too, its registers in the instruction. The machine reads the code as it is,
+an instruction at a time, with no decoding, and the definitions keep their
+names, for a program to be patched by name. Still to come of Glade's: join
+points, and instructions typed by what they work on, which wait on
+representations.
 
 **The register machine** is the machine. It passes the compiler's suite and
 the build tool's. `examples/deep.hs` was a recursion a million deep, and took
