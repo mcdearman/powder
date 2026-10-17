@@ -764,18 +764,30 @@ machine before it, which worked on the end of a row of values.
 knowing any types. The lowering leaves a method as a function that takes
 a dictionary apart, an instance as a dictionary written out, and `Int` as
 `Integer` under a coercion, so that a sum of two `Int`s was four calls
-and a dictionary taken apart. A method applied to a dictionary that is
-written out is now the definition it would have found, a coercion applied
-to something is the thing, another name for something is that thing, and
-a small function that binds nothing is written out where it is called, if
-that does nothing twice. An instance that needs others, which made its
+and a dictionary taken apart. In each definition, a few times over:
+
+- a value bound and used once, not inside a function, is put where it is
+  used; one never used is gone; one used once inside a function is put
+  there only if it is no work to make;
+- a function applied is its body, with its parameter bound to the argument
+  by a `let`, so the argument is still worked out at most once;
+- a small function defined at the top is written out where it is given its
+  arguments, its names made new;
+- a case of a constructor it can see is that constructor's clause, and a
+  case of a case with one clause goes inside it;
+- arithmetic on numbers written out is done.
+
+And over the whole program, an instance that needs others, which made its
 dictionary again each time it was asked for, is made once for the
-dictionaries it is given. `count n = 1 + count (n - 1)` a million deep
-went from 1.4 seconds to 0.35 on the machine, a sum over a list a
-million long from 2.1 to 0.9, and two lists of three hundred thousand
-compared from 0.68 to 0.53. It is done to every program, for all three
-ways of running one. What is left is mostly thunks made where a value is
-wanted at once, which nothing yet looks for.
+dictionaries it is given. Every name a definition binds is made new first,
+so nothing put in place of a name is taken for another. On the machine,
+`count n = 1 + count (n - 1)` a million deep takes 0.21 seconds where it
+took 1.41 without any of this, a sum over a list a million long 0.71 where
+it took 2.04, and a hundred thousand insertions into a `Map` 5.0 where they
+took 13.5. It costs next to nothing in compiling. It is done to every
+program, for all three ways of running one, and `POWDER_SIMPLIFY=0` turns it
+off. What is left is mostly thunks made where a value is wanted at once,
+which only knowing what is strict would take away.
 
 Every example is run on all three, the reducer, the machine for AxCut and
 the machine in Rust, and they must agree.

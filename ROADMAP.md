@@ -407,6 +407,7 @@ compiled.
 | The machine two to three times faster | done |
 | A register machine with its own stack of frames, not the native one | done |
 | Exceptions through what is being worked out, thunks repaired | done |
+| A simplifier that writes out functions, and cases of known constructors | done |
 | Representations in the IRs: `Int` and `Double` as machine words | not started |
 | A high-level bytecode like Glade's, with explicit thunks | not started |
 | Glade's collector, copied, in place of the reference counts | not started |
@@ -432,12 +433,11 @@ the machine ten seconds; that was not the depth, which costs nothing, but that
 every step of such a recursion is slow, about a microsecond and a half and
 some twenty thousand of the processor's instructions. The example is a hundred
 thousand deep now, so that the machine for AxCut can run it with the others.
-Part of what made a step slow is gone: a whole program is now made smaller
-before it is compiled, by seeing which dictionary a method is applied to and
-writing out the small functions that `Int`'s arithmetic was made of, and the
-million-deep recursion is four times as fast for it. What is left to look at
-is thunks made where a value is wanted at once, for which the compiler would
-have to know what is strict.
+Most of what made a step slow is gone: a whole program is made smaller
+before it is compiled (see the README), and the million-deep recursion is
+seven times as fast for it. What is left to look at is thunks made where a
+value is wanted at once, for which the compiler would have to know what is
+strict.
 
 ## The tools
 
