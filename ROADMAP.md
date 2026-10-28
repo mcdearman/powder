@@ -53,6 +53,7 @@ CUSKs, DeepSubsumption. MonoLocalBinds and PolyKinds change what some Haskell
 | M6 | Higher ranks and existentials | done |
 | M7 | GADTs, type families and what needs an implication solver | done |
 | M8 | Kinds | done |
+| M9 | Template Haskell | not started |
 
 **M0, plumbing.** Done. LANGUAGE pragmas are read, an edition names a set of
 extensions, and a package's `Powder.toml` sets both for all its modules. Asking
@@ -362,6 +363,35 @@ What these do not yet do:
   compares them or joins strings: no `+`, `<=`, `CmpNat`, `AppendSymbol`;
   and no `someNatVal`, `sameNat` or `TypeError`.
 
+**M9, Template Haskell.** Code that writes code, run while a program is
+compiled. Much of what programs are written with needs it: derivers of
+instances for JSON and the like, lenses, embedded files and text, and
+`DeriveLift`. It comes after the machine's representations and collector
+(see [The machine](#the-machine)), which are what compiling and running
+fast rest on, and before compiling Powder with Powder, which does not need
+it. In order:
+
+- [ ] Quotes and splices: `[| e |]`, `[d| ... |]`, `[t| ... |]`, `[p| ... |]`,
+      and `$(e)` and `$x` where an expression, a declaration, a type or a
+      pattern may be.
+- [ ] `Language.Haskell.TH`: its syntax as data (`Exp`, `Dec`, `Type`, `Pat`,
+      `Name`, `Lit` and the rest), the `Q` monad with fresh names and errors,
+      and `Lift`, with `DeriveLift`.
+- [ ] Running a splice while compiling: on the reducer, which needs no
+      image, of what was compiled before it. A module's splices may use only
+      what it imports, so the modules of a package are compiled in stages,
+      as GHC's are; what a splice gives is read back as syntax, and resolved
+      and checked as if it had been written there.
+- [ ] `reify` and its kind: what a name is, the constructors and fields of a
+      data type, the instances of a class, from what the checker has found so
+      far. This is the hard part, and what most derivers in libraries use.
+- [ ] QuasiQuotes: `[name| text |]`, a function of the text given at compile
+      time.
+- [ ] What it costs. A splice's result is kept with the package, keyed by
+      what the splice used, so that a module whose splices' inputs have not
+      changed is not run again; and a definition patched in a running program
+      that a splice used marks what the splice made as to be made again.
+
 ### On the side
 
 - The rest of PatternSynonyms: those with fields, and those bundled with a
@@ -371,9 +401,9 @@ What these do not yet do:
   defined from outside, by a flag or by a manifest. `__GLASGOW_HASKELL__`
   is not defined, and of the packages only `base` is one whose version
   can be asked about.
-- Not planned: Template Haskell (and so DeriveLift), LinearTypes, Arrows,
-  ImplicitParams (HasCallStack is to be a constraint that is always solved),
-  and MagicHash in earnest.
+- Not planned: LinearTypes, Arrows, ImplicitParams (HasCallStack is to be a
+  constraint that is always solved), and MagicHash in earnest. Template
+  Haskell, which was here, is M9.
 
 A typed Core is not needed by anything in GHC2024.
 
